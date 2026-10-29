@@ -125,6 +125,7 @@ struct agent_openapi_catalog {
     std::string provider_id;
     std::string base_url;
     std::string prefix;
+    std::vector<std::string> additional_families;
     std::vector<agent_openapi_operation> operations;
     std::vector<agent_openapi_relation> relations;
     std::vector<agent_openapi_security_scheme> security_schemes;

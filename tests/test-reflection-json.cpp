@@ -25,7 +25,7 @@ bool same_json_object(const std::string & lhs, const std::string & rhs) {
 int main() {
     common_reflection_result result;
     std::string error;
-    const std::string host_step = "tool:agent-blueprint:" + std::string(96, 'a') + ":workflow:action:investigation.source.attach";
+    const std::string host_step = "tool:agent-blueprint:" + std::string(96, 'a') + ":workflow:action:investigate.source.attach";
     if (!common_reflection_parse_compact_dsl("reflect retry", result, error, {}, 8, {}, host_step) ||
             result.proposed_plan_operations.size() != 1 || result.proposed_plan_operations.front().step_id != host_step) {
         std::cerr << "host-bound long retry identity failed: " << error << '\n'; return 1;

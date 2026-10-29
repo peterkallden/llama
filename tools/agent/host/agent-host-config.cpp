@@ -9,6 +9,7 @@
 
 #include <cstdlib>
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <map>
 #include <unordered_set>
@@ -298,6 +299,18 @@ bool read_openapi_provider(
     read_optional(value, "spec_path", provider.spec_path);
     read_optional(value, "base_url", provider.base_url);
     read_optional(value, "prefix", provider.prefix);
+    read_optional(value, "additional_families", provider.additional_families);
+    if (provider.additional_families.size() > 32 ||
+            std::any_of(provider.additional_families.begin(), provider.additional_families.end(),
+                [](const auto & family) {
+                    return family.empty() || family.size() > 64 ||
+                        !std::all_of(family.begin(), family.end(), [](unsigned char ch) {
+                            return std::isalnum(ch) || ch == '_' || ch == '-';
+                        });
+                })) {
+        error = "OpenAPI additional_families must contain at most 32 valid family ids";
+        return false;
+    }
     read_optional(value, "access", provider.access);
     read_optional(value, "exposure", provider.exposure);
     read_optional(value, "allow_private_network", provider.allow_private_network);
@@ -1619,6 +1632,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"spec_path", provider.spec_path},
             {"base_url", provider.base_url},
             {"prefix", provider.prefix},
+            {"additional_families", provider.additional_families},
             {"policy", {
                 {"access", provider.access},
                 {"exposure", provider.exposure},

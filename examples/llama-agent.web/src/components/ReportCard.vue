@@ -73,7 +73,7 @@ async function showEvidenceGraph(block?: Fields) {
   try {
     const args: Record<string, unknown> = { source_uri: props.uri };
     if (block && typeof block.id === "string") args.block_ids = [block.id];
-    const result = structuredToolResult(await props.callTool("visualization.research_graph", args));
+    const result = structuredToolResult(await props.callTool("visualize.research_graph", args));
     if (current !== generation) return;
     graph.value = parseRelationshipVisualization(result.visualization);
   } catch (cause) { if (current === generation) graphError.value = cause instanceof Error ? cause.message : String(cause); }

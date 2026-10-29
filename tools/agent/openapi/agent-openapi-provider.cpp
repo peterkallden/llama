@@ -69,6 +69,7 @@ public:
         for (const auto & operation : catalog.operations) {
             mcp_agent_tool_definition definition;
             definition.provider_id = catalog.provider_id;
+            definition.additional_families = catalog.additional_families;
             definition.name = operation.operation_id;
             definition.description = operation.description.empty() ? operation.summary : operation.description;
             definition.description += paging_description(operation);

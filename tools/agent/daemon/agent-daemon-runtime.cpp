@@ -1569,7 +1569,7 @@ bool resolve_agent_daemon_tooling(
             std::vector<std::string> source_ids;
             for (const auto & selected : projection["selected_sources"]) source_ids.push_back(selected.at("id").get<std::string>());
             for (auto & tool : tooling.tools) {
-                if (tool.name != "investigation.analyze" && tool.name != "investigation.statement.record") continue;
+                if (tool.name != "investigate.analyze" && tool.name != "investigate.statement.record") continue;
                 auto schema = common_project_model_input_schema_enums(tool.parameters, {{"source_ids", source_ids}}, error);
                 if (!error.empty()) return false;
                 tool.parameters = std::move(schema);
@@ -1585,7 +1585,7 @@ bool resolve_agent_daemon_tooling(
                 }
             }
             if (!datasets.empty()) for (auto & tool : tooling.tools) {
-                if (tool.name != "investigation.collect") continue;
+                if (tool.name != "investigate.collect") continue;
                 std::map<std::string,std::vector<std::string>> choices{{"dataset", datasets}};
                 if (!fields.empty()) choices["identifier_field"] = fields;
                 auto schema = common_project_model_input_schema_enums(tool.parameters, choices, error);

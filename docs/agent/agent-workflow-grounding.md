@@ -294,6 +294,19 @@ remain outstanding until those production paths are explicitly exercised.
 
 ### Scoped memory and unavailable workflow steps
 
+The public tool namespaces are `investigate.*` and `visualize.*`. The former
+`investigation.*` and `visualization.*` tool names are not aliases. Workflow
+packages, host profiles and clients must use the new names. Investigation
+domain capabilities and resource/visualization contracts retain their own
+identifiers; they are not tool namespaces.
+
+The daemon's template-library importer identifies package revisions by their
+content fingerprint. For direct CLI bootstrap imports, a previously installed
+definition with the same identity but a different procedure body or source
+revision is now rejected instead of being silently reused. Use a fresh test
+store or explicitly provision the updated definitions; a version string alone
+does not replace records already present in a direct CLI store.
+
 Family expansion retains `memory.get` and `memory.search` only when they are
 already present in the host-authorized tool catalog; family selection does not
 grant access. Research can retrieve a scoped memory as context, but retrieval

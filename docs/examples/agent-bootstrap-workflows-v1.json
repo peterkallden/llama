@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v37",
+  "version": "v38",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -335,7 +335,7 @@
     },
     {
       "id": "code-entry-point-investigation-path-v1",
-      "source_revision": "agent-workflows-starter@v31",
+      "source_revision": "agent-workflows-starter@v38",
       "workflow_ref": "workflow://code/entry-point-investigation",
       "workflow_revision": "v1",
       "family": "code",
@@ -349,10 +349,10 @@
       "optional_capabilities": [
         "code.references",
         "code.impact",
-        "visualization.create",
-        "visualization.snapshot",
-        "investigation.case.items",
-        "investigation.report.compose",
+        "visualize.create",
+        "visualize.snapshot",
+        "investigate.case.items",
+        "investigate.report.compose",
         "artifact.export"
       ],
       "required_context": [

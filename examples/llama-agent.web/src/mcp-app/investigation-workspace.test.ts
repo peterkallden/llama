@@ -30,12 +30,12 @@ function workspace() {
     if (request.method === "ui/llama-agent/list-investigation-resources") return { resources: [], project_available: false };
     if (request.method !== "tools/call") return {};
     const args = request.params.arguments;
-    if (request.params.name === "investigation.case.open") return { case: {
+    if (request.params.name === "investigate.case.open") return { case: {
       case_id: args.case_id, revision: 1, title: args.case_id, source_id: "logs",
       window_start_ms: 100, window_end_ms: 1000, first_entity_id: "host:one",
     } };
-    if (request.params.name === "investigation.case.items") return { items: [] };
-    if (request.params.name === "investigation.source.list") return { sources: [] };
+    if (request.params.name === "investigate.case.items") return { items: [] };
+    if (request.params.name === "investigate.source.list") return { sources: [] };
     return { nodes: [], edges: [] };
   };
   const respond = (id: number, result: unknown) => receive({ source: parent,
@@ -75,11 +75,11 @@ function workspace() {
 
 it("keeps source reads valid when the same case expands its graph", async () => {
   const view = workspace();
-  view.deferTool("investigation.case.items", "sources");
+  view.deferTool("investigate.case.items", "sources");
   view.open("case-a"); await settle();
-  const sourceRead = view.requests.find((request) => request.params?.name === "investigation.case.items" &&
+  const sourceRead = view.requests.find((request) => request.params?.name === "investigate.case.items" &&
     request.params.arguments.type === "sources");
-  expect(view.requests.some((request) => request.params?.name === "investigation.graph.expand")).toBe(true);
+  expect(view.requests.some((request) => request.params?.name === "investigate.graph.expand")).toBe(true);
   view.respond(sourceRead!.id, { items: [{ id: "provider-logs", kind: "search_connector", provider_id: "logs" }] });
   await settle();
   expect(view.node("#case-sources").children).toHaveLength(1);
@@ -96,14 +96,14 @@ it("does not attach an upload to another case opened while the upload was pendin
   view.open("case-b"); await settle();
   view.respond(upload!.id, { resource_uri: "resource://session/uploaded" });
   await uploading; await settle();
-  expect(view.requests.filter((request) => request.params?.name === "investigation.source.attach")).toHaveLength(0);
+  expect(view.requests.filter((request) => request.params?.name === "investigate.source.attach")).toHaveLength(0);
 });
 
 it("shows isolated actor candidates without requiring graph edges", async () => {
   const view = workspace();
-  view.deferTool("investigation.case.items", "actors");
+  view.deferTool("investigate.case.items", "actors");
   view.open("case-a"); await settle();
-  const read = view.requests.find((request) => request.params?.name === "investigation.case.items" &&
+  const read = view.requests.find((request) => request.params?.name === "investigate.case.items" &&
     request.params.arguments.type === "actors");
   view.respond(read!.id, { items: [{ id: "actor-a", display_name: "Alex", mention_ids: ["mention-a"] }], has_more: false });
   await settle();
@@ -115,31 +115,31 @@ it("shows isolated actor candidates without requiring graph edges", async () => 
 
 it("does not reopen the old case when an import completes after navigation", async () => {
   const view = workspace();
-  view.deferTool("investigation.case.items", "sources");
-  view.deferTool("investigation.log.import");
+  view.deferTool("investigate.case.items", "sources");
+  view.deferTool("investigate.log.import");
   view.open("case-a"); await settle();
-  const read = view.requests.find((request) => request.params?.name === "investigation.case.items" &&
+  const read = view.requests.find((request) => request.params?.name === "investigate.case.items" &&
     request.params.arguments.type === "sources");
   view.respond(read!.id, { items: [{ id: "log-a", kind: "log_file", representation_uri: "resource://text/log-a" }] });
   await settle();
   const all = (item: Fields): Fields[] => [item, ...item.children.flatMap(all)];
   const button = all(view.node("#case-sources")).find((item) => item.textContent === "Import first page")!;
   const importing = button.handlers.click(); await settle();
-  const request = view.requests.find((item) => item.params?.name === "investigation.log.import");
+  const request = view.requests.find((item) => item.params?.name === "investigate.log.import");
   expect(request?.params.arguments.case_id).toBe("case-a");
   view.open("case-b"); await settle();
   view.respond(request!.id, { case_id: "case-a", revision: 2, collected_events: 1 });
   await importing; await settle();
-  expect(view.requests.filter((item) => item.params?.name === "investigation.case.open").map((item) => item.params.arguments.case_id))
+  expect(view.requests.filter((item) => item.params?.name === "investigate.case.open").map((item) => item.params.arguments.case_id))
     .toEqual(["case-a", "case-b"]);
 });
 
 it("requires actor selection and sends a user decision without starting a model turn", async () => {
   const view = workspace();
-  view.deferTool("investigation.case.items", "actors");
-  view.deferTool("investigation.association.review");
+  view.deferTool("investigate.case.items", "actors");
+  view.deferTool("investigate.association.review");
   view.open("case-a"); await settle();
-  const read = view.requests.find((request) => request.params?.name === "investigation.case.items" && request.params.arguments.type === "actors");
+  const read = view.requests.find((request) => request.params?.name === "investigate.case.items" && request.params.arguments.type === "actors");
   view.respond(read!.id, { items: [
     { id: "actor-a", display_name: "Alex", mention_ids: ["mention-a"] },
     { id: "actor-b", display_name: "Alex", mention_ids: ["mention-b"] },
@@ -152,7 +152,7 @@ it("requires actor selection and sends a user decision without starting a model 
   expect(view.node("#same-actor").disabled).toBe(false);
   view.node("#association-comment").value = "I know both records refer to the same company.";
   view.node("#same-actor").handlers.click(); await settle();
-  const request = view.requests.find((item) => item.params?.name === "investigation.association.review");
+  const request = view.requests.find((item) => item.params?.name === "investigate.association.review");
   expect(request?.params.arguments).toMatchObject({ case_id: "case-a", expected_revision: 1,
     actor_ids: ["actor-a", "actor-b"], kind: "identity", decision: "same_actor",
     comment: "I know both records refer to the same company." });
@@ -160,6 +160,6 @@ it("requires actor selection and sends a user decision without starting a model 
   expect(view.requests.some((item) => item.method === "ui/message")).toBe(false);
   view.open("case-b"); await settle();
   view.respond(request!.id, { case_id: "case-a", revision: 2 }); await settle();
-  expect(view.requests.filter((item) => item.params?.name === "investigation.case.open").map((item) => item.params.arguments.case_id))
+  expect(view.requests.filter((item) => item.params?.name === "investigate.case.open").map((item) => item.params.arguments.case_id))
     .toEqual(["case-a", "case-b"]);
 });

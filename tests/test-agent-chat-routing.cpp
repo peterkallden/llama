@@ -172,16 +172,16 @@ int main() {
         request.prompt = "Continue the selected investigation.";
         request.investigation_context = common_investigation_context_binding{};
         request.investigation_context->case_id = "case-bound";
-        common_chat_tool read{"investigation.case.open", "Open a published case summary",
+        common_chat_tool read{"investigate.case.open", "Open a published case summary",
             R"({"type":"object","additionalProperties":false,"required":["case_id"],"properties":{"case_id":{"type":"string"}}})", "{}"};
-        common_chat_tool record{"investigation.statement.record", "Record anchored source statements",
+        common_chat_tool record{"investigate.statement.record", "Record anchored source statements",
             R"({"type":"object","properties":{"statements":{"type":"array","items":{"type":"object","properties":{"private_argument_marker":{"type":"string"}}}}}})", "{}"};
         std::string projection_error;
         record.description = common_render_compact_tool_description(record.name, record.description,
             record.parameters, record.result_schema, projection_error);
         require(projection_error.empty(), "provider description fixture failed");
         planner_prompt_inference inference;
-        inference.replies = {read.name, "open! investigation.case.open"};
+        inference.replies = {read.name, "open! investigate.case.open"};
         const std::vector<common_agent_tool_argument_binding> bindings{
             {read.name, R"({"case_id":"case-bound"})", "host", false}};
         std::string error;
@@ -208,17 +208,17 @@ int main() {
         require(choice.options.n_predict == arguments.options.n_predict,
             "two-stage selection silently changed the response reservation");
         planner_prompt_inference context_only;
-        context_only.replies = {read.name, "open! investigation.case.open"};
+        context_only.replies = {read.name, "open! investigate.case.open"};
         const auto context_selected = select_llama_cli_workflow_action(context_only, config, request,
             {record, read}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && context_selected.action &&
             context_selected.action->arguments_json.find("case-bound") != std::string::npos,
             "authorized investigation context did not supply its stable case identity: " + error);
         request.investigation_context->revision = 7;
-        common_chat_tool write{"investigation.test.write", "Write against the selected revision",
+        common_chat_tool write{"investigate.test.write", "Write against the selected revision",
             R"({"type":"object","required":["case_id","expected_revision"],"properties":{"case_id":{"type":"string"},"expected_revision":{"type":"integer","minimum":1}}})", "{}"};
         planner_prompt_inference revision_inference;
-        revision_inference.replies = {"open! investigation.test.write"};
+        revision_inference.replies = {"open! investigate.test.write"};
         const auto revision_selected = select_llama_cli_workflow_action(revision_inference, config, request,
             {write}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && revision_selected.action && nlohmann::ordered_json::parse(revision_selected.action->arguments_json)["expected_revision"] == 7,
@@ -228,7 +228,7 @@ int main() {
             {{write.name, R"({"expected_revision":6})", "host", false}}, {}, common_agent_tool_output_format::compact_dsl, error);
         require(!error.empty() && revision_conflict.requests.empty(), "conflicting selected revisions reached inference");
         planner_prompt_inference json_inference;
-        json_inference.replies = {R"("investigation.case.open")", R"({"tool":"investigation.case.open","args":{}})"};
+        json_inference.replies = {R"("investigate.case.open")", R"({"tool":"investigate.case.open","args":{}})"};
         select_llama_cli_workflow_action(json_inference, config, request, {read, record}, {}, {},
             common_agent_tool_output_format::native, error);
         require(error.empty() && json_inference.requests.size() == 2 &&
@@ -408,9 +408,9 @@ int main() {
         failed.id = "agent-blueprint:contract:workflow:action";
         failed.status = common_plan_step_status::failed;
         failed.mode = common_plan_step_mode::tool;
-        failed.tool_call = common_plan_tool_call{"investigation.collect", "{}"};
+        failed.tool_call = common_plan_tool_call{"investigate.collect", "{}"};
         plan.steps.push_back(failed);
-        plan.observations.push_back({"tool:" + failed.id + ":investigation.collect", "investigation.collect",
+        plan.observations.push_back({"tool:" + failed.id + ":investigate.collect", "investigate.collect",
             R"({"failure":{"code":"tool.investigation.dataset_unavailable","class":"not_found","retryable":false,"safe_summary":"Choose a configured virtual search dataset."}})", 1.0f});
         planner_prompt_inference inference;
         inference.replies = {"reflect abort"};
@@ -423,13 +423,13 @@ int main() {
             generated.grammar.find("reflect retry") != std::string::npos &&
             generated.grammar.find("reflect accept") == std::string::npos,
             "failed mandatory reflection escaped its declared decision grammar");
-        require(generated.messages.back().content.find("investigation.collect [failed]") != std::string::npos &&
+        require(generated.messages.back().content.find("investigate.collect [failed]") != std::string::npos &&
             generated.messages.back().content.find("status: completed") == std::string::npos,
             "reflection lost a composite-ID failure or presented it as completed evidence");
         auto second = failed;
         second.id += ":second";
         plan.steps.push_back(second);
-        plan.observations.push_back({"tool:" + second.id + ":investigation.collect", "investigation.collect",
+        plan.observations.push_back({"tool:" + second.id + ":investigate.collect", "investigate.collect",
             plan.observations.front().summary, 1.0f});
         planner_prompt_inference multiple;
         multiple.replies = {"reflect retry B"};

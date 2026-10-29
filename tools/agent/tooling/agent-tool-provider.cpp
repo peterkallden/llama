@@ -428,11 +428,11 @@ public:
         const auto resource_uri = metadata.value("resourceUri",std::string{});
         const bool document_write = name=="document.create"||name=="document.import"||name=="document.save"||
             name=="document.propose_patch"||name=="document.apply_patch";
-        const bool investigation_write = name=="investigation.case.create"||name=="investigation.collect"||name=="investigation.log.import"||
-            name=="investigation.source.attach"||name=="investigation.document.prepare"||
-            name=="investigation.statement.record"||name=="investigation.association.review"||
-            name=="investigation.claim.hypothesize"||name=="investigation.report.compose"||
-            name=="visualization.snapshot";
+        const bool investigation_write = name=="investigate.case.create"||name=="investigate.collect"||name=="investigate.log.import"||
+            name=="investigate.source.attach"||name=="investigate.document.prepare"||
+            name=="investigate.statement.record"||name=="investigate.association.review"||
+            name=="investigate.claim.hypothesize"||name=="investigate.report.compose"||
+            name=="visualize.snapshot";
         if ((document_write && resource_uri!="ui://llama-agent/apps/document-editor") ||
                 (investigation_write && resource_uri!="ui://llama-agent/apps/investigation-workspace") ||
                 (!document_write && !investigation_write)) return false;
@@ -509,7 +509,7 @@ public:
             error = "MCP App may call only an authorized app-visible native tool attached to its UI";
             return false;
         }
-        result = execute_sync(call, error, call.name == "investigation.association.review");
+        result = execute_sync(call, error, call.name == "investigate.association.review");
         return result.ok;
     }
 
@@ -688,7 +688,7 @@ private:
         }
 
         const auto started_at = std::chrono::steady_clock::now();
-        const auto execution = user_review && call.name == "investigation.association.review"
+        const auto execution = user_review && call.name == "investigate.association.review"
             ? user_review_registry.execute({call.name,call.arguments_json})
             : registry.execute({call.name, call.arguments_json});
         if (execution_context.execution_control.should_stop()) {
@@ -748,6 +748,12 @@ public:
 
     const std::vector<common_chat_tool> & chat_tools() const override {
         return chat_tool_list;
+    }
+
+    std::vector<std::string> additional_tool_families(const std::string & name) const override {
+        if (!exposes_tool(name)) return {};
+        const auto it = definitions.find(name);
+        return it == definitions.end() ? std::vector<std::string>{} : it->second.additional_families;
     }
 
     const std::vector<common_chat_tool> & app_tools() const override {
@@ -1207,6 +1213,11 @@ public:
         return chat_tool_list;
     }
 
+    std::vector<std::string> additional_tool_families(const std::string & name) const override {
+        const auto * view = find_owner(name);
+        return view ? view->additional_tool_families(name) : std::vector<std::string>{};
+    }
+
     const std::vector<common_chat_tool> & app_tools() const override {
         return app_tool_list;
     }
@@ -1504,10 +1515,10 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         } else if (definition.name == "plan.get") {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/workflow-inspector","visibility":["model","app"]})";
 #ifdef LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE
-        } else if (definition.name == "visualization.snapshot" || definition.name == "investigation.association.review") {
+        } else if (definition.name == "visualize.snapshot" || definition.name == "investigate.association.review") {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/investigation-workspace","visibility":["app"]})";
-        } else if (definition.name.rfind("investigation.", 0) == 0 ||
-                definition.name.rfind("visualization.", 0) == 0) {
+        } else if (definition.name.rfind("investigate.", 0) == 0 ||
+                definition.name.rfind("visualize.", 0) == 0) {
             chat_tools.back().mcp_ui_metadata = R"({"resourceUri":"ui://llama-agent/apps/investigation-workspace","visibility":["model","app"]})";
 #endif
 #ifdef LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE
@@ -1522,7 +1533,7 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
     // The privileged adapter is unreachable through ordinary call()/async
     // execution. It is selected only after first-party app provenance checks.
     common_tool_registry user_review_registry;
-    const auto review = resolved_definitions.find("investigation.association.review");
+    const auto review = resolved_definitions.find("investigate.association.review");
     if (review != resolved_definitions.end() && !context.scope.namespace_id.empty() && !context.scope.session_id.empty()) {
         auto user_bindings = bindings;
         user_bindings.investigation_reviewer_id = "authenticated-session:" + json::array({context.scope.namespace_id,context.scope.session_id}).dump();

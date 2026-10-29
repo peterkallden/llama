@@ -481,7 +481,8 @@ int main(int argc, char ** argv) {
             return a.id == b.id && a.enabled == b.enabled && a.required == b.required &&
                 a.type == b.type && a.spec_path == b.spec_path && a.base_url == b.base_url &&
                 a.source_directory == b.source_directory &&
-                a.prefix == b.prefix && a.access == b.access && a.exposure == b.exposure &&
+                a.prefix == b.prefix && a.additional_families == b.additional_families &&
+                a.access == b.access && a.exposure == b.exposure &&
                 a.auth.type == b.auth.type && a.auth.scheme == b.auth.scheme &&
                 a.auth.token_url == b.auth.token_url && a.auth.scopes == b.auth.scopes &&
                 a.auth.token_env == b.auth.token_env &&

@@ -23,7 +23,8 @@ struct common_tool_family_selection {
 
 std::vector<common_tool_family_index> common_generate_tool_family_index(
     const std::vector<common_chat_tool> & tools,
-    const std::map<std::string, std::string> & descriptions = {});
+    const std::map<std::string, std::string> & descriptions = {},
+    const std::map<std::string, std::vector<std::string>> & additional_families = {});
 
 std::string common_render_tool_family_index(
         const std::vector<common_tool_family_index> & families,
@@ -40,13 +41,15 @@ std::string common_tool_family_required_selection_repair_prompt();
 
 std::vector<common_chat_tool> common_filter_tools_by_families(
     const std::vector<common_chat_tool> & tools,
-    const std::vector<std::string> & family_ids);
+    const std::vector<std::string> & family_ids,
+    const std::map<std::string, std::vector<std::string>> & additional_families = {});
 
 // Add narrowly scoped host-owned prerequisite tools for selected families.
 // The returned tools must still come from the already policy-filtered input.
 std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
     const std::vector<common_chat_tool> & tools,
-    const std::vector<std::string> & family_ids);
+    const std::vector<std::string> & family_ids,
+    const std::map<std::string, std::vector<std::string>> & additional_families = {});
 
 std::string common_tool_family_selection_schema(
     const std::vector<common_tool_family_index> & families);

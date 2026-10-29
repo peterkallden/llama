@@ -1082,9 +1082,9 @@ bool common_investigation_source_followup(const common_investigation_case_revisi
     if (complete) for (const auto & source : value.sources) if (selected.count(source.id)) {
         if (!visit()) break;
         if (source.kind != common_investigation_source_kind::search_connector && source.representation_uri.empty())
-            append({{"operation","investigation.document.prepare"},{"source_id",source.id},{"reason","source_text_not_prepared"}});
+            append({{"operation","investigate.document.prepare"},{"source_id",source.id},{"reason","source_text_not_prepared"}});
         else if (source.kind == common_investigation_source_kind::log_file && !source.log_import_exhausted)
-            append({{"operation","investigation.log.import"},{"source_id",source.id},
+            append({{"operation","investigate.log.import"},{"source_id",source.id},
                 {"reason",source.log_parser_profile_json.empty() ? "explicit_parser_profile_required" : "log_import_has_remaining_records"}});
         else if (source.kind == common_investigation_source_kind::document && !statement_sources.count(source.id))
             append({{"operation","extract_anchored_statements"},{"source_id",source.id},{"reason","source_has_no_saved_statements"}});

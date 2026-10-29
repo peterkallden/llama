@@ -273,6 +273,7 @@ int main() {
     agent_openapi_catalog catalog;
     catalog.provider_id = "openalex";
     catalog.prefix = "openalex";
+    catalog.additional_families = {"research"};
     catalog.base_url = "https://api.openalex.org";
     agent_openapi_operation operation;
     operation.operation_id = "listWorks";
@@ -343,6 +344,8 @@ int main() {
     assert(view->exposes_tool("openalex.listWorks"));
     assert(std::any_of(view->chat_tools().begin(), view->chat_tools().end(),
         [](const common_chat_tool & tool) { return tool.name == "openalex.listWorks"; }));
+    assert(view->additional_tool_families("openalex.listWorks") == std::vector<std::string>{"research"});
+    assert(view->additional_tool_families("openalex.unknown").empty());
     auto result = view->call({"call-1", "openalex.listWorks", "{}", 5}, error);
     assert(result.ok && error.empty());
     assert(calls == 2 && materializations == 1);

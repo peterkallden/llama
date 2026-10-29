@@ -463,7 +463,8 @@ bool run_agent_chat_runtime(
     auto available_tools = execution.tooling.tools;
     bool require_tools = execution.request.require_tool_execution;
     if (execution.policy.enable_tool_family_routing && !available_tools.empty()) {
-        const auto families = common_generate_tool_family_index(available_tools, execution.tooling.family_descriptions);
+        const auto families = common_generate_tool_family_index(available_tools, execution.tooling.family_descriptions,
+            execution.tooling.additional_tool_families);
         common_tool_family_selection selection;
         bool invalid_family_selection = false;
         if (!common_agent_select_tool_families(execution.inference, execution.request,
@@ -479,7 +480,8 @@ bool run_agent_chat_runtime(
             error.clear();
         } else {
             available_tools = selection.needs_tools
-                ? common_expand_tool_family_prerequisites(available_tools, selection.family_ids)
+                ? common_expand_tool_family_prerequisites(available_tools, selection.family_ids,
+                    execution.tooling.additional_tool_families)
                 : std::vector<common_chat_tool>{};
             require_tools = require_tools || selection.needs_tools;
         }

@@ -80,8 +80,8 @@ int main() {
         require_report(report != package.workflows.end(), "report workflow missing");
         common_agent_runtime_tooling minimal;
         minimal.capability_tools = {
-            {"investigation.case", {"investigation.case.open", "investigation.case.items"}},
-            {"investigation.report", {"investigation.report.compose"}},
+            {"investigation.case", {"investigate.case.open", "investigate.case.items"}},
+            {"investigation.report", {"investigate.report.compose"}},
             {"resource.read", {"resource.read"}}};
         for (const auto & binding : minimal.capability_tools) {
             for (const auto & name : binding.second) minimal.tools.push_back({name, name, R"({"type":"object"})"});
@@ -90,7 +90,7 @@ int main() {
         require_report(common_agent_resolve_workflow_tools(report->definition, minimal, resolved, error),
             "saved report unnecessarily requires collection or analysis");
         require_report(resolved.size() == 4 && std::find(resolved.begin(), resolved.end(),
-            "investigation.collect") == resolved.end(), "absent optional tool was granted");
+            "investigate.collect") == resolved.end(), "absent optional tool was granted");
         minimal.capability_tools.erase("investigation.report");
         require_report(!common_agent_resolve_workflow_tools(report->definition, minimal, resolved, error),
             "report admitted without required composition capability");

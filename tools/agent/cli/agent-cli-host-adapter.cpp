@@ -1218,6 +1218,10 @@ bool resolve_agent_host_tool_selection(
         }
         selection.tooling.tools = selection.tool_view->chat_tools();
         selection.tooling.app_tools = selection.tool_view->app_tools();
+        for (const auto & tool : selection.tooling.tools) {
+            auto families = selection.tool_view->additional_tool_families(tool.name);
+            if (!families.empty()) selection.tooling.additional_tool_families.emplace(tool.name, std::move(families));
+        }
         for (const auto & name : openapi_read_tools) {
             if (std::any_of(selection.tooling.tools.begin(), selection.tooling.tools.end(),
                     [&](const common_chat_tool & tool) { return tool.name == name; })) {

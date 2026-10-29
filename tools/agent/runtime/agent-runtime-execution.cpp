@@ -283,7 +283,8 @@ bool select_model_tool_families(
         request.resource_read_binding->intent == common_agent_resource_read_intent::orientation;
     if (attachment_orientation) {
         const auto families = common_generate_tool_family_index(
-            execution.tooling.tools, execution.tooling.family_descriptions);
+            execution.tooling.tools, execution.tooling.family_descriptions,
+            execution.tooling.additional_tool_families);
         std::vector<std::string> family_ids;
         for (const auto & family : families) {
             if (family.id == "resource" || family.id == "dataset" ||
@@ -292,7 +293,7 @@ bool select_model_tool_families(
             }
         }
         execution.model_tools = common_expand_tool_family_prerequisites(
-            execution.tooling.tools, family_ids);
+            execution.tooling.tools, family_ids, execution.tooling.additional_tool_families);
         if (execution.model_tools.empty()) {
             error = "attachment orientation has no permitted resource inspection tools";
             return false;
@@ -335,7 +336,8 @@ bool select_model_tool_families(
     }
 
     const auto families = common_generate_tool_family_index(
-        execution.tooling.tools, execution.tooling.family_descriptions);
+        execution.tooling.tools, execution.tooling.family_descriptions,
+        execution.tooling.additional_tool_families);
     common_tool_family_selection selection;
     bool invalid_family_selection = false;
     common_agent_generation_options family_options;
@@ -366,7 +368,7 @@ bool select_model_tool_families(
         return run_tool_free_conversation();
     }
     execution.model_tools = common_expand_tool_family_prerequisites(
-        execution.tooling.tools, selection.family_ids);
+        execution.tooling.tools, selection.family_ids, execution.tooling.additional_tool_families);
     if (execution.model_tools.empty()) {
         error = "tool family selection did not resolve any registered tools";
         return false;
@@ -2002,7 +2004,7 @@ bool run_agent_runtime_driver(
                     auto current_request = choice_request;
                     const auto envelope = json::parse(observation.summary, nullptr, false);
                     const auto & value = envelope.is_object() && envelope.contains("result") ? envelope["result"] : envelope;
-                    if (observation.source == "investigation.case.items" && value.is_object() &&
+                    if (observation.source == "investigate.case.items" && value.is_object() &&
                             !(envelope.is_object() && envelope.value("result_truncated", false)) &&
                             value.value("type", std::string{}) == "sources" && !value.value("has_more", true) &&
                             value.contains("items") && value["items"].is_array()) {

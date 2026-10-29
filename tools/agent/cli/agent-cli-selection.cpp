@@ -306,7 +306,7 @@ bool common_agent_workflow_tool_eligible(const common_agent_request & request,
     // The selected case is an explicit host binding, not an invitation to
     // create a replacement case based on model interpretation.
     if (request.investigation_context && !request.investigation_context->case_id.empty() &&
-            tool.name == "investigation.case.create") return false;
+            tool.name == "investigate.case.create") return false;
     const auto schema = json::parse(tool.parameters, nullptr, false);
     const auto kinds = schema.is_object() ? schema.value("x-agent-investigation-source-kinds", json::array()) : json::array();
     if (!kinds.is_array()) { error = "workflow tool source requirements must be an array"; return false; }
@@ -361,7 +361,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             return result;
         }
         for (const auto & tool : tools) {
-            if (tool.name.rfind("investigation.", 0) != 0) continue;
+            if (tool.name.rfind("investigate.", 0) != 0) continue;
             const auto schema = json::parse(tool.parameters);
             const auto properties = schema.value("properties", json::object());
             json arguments = json::object();
@@ -758,7 +758,7 @@ bool select_llama_cli_workflow_transition_arguments(
     auto fixed = json::parse(seed, nullptr, false);
     if (!fixed.is_object()) { error = "workflow argument seed is invalid"; return false; }
     auto current = request;
-    if (tool->name.rfind("investigation.", 0) == 0) {
+    if (tool->name.rfind("investigate.", 0) == 0) {
         auto context = current.investigation_context.value_or(common_investigation_context_binding{});
         if (fixed.contains("case_id") && fixed["case_id"].is_string()) {
             const auto id = fixed["case_id"].get<std::string>();
@@ -774,7 +774,7 @@ bool select_llama_cli_workflow_transition_arguments(
         for (size_t index = first; index < plan.steps.size(); ++index) {
             const auto & step = plan.steps[index];
             if (step.status != common_plan_step_status::completed || !step.tool_call ||
-                    step.tool_call->name.rfind("investigation.", 0) != 0) continue;
+                    step.tool_call->name.rfind("investigate.", 0) != 0) continue;
             const auto prefix = "tool:" + step.id + ":";
             const auto found = std::find_if(plan.observations.rbegin(), plan.observations.rend(), [&](const auto & item) {
                 return item.source == step.tool_call->name && item.id.rfind(prefix, 0) == 0 &&

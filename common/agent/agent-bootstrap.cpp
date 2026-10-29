@@ -185,6 +185,10 @@ bool common_agent_install_bootstrap_package(
             const auto existing = memory_store.get(id, error);
             if (!error.empty()) return false;
             if (existing) {
+                if (existing->content != definition.content) {
+                    error = "bootstrap procedure identity conflicts with installed content: " + id;
+                    return false;
+                }
                 result.existing_memory_ids.push_back(id);
                 continue;
             }
@@ -290,6 +294,10 @@ bool common_agent_install_bootstrap_package(
             const auto existing = plan_store.get(workflow.id, error);
             if (!error.empty()) return false;
             if (existing) {
+                if (existing->source_revision != workflow.source_revision) {
+                    error = "bootstrap workflow identity conflicts with installed revision: " + workflow.id;
+                    return false;
+                }
                 result.existing_workflow_ids.push_back(workflow.id);
                 continue;
             }
@@ -354,6 +362,10 @@ bool common_agent_install_bootstrap_package(
             const auto existing = plan_store.get(blueprint.id, error);
             if (!error.empty()) return false;
             if (existing) {
+                if (existing->source_revision != blueprint.source_revision) {
+                    error = "bootstrap blueprint identity conflicts with installed revision: " + blueprint.id;
+                    return false;
+                }
                 result.existing_blueprint_ids.push_back(blueprint.id);
                 continue;
             }

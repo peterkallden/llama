@@ -100,7 +100,7 @@ int main() {
         has_investigation_workspace=has_investigation_workspace||uri=="ui://llama-agent/apps/investigation-workspace";
     }
     assert(has_document_editor==(resources["resources"].size()>=3 && resources["resources"].back().value("uri",std::string{})=="ui://llama-agent/apps/document-editor"));
-    assert(has_investigation_workspace==(agent_mcp_first_party_app_metadata("investigation.case.open").value("resourceUri","")=="ui://llama-agent/apps/investigation-workspace"));
+    assert(has_investigation_workspace==(agent_mcp_first_party_app_metadata("investigate.case.open").value("resourceUri","")=="ui://llama-agent/apps/investigation-workspace"));
     assert(resources["resources"][0]["mimeType"] == "text/html;profile=mcp-app");
     assert(agent_mcp_first_party_app_metadata("dataset.schema").value("resourceUri", "") ==
         "ui://llama-agent/apps/data-explorer");
@@ -201,19 +201,19 @@ int main() {
     user_context.allow_policy_gated_writes=true; user_context.max_calls=10;
     auto native_view=native.resolve_tools(user_context,error);
     if (!native_view) return 21;
-    agent_tool_call review_call{"review","investigation.association.review",
+    agent_tool_call review_call{"review","investigate.association.review",
         R"({"case_id":"case-a","expected_revision":1,"idempotency_key":"user-review","actor_ids":["a","b"],"kind":"identity","decision":"same_actor"})"};
     auto denied=native_view->call(review_call,error);
     if (denied.ok || denied.failure_code != "tool.investigation.user_review_required") return 22;
     if (has_investigation_workspace) {
         const auto & model_tools=native_view->chat_tools();
-        if (std::any_of(model_tools.begin(),model_tools.end(),[](const auto & t) { return t.name=="investigation.association.review"; })) return 23;
+        if (std::any_of(model_tools.begin(),model_tools.end(),[](const auto & t) { return t.name=="investigate.association.review"; })) return 23;
         const auto & app_tools=native_view->app_tools();
-        if (std::none_of(app_tools.begin(),app_tools.end(),[](const auto & t) { return t.name=="investigation.association.review"; })) return 24;
+        if (std::none_of(app_tools.begin(),app_tools.end(),[](const auto & t) { return t.name=="investigate.association.review"; })) return 24;
         common_agent_runtime_tooling presented;
         presented.tools = model_tools;
         presented.app_tools = app_tools;
-        for (const char * name : {"visualization.snapshot", "investigation.association.review"}) {
+        for (const char * name : {"visualize.snapshot", "investigate.association.review"}) {
             const auto * exposed = presented.find_presented_tool(name);
             if (!exposed || exposed->mcp_ui_metadata.empty() || !exposed->mcp_app_write_authorized ||
                     !native_view->is_mcp_app_write_authorized(name)) return 26;
@@ -225,7 +225,7 @@ int main() {
         native_composite.add_provider(native);
         auto composed_native_view = native_composite.resolve_tools(user_context, error);
         if (!composed_native_view) return 29;
-        for (const char * name : {"visualization.snapshot", "investigation.association.review"}) {
+        for (const char * name : {"visualize.snapshot", "investigate.association.review"}) {
             if (composed_native_view->exposes_tool(name) ||
                     !composed_native_view->is_mcp_app_write_authorized(name)) return 30;
             std::string provider_id, server_name;
@@ -234,7 +234,7 @@ int main() {
             if (composed_native_view->call({"model-denied", name, "{}"}, error).ok) return 32;
         }
         agent_tool_result reviewed;
-        if (native_view->call_mcp_app_tool("investigation.case.open",review_call,reviewed,error) ||
+        if (native_view->call_mcp_app_tool("investigate.case.open",review_call,reviewed,error) ||
             reviewed.failure_code != "tool.investigation.store_unavailable") return 25;
         // The app route reached its host executor; this fixture intentionally
         // has no data store, so it cannot publish a decision.

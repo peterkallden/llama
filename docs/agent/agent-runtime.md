@@ -972,7 +972,7 @@ host metadata and current read authority before retention. This keeps
 published project revisions readable without granting the project access to
 the original chat-scoped resource.
 
-`visualization.research_graph` is a read-only host projection over either an
+`visualize.research_graph` is a read-only host projection over either an
 authorized active research resource or a saved report and its exact frozen
 snapshot. It returns the shared relationship visualization contract; the Vue
 client renders the projection with the existing Cytoscape renderer. Report

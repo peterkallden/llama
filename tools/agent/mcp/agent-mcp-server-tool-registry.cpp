@@ -49,11 +49,11 @@ agent_mcp_json agent_mcp_first_party_app_metadata(const std::string & tool_name)
         return {{"resourceUri", "ui://llama-agent/apps/workflow-inspector"}, {"visibility", {"model", "app"}}};
     }
 #ifdef LLAMA_AGENT_INVESTIGATION_WORKSPACE_RESOURCE
-    if (tool_name == "visualization.snapshot" || tool_name == "investigation.association.review") {
+    if (tool_name == "visualize.snapshot" || tool_name == "investigate.association.review") {
         return {{"resourceUri", "ui://llama-agent/apps/investigation-workspace"}, {"visibility", {"app"}}};
     }
-    if (tool_name.rfind("investigation.", 0) == 0 ||
-            tool_name.rfind("visualization.", 0) == 0) {
+    if (tool_name.rfind("investigate.", 0) == 0 ||
+            tool_name.rfind("visualize.", 0) == 0) {
         return {{"resourceUri", "ui://llama-agent/apps/investigation-workspace"}, {"visibility", {"model", "app"}}};
     }
 #endif

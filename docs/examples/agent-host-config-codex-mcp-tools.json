@@ -78,6 +78,7 @@
       {
         "type": "openapi",
         "id": "eurostat-statistics",
+        "additional_families": ["research"],
         "enabled": true,
         "required": true,
         "spec_path": "eurostat-statistics-openapi.json",
@@ -89,6 +90,7 @@
       {
         "type": "openapi",
         "id": "eurostat-sdmx-structure",
+        "additional_families": ["research"],
         "enabled": true,
         "required": true,
         "spec_path": "eurostat-sdmx-openapi.json",

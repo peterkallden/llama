@@ -4,6 +4,7 @@
     "backend": "server-context",
     "path": "models/model.gguf"
   },
+  "bootstrap": {"package": "docs/examples/agent-bootstrap-workflows-v1.json"},
   "tools": {
     "profile": "all-configured",
     "include_dir": "openalex-provider.d",

@@ -82,10 +82,10 @@ references and environment-backed secrets.
 The investigation tool family supports case creation, scoped case listing and
 opening, bounded collection from a virtual dataset, graph expansion, event
 inspection, deterministic graph/path analyses, hypothesis recording and
-freezing a report from an exact case revision. `investigation.case.open`
+freezing a report from an exact case revision. `investigate.case.open`
 returns only case metadata, counts and the first graph entity. Read entity,
-event, relation, claim or gap records through `investigation.case.items` pages.
-`investigation.events` also accepts a page cursor. These case cursors bind the
+event, relation, claim or gap records through `investigate.case.items` pages.
+`investigate.events` also accepts a page cursor. These case cursors bind the
 case revision and query filter; requests reauthorize the case and reject stale
 revisions. Pages are bounded by item count and serialized size. The MCP App
 uses the same APIs and exposes a “Load more events” action. Case list cursors
@@ -139,16 +139,16 @@ search-connector sources. Creating a document-only case does not require a
 search source or a time window. A configured search source is marked
 `not_collected` and incomplete until a collection operation records its actual
 coverage. Use the host resource browser to select resources,
-`investigation.source.list` to discover currently authorized search sources,
-`investigation.source.attach` to add a source, and
-`investigation.document.prepare` to create a text representation with the
+`investigate.source.list` to discover currently authorized search sources,
+`investigate.source.attach` to add a source, and
+`investigate.document.prepare` to create a text representation with the
 existing resource processors. These operations do not start model analysis by
 themselves. The workspace asks the user to choose sources and an analysis
 profile before dispatching the normal host-authorized workflow.
 
 An authorized search connector can also be attached to an existing document-only
 case. The first connector added this way must establish the case time window;
-additional connectors use that same case-level window. `investigation.collect`
+additional connectors use that same case-level window. `investigate.collect`
 accepts only virtual datasets whose provider is attached to the case and keeps
 each provider's event and entity IDs in that source's identity domain. Repeated
 collection for one provider rebuilds that provider's relations while
@@ -175,10 +175,10 @@ times in documents remain separate from event times observed in collected log
 records. A document statement does not become an independently observed log
 event by being linked to one.
 
-`investigation.statement.record` publishes statements, comparisons and their
+`investigate.statement.record` publishes statements, comparisons and their
 analysis provenance together in a new case revision. Its idempotency key binds
 the full typed payload, including source versions, profile, parameters and
-completeness. `investigation.case.items` exposes bounded pages of sources,
+completeness. `investigate.case.items` exposes bounded pages of sources,
 statements, comparisons, analyses and hypotheses for the selected revision.
 Frozen report composition carries the source manifest, exact source and text
 representation hashes, processor limitations, analysis versions and the
@@ -205,7 +205,7 @@ This is a bounded document-analysis path, not a general document-forensics
 engine: it does not provide OCR-region coordinates, native actor resolution,
 automatic source-independence verification, image/audio/video analysis,
 lie detection or formal chain-of-custody. Uploaded logs become ordinary case
-events only through an explicit `investigation.log.import` operation with a
+events only through an explicit `investigate.log.import` operation with a
 supported JSONL/CSV format and field mapping, described under
 [uploaded structured logs](#uploaded-structured-logs). Free-form log text stays
 retained source material unless a supported parser profile supplies events;
@@ -219,7 +219,7 @@ explicitly marked as such in the runtime prompt.
 
 ## Dataset visualizations
 
-The analysis and investigation tool profiles also expose `visualization.create`
+The analysis and investigation tool profiles also expose `visualize.create`
 for a first host-integrated relationship renderer. Select a registered
 `dataset://` reference, map its source and target columns, and optionally map
 node labels and an edge label. The host authorizes the dataset in the current
@@ -229,13 +229,13 @@ projection as a normal resource. The resource uses project scope when a project
 is active, otherwise session scope; the tool result contains its resource
 reference and the projection for the existing workspace app to render.
 
-`visualization.open` reopens that resource in the current host scope. It checks
+`visualize.open` reopens that resource in the current host scope. It checks
 the resource authority and media type, reads within the visualization byte
 limit, validates the stored contract and returns the frozen projection. The
 workspace has an Open graph control for a saved resource URI, so reopening does
 not rerun the dataset query. A graph node in a case-backed view still expands
-through the existing scoped `investigation.graph.expand` operation.
-The workspace persists a PNG snapshot with `visualization.snapshot`. It can
+through the existing scoped `investigate.graph.expand` operation.
+The workspace persists a PNG snapshot with `visualize.snapshot`. It can
 snapshot either an authorized saved visualization or the currently validated
 relationship projection; client-supplied projections are explicitly marked as
 presentation data, not independent evidence. The host checks the resource
@@ -265,7 +265,7 @@ errors. Static DOCX image embedding remains separate.
 Frozen reports are discoverable through a separate Cozo report index keyed by
 case scope, case ID, evidence revision and report content fingerprint. The
 index points to the immutable document, Markdown and source-manifest resources;
-it does not alter or advance the case evidence revision. `investigation.case.items`
+it does not alter or advance the case evidence revision. `investigate.case.items`
 accepts `type: "reports"` to read a bounded page for the opened revision. The
 workspace loads those entries when reopening a case and opens a selected report
 in the existing document editor through the normal read-only document access
@@ -321,7 +321,7 @@ No running plan is rewritten and no semantic routing precedence is introduced.
 
 ### Uploaded structured logs
 
-A retained `log_file` source can be normalized using `investigation.log.import`
+A retained `log_file` source can be normalized using `investigate.log.import`
 after text preparation. The workspace exposes an explicit JSONL/CSV format and
 field mapping form. Upload and preparation do not start an import or analysis.
 For example, a JSONL source with nested ECS fields can use:
@@ -376,11 +376,11 @@ complete coverage of the real-world incident.
 
 ### Actor mentions and proposed cross-source links
 
-`investigation.statement.record` accepts optional `mentions` inside a statement:
+`investigate.statement.record` accepts optional `mentions` inside a statement:
 `name`, `kind` and absolute UTF-8 `byte_offset`. The host validates the exact name
 inside the verified statement quote and creates a stable mention ID and distinct
 actor-candidate ID. Equal names do not merge candidates. Candidates can exist
-without relations and are paginated through `investigation.case.items` types
+without relations and are paginated through `investigate.case.items` types
 `actors`, `actor_mentions` and `evidence_links`, also shown in the workspace.
 Older free-form `actor_ids` remain readable; they are not retroactively resolved
 into the new anchored candidate structure.
@@ -401,7 +401,7 @@ as independent evidence; there is no numerical independence score.
 
 ### Source follow-up and frozen reports
 
-`investigation.analyze` with `analysis: "source_followup"` and explicit
+`investigate.analyze` with `analysis: "source_followup"` and explicit
 `source_ids` returns a bounded structural work list: prepare missing text, declare
 or continue a log import, extract missing statements, or compare selected source
 pairs without a complete published pair analysis. It does not infer identity or
@@ -438,7 +438,7 @@ pair. The selected candidate order determines relation direction. Users can add
 a comment describing their knowledge of the material. The `other` relation type
 requires a comment.
 
-`investigation.association.review` is an app-only operation. The native provider
+`investigate.association.review` is an app-only operation. The native provider
 uses a separate, internally authorized adapter registry only after verifying the
 first-party Investigation Workspace provenance and normal write permissions.
 Ordinary native/model/async calls cannot authorize a review, including a call
@@ -470,7 +470,7 @@ contradicts a transitive confirmation chain, publication stops with an explicit
 conflict; users must withdraw the conflicting confirmations first. This avoids
 silently choosing which knowledge to discard.
 
-`investigation.case.items` exposes revision-pinned `actor_groups`,
+`investigate.case.items` exposes revision-pinned `actor_groups`,
 `actor_relationships` and `association_reviews`. Group member lists are bounded
 and state their total counts and abbreviation status. Review history is shown
 newest first. The shared relationship renderer shows loaded groups and reviewed

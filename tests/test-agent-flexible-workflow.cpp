@@ -78,7 +78,7 @@ void selection_formats() {
 
     common_plan_workflow_transition transition;
     transition.choices.push_back({"inspect", "Inspect empty or nonempty observed records", "inspect", {"/count", "/items", "/complete"}});
-    common_plan_observation observation{"choice-source", "investigation.events", R"({"count":0,"items":[],"complete":false})", 1.0f};
+    common_plan_observation observation{"choice-source", "investigate.events", R"({"count":0,"items":[],"complete":false})", 1.0f};
     require(common_plan_workflow_choice_available(observation, transition.choices.front()),
         "zero/false/empty observations were confused with missing fields");
     scripted_inference choice;
@@ -347,12 +347,12 @@ void blueprint_and_publication_context() {
     common_agent_request request; request.investigation_context = common_investigation_context_binding{"case", 2};
     common_plan_state plan; plan.id = "case-plan";
     common_plan_step read{"read", "Open", "Open case"}; read.status = common_plan_step_status::completed;
-    read.tool_call = common_plan_tool_call{"investigation.case.open", R"({"case_id":"case"})"}; plan.steps.push_back(read);
-    plan.observations.push_back({"tool:read:open", "investigation.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":2}}})", 1.0f});
-    auto publish = read; publish.id = "publish"; publish.tool_call = common_plan_tool_call{"investigation.collect", R"({"case_id":"case","expected_revision":2})"};
+    read.tool_call = common_plan_tool_call{"investigate.case.open", R"({"case_id":"case"})"}; plan.steps.push_back(read);
+    plan.observations.push_back({"tool:read:open", "investigate.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":2}}})", 1.0f});
+    auto publish = read; publish.id = "publish"; publish.tool_call = common_plan_tool_call{"investigate.collect", R"({"case_id":"case","expected_revision":2})"};
     plan.steps.push_back(publish);
-    plan.observations.push_back({"tool:publish:collect", "investigation.collect", R"({"ok":true,"result":{"case_id":"case","revision":3}})", 1.0f});
-    common_chat_tool events{"investigation.events", "Read events", R"({"type":"object","required":["case_id","case_revision"],"properties":{"case_id":{"type":"string"},"case_revision":{"type":"integer"}},"additionalProperties":false})"};
+    plan.observations.push_back({"tool:publish:collect", "investigate.collect", R"({"ok":true,"result":{"case_id":"case","revision":3}})", 1.0f});
+    common_chat_tool events{"investigate.events", "Read events", R"({"type":"object","required":["case_id","case_revision"],"properties":{"case_id":{"type":"string"},"case_revision":{"type":"integer"}},"additionalProperties":false})"};
     common_plan_workflow_transition next; next.tool_name = events.name;
     scripted_inference inference; common_agent_generation_config config; std::string args;
     require(select_llama_cli_workflow_transition_arguments(inference, config, request, {events}, plan,
@@ -363,7 +363,7 @@ void blueprint_and_publication_context() {
     require(select_llama_cli_workflow_transition_arguments(inference, config, request, {events}, plan,
         plan.observations.back(), next, "{}", args, error), "resume failed to replay its own revision chain: " + error);
     auto concurrent = read; concurrent.id = "concurrent-read"; plan.steps.push_back(concurrent);
-    plan.observations.push_back({"tool:concurrent-read:open", "investigation.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":4}}})", 1.0f});
+    plan.observations.push_back({"tool:concurrent-read:open", "investigate.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":4}}})", 1.0f});
     require(!select_llama_cli_workflow_transition_arguments(inference, config, request, {events}, plan,
         plan.observations.back(), next, "{}", args, error), "a read silently rebased the workflow onto an external revision");
 }
@@ -372,7 +372,7 @@ void package_contracts() {
     std::ifstream input(std::string(LLAMA_AGENT_SOURCE_DIR) + "/docs/examples/agent-investigation-workflows-v1.json");
     std::stringstream text; text << input.rdbuf(); common_agent_bootstrap_package package; std::string error;
     require(common_agent_package_parse_json(text.str(), package, error), error);
-    require(package.version == "v5" && package.workflows.size() == 9, "new investigation methods missing");
+    require(package.version == "v7" && package.workflows.size() == 9, "new investigation methods missing");
     for (const auto & workflow : package.workflows) require(!workflow.definition.transitions.empty(), "method still has no executable graph");
     for (const auto & blueprint : package.blueprints) require(!blueprint.workflow_bindings.front().phase_bindings.empty(), "blueprint phases are unbound");
     std::string exported;

@@ -273,28 +273,28 @@ void catalog_contracts() {
         std::vector<common_chat_tool> tools;
         for (const auto & definition : definitions) tools.push_back({definition.name, definition.description,
             common_tool_model_input_schema(definition), common_tool_model_result_schema(definition)});
-        for (const auto & tool : tools) if (tool.name == "investigation.source.attach") {
+        for (const auto & tool : tools) if (tool.name == "investigate.source.attach") {
             const auto action_grammar = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error);
-            require(error.empty() && !matches(action_grammar, "open! investigation.source.attach\ncase_id: case-1\nexpected_revision: 2") &&
-                matches(action_grammar, "open! investigation.source.attach\ncase_id: case-1\nexpected_revision: 2\nprovider_id: provider-1"), "source attachment omitted its required reference: " + error);
+            require(error.empty() && !matches(action_grammar, "open! investigate.source.attach\ncase_id: case-1\nexpected_revision: 2") &&
+                matches(action_grammar, "open! investigate.source.attach\ncase_id: case-1\nexpected_revision: 2\nprovider_id: provider-1"), "source attachment omitted its required reference: " + error);
             std::string validation_error, normalized;
             require(!common_schema_normalize_and_validate_object(
                 R"({"case_id":"case-1","expected_revision":2,"provider_id":"provider-1","resource_uri":"resource://original"})", tool.parameters, normalized, validation_error),
                 "source attachment accepted both resource and provider");
         }
-        for (const auto & tool : tools) if (tool.name == "investigation.analyze") {
+        for (const auto & tool : tools) if (tool.name == "investigate.analyze") {
             const auto action_grammar = common_build_tool_dsl_grammar({tool}, common_tool_dsl_grammar_form::action, error);
-            require(error.empty() && matches(action_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: graph_metrics"), "metrics acquired spurious prerequisites: " + error);
-            require(!matches(action_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: source_followup"), "followup omitted mandatory sources");
-            require(!matches(action_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: shortest_path"), "path omitted mandatory endpoints");
+            require(error.empty() && matches(action_grammar, "open! investigate.analyze\ncase_id: case-1\nanalysis: graph_metrics"), "metrics acquired spurious prerequisites: " + error);
+            require(!matches(action_grammar, "open! investigate.analyze\ncase_id: case-1\nanalysis: source_followup"), "followup omitted mandatory sources");
+            require(!matches(action_grammar, "open! investigate.analyze\ncase_id: case-1\nanalysis: shortest_path"), "path omitted mandatory endpoints");
             const auto description = common_render_compact_tool_description(tool.name, tool.description, tool.parameters, "{}", error);
             require(error.empty() && description.find("requires source_ids") != std::string::npos && description.find("requires goal_entity_id") != std::string::npos,
                 "conditional prerequisites missing from compact contract");
             const auto scoped = common_project_model_input_schema_enums(tool.parameters, {{"source_ids", {"source-1"}}}, error);
             require(error.empty() && nlohmann::ordered_json::parse(scoped)["properties"]["source_ids"]["items"]["enum"] == nlohmann::ordered_json::array({"source-1"}), "source array enum projection failed");
             const auto scoped_grammar = common_build_tool_dsl_grammar({{tool.name, tool.description, scoped, "{}"}}, common_tool_dsl_grammar_form::action, error);
-            require(error.empty() && matches(scoped_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: source_followup\nsource_ids: source-1") &&
-                !matches(scoped_grammar, "open! investigation.analyze\ncase_id: case-1\nanalysis: source_followup\nsource_ids: invented"), "scoped source grammar did not enforce host choices");
+            require(error.empty() && matches(scoped_grammar, "open! investigate.analyze\ncase_id: case-1\nanalysis: source_followup\nsource_ids: source-1") &&
+                !matches(scoped_grammar, "open! investigate.analyze\ncase_id: case-1\nanalysis: source_followup\nsource_ids: invented"), "scoped source grammar did not enforce host choices");
         }
         const auto grammar = common_build_tool_dsl_grammar(tools, common_tool_dsl_grammar_form::plan, error);
         require(!grammar.empty(), std::string(profile) + ": " + error);

@@ -156,13 +156,13 @@ int main() {
         assert(common_register_native_tool_adapters(catalog, "investigation", registration_bindings,
             registry, adapters, error));
     }
-    assert(registry.contains("visualization.create"));
-    assert(!registry.is_read_only("visualization.create"));
-    assert(registry.is_policy_gated("visualization.create"));
-    assert(registry.is_policy_gated("visualization.snapshot"));
-    assert(registry.contains("visualization.open"));
-    assert(registry.is_read_only("visualization.open"));
-    const auto result = registry.execute({"visualization.create",
+    assert(registry.contains("visualize.create"));
+    assert(!registry.is_read_only("visualize.create"));
+    assert(registry.is_policy_gated("visualize.create"));
+    assert(registry.is_policy_gated("visualize.snapshot"));
+    assert(registry.contains("visualize.open"));
+    assert(registry.is_read_only("visualize.open"));
+    const auto result = registry.execute({"visualize.create",
         R"({"dataset":"dataset://scope/links","title":"Connections","source_field":"source","target_field":"target","edge_label_field":"relation","max_rows":2})"});
     if (!result.ok) std::cerr << result.failure_code << ": " << result.raw_diagnostic << " / " << result.output << "\n";
     assert(result.ok);
@@ -178,7 +178,7 @@ int main() {
     assert(graph.nodes.size() == 2 && graph.edges.size() == 1);
     assert(graph.edges.front().label == "auth");
     assert(!graph.limitations.empty());
-    const auto reopened = registry.execute({"visualization.open",
+    const auto reopened = registry.execute({"visualize.open",
         R"({"visualization_uri":"resource://session/visualization-1"})"});
     assert(reopened.ok);
     const auto reopened_json = nlohmann::json::parse(reopened.output);
@@ -186,10 +186,10 @@ int main() {
     common_agent_visualization_relationship reopened_graph;
     assert(common_agent_visualization_relationship_from_json(reopened_json.at("visualization"), reopened_graph, error));
     assert(reopened_graph.data_revision == graph.data_revision && reopened_graph.nodes.size() == 2);
-    const auto foreign_resource = registry.execute({"visualization.open",
+    const auto foreign_resource = registry.execute({"visualize.open",
         R"({"visualization_uri":"resource://session/another-user-graph"})"});
     assert(!foreign_resource.ok);
-    const auto extra_argument = registry.execute({"visualization.open",
+    const auto extra_argument = registry.execute({"visualize.open",
         R"({"visualization_uri":"resource://session/visualization-1","dataset":"dataset://scope/links"})"});
     assert(!extra_argument.ok);
 
@@ -228,7 +228,7 @@ int main() {
     active_descriptor.sha256 = hash_sha256_hex(active_json.data(), active_json.size());
     resources.resources[active_descriptor.uri] = active_descriptor;
     resources.text_resources[active_descriptor.uri] = active_json;
-    const auto evidence_graph = registry.execute({"visualization.research_graph",
+    const auto evidence_graph = registry.execute({"visualize.research_graph",
         R"({"source_uri":"resource://session/research-workspace"})"});
     assert(evidence_graph.ok);
     const auto evidence_graph_json = nlohmann::json::parse(evidence_graph.output);
@@ -239,10 +239,10 @@ int main() {
         return edge.relation == "supports" && edge.provenance_refs == std::vector<std::string>{"evidence-test"};
     }));
     resources.resources[active_descriptor.uri].sha256 = "tampered";
-    const auto invalid_research_graph = registry.execute({"visualization.research_graph",
+    const auto invalid_research_graph = registry.execute({"visualize.research_graph",
         R"({"source_uri":"resource://session/research-workspace"})"});
     assert(!invalid_research_graph.ok && invalid_research_graph.failure_code ==
-        "tool.visualization.research_graph.source_hash_mismatch");
+        "tool.visualize.research_graph.source_hash_mismatch");
     resources.resources[active_descriptor.uri].sha256 = active_descriptor.sha256;
 
     common_agent_artifact_profile profile;
@@ -301,7 +301,7 @@ int main() {
     report_descriptor.sha256 = hash_sha256_hex(report_json.data(), report_json.size());
     resources.resources[report_descriptor.uri] = report_descriptor;
     resources.text_resources[report_descriptor.uri] = report_json;
-    const auto report_graph = registry.execute({"visualization.research_graph", nlohmann::json{
+    const auto report_graph = registry.execute({"visualize.research_graph", nlohmann::json{
         {"source_uri", report_descriptor.uri}, {"block_ids", {"findings:block-test"}}}.dump()});
     if (!report_graph.ok) {
         std::cerr << "frozen report graph projection failed: " << report_graph.failure_code
@@ -316,7 +316,7 @@ int main() {
     assert(std::any_of(projected_report.edges.begin(), projected_report.edges.end(), [](const auto & edge) {
         return edge.relation == "supports" && edge.provenance_refs == std::vector<std::string>{"evidence-test"};
     }));
-    const auto whole_report_graph = registry.execute({"visualization.research_graph",
+    const auto whole_report_graph = registry.execute({"visualize.research_graph",
         nlohmann::json{{"source_uri", report_descriptor.uri}}.dump()});
     assert(whole_report_graph.ok);
     auto anchor_only_document = report_document;
@@ -346,18 +346,18 @@ int main() {
         return node.kind == "research_gap" && node.label.find("evidence inconclusive") != std::string::npos;
     }));
     resources.resources[frozen_descriptor.uri].sha256 = "tampered";
-    const auto invalid_report_graph = registry.execute({"visualization.research_graph",
+    const auto invalid_report_graph = registry.execute({"visualize.research_graph",
         nlohmann::json{{"source_uri", report_descriptor.uri}}.dump()});
     assert(!invalid_report_graph.ok && invalid_report_graph.failure_code ==
-        "tool.visualization.research_graph.snapshot_hash_mismatch");
+        "tool.visualize.research_graph.snapshot_hash_mismatch");
 
     const auto saved_spec = resources.saved;
-    const auto invalid_reference = registry.execute({"visualization.create",
+    const auto invalid_reference = registry.execute({"visualize.create",
         R"({"dataset":"file:///tmp/links","title":"Invalid","source_field":"source","target_field":"target"})"});
     assert(!invalid_reference.ok && resources.saved == saved_spec);
     const auto project = [&](const std::string & rows, const std::string & flags = "") {
         data.page = "{\"columns\":[\"source\",\"target\",\"relation\"],\"rows\":" + rows + flags + "}";
-        return registry.execute({"visualization.create",
+        return registry.execute({"visualize.create",
             R"({"dataset":"dataset://scope/links","title":"Connections","source_field":"source","target_field":"target","edge_label_field":"relation"})"});
     };
     auto partial = project(R"([["a","b","auth"],[null,"c","network"]])");
@@ -371,13 +371,13 @@ int main() {
     std::string label(511, 'x'); label += "€tail";
     data.page = nlohmann::json{{"columns", {"source", "target", "relation"}},
         {"rows", {{"a", "b", label}, {"a", "b", label + "different"}}}}.dump();
-    const auto unicode = registry.execute({"visualization.create",
+    const auto unicode = registry.execute({"visualize.create",
         R"({"dataset":"dataset://scope/links","title":"Unicode","source_field":"source","target_field":"target","edge_label_field":"relation"})"});
     assert(unicode.ok);
     const auto unicode_graph = nlohmann::json::parse(unicode.output).at("visualization");
     assert(unicode_graph.at("edges").size() == 2);
     assert(unicode_graph.at("edges")[0].at("label").get<std::string>().size() == 511);
-    const auto snapshot = registry.execute({"visualization.snapshot", nlohmann::json{
+    const auto snapshot = registry.execute({"visualize.snapshot", nlohmann::json{
         {"visualization_uri", "resource://session/visualization-1"},
         {"image_base64", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="}, {"title", "Connections"}}.dump()});
     if (!snapshot.ok) std::cerr << snapshot.failure_code << ": " << snapshot.raw_diagnostic << " / " << snapshot.output << "\n";
@@ -386,14 +386,14 @@ int main() {
     const auto snapshot_json = nlohmann::json::parse(snapshot.output);
     assert(snapshot_json.at("snapshot_uri") == "resource://session/snapshot-1" &&
         snapshot_json.at("mime_type") == "image/png" && snapshot_json.at("size_bytes").get<size_t>() >= 45);
-    const auto case_snapshot = registry.execute({"visualization.snapshot", nlohmann::json{
+    const auto case_snapshot = registry.execute({"visualize.snapshot", nlohmann::json{
         {"visualization", unicode_graph}, {"image_base64", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="}, {"title", "Case view"}}.dump()});
     assert(case_snapshot.ok);
     const auto case_snapshot_json = nlohmann::json::parse(case_snapshot.output);
     assert(case_snapshot_json.at("visualization_uri") == "resource://session/visualization-1" &&
         resources.saved_request.lineage.parent_uri == "resource://session/visualization-1" &&
         resources.resources.at("resource://session/visualization-1").metadata.purpose.find("client supplied") != std::string::npos);
-    const auto invalid_snapshot = registry.execute({"visualization.snapshot", nlohmann::json{
+    const auto invalid_snapshot = registry.execute({"visualize.snapshot", nlohmann::json{
         {"visualization_uri", "resource://session/visualization-1"}, {"image_base64", "bm90cG5n"}}.dump()});
     assert(!invalid_snapshot.ok);
     return 0;

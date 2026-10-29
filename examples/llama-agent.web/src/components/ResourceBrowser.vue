@@ -91,13 +91,13 @@ async function selectResource(item: ResourceRow) {
 async function showResearchGraph(item: ResourceRow) {
   if (graphBusy.value) return;
   const request = previewGeneration;
-  if (!props.tools.some((tool) => tool.name === "visualization.research_graph" && tool.read_only && !tool.policy_gated)) {
+  if (!props.tools.some((tool) => tool.name === "visualize.research_graph" && tool.read_only && !tool.policy_gated)) {
     graphError.value = "Research graph projection is not available as an approved read-only tool in this runtime.";
     return;
   }
   graphBusy.value = true; graphError.value = ""; graphSelection.value = undefined;
   try {
-    const result = structuredToolResult(await props.callTool("visualization.research_graph", { source_uri: item.uri }));
+    const result = structuredToolResult(await props.callTool("visualize.research_graph", { source_uri: item.uri }));
     if (request !== previewGeneration) return;
     researchGraph.value = parseRelationshipVisualization(result.visualization);
   } catch (cause) { if (request === previewGeneration) graphError.value = cause instanceof Error ? cause.message : String(cause); }
@@ -107,7 +107,7 @@ async function showResearchGraph(item: ResourceRow) {
 async function loadCases() {
   const request = scopeGeneration;
   if (casesLoaded.value || casesLoading.value) return;
-  if (!props.tools.some((tool) => tool.name === "investigation.case.list" && tool.read_only && !tool.policy_gated)) {
+  if (!props.tools.some((tool) => tool.name === "investigate.case.list" && tool.read_only && !tool.policy_gated)) {
     casesUnavailable.value = true;
     casesLoaded.value = true;
     return;
@@ -115,7 +115,7 @@ async function loadCases() {
   casesUnavailable.value = false;
   casesLoading.value = true;
   try {
-    const result = structuredToolResult(await props.callTool("investigation.case.list", { limit: 50 }));
+    const result = structuredToolResult(await props.callTool("investigate.case.list", { limit: 50 }));
     if (request !== scopeGeneration) return;
     cases.value = Array.isArray(result.cases) ? result.cases.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object")) : [];
     casesLoaded.value = true;

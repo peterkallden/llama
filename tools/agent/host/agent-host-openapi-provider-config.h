@@ -36,6 +36,7 @@ struct agent_host_openapi_provider_config {
     std::string source_directory;
     std::string base_url;
     std::string prefix;
+    std::vector<std::string> additional_families;
 
     // access is the global upper bound; exposure controls catalog selection.
     std::string access = "read_only";

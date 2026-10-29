@@ -680,6 +680,7 @@ bool build_agent_openapi_catalog(
     catalog.provider_id = config.id;
     catalog.base_url = config.base_url;
     catalog.prefix = config.prefix.empty() ? config.id : config.prefix;
+    catalog.additional_families = config.additional_families;
 
     std::set<std::string> known_security_schemes;
     const auto components = document.value("components", nlohmann::json::object());

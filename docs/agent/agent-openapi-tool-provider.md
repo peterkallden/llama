@@ -171,6 +171,14 @@ CTest so ordinary CI remains deterministic.
 
 ## OpenAlex example
 
+An OpenAPI provider may declare `additional_families`, for example
+`["research"]`. Its authorized operations then appear both under their
+provider-prefix family and the declared family during model routing. This is
+catalog metadata, not a permission grant: only operations already admitted
+by the host profile and provider policy are exposed. The bundled OpenAlex and
+Eurostat examples declare the research family. Other providers can declare
+their own memberships without inspecting user text.
+
 OpenAlex has two relevant addresses: the public API base URL is
 `https://api.openalex.org`, while the machine-readable OpenAPI 3.1 document is
 published at `https://help.openalex.org/openapi.json`. The provider bootstrap

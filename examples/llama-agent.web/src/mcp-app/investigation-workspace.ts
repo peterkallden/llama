@@ -151,7 +151,7 @@ if (!window.__investigationWorkspace) {
     if (!currentCase) return;
     const token = generation;
     try {
-      const value = await call("investigation.case.items", { case_id: currentCase.case_id,
+      const value = await call("investigate.case.items", { case_id: currentCase.case_id,
         case_revision: currentCase.revision, type: "claims", limit: 100 }, token);
       if (value) renderClaims(value.items ?? []);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
@@ -160,7 +160,7 @@ if (!window.__investigationWorkspace) {
     if (!currentCase) return;
     const token = generation;
     try {
-      const value = await call("investigation.case.items", { case_id: currentCase.case_id,
+      const value = await call("investigate.case.items", { case_id: currentCase.case_id,
         case_revision: currentCase.revision, type: "sources", limit: 100 }, token);
       if (!value || token !== generation) return;
       caseSources = Array.isArray(value.items) ? value.items : [];
@@ -207,7 +207,7 @@ if (!window.__investigationWorkspace) {
                 source_id: source.id, format: format.value, fields: JSON.parse(fields.value), limit: 200,
                 idempotency_key: crypto.randomUUID() };
               button.disabled = true;
-              const result = await call("investigation.log.import", attempt, token);
+              const result = await call("investigate.log.import", attempt, token);
               if (!result || token !== generation) return;
               attempt = null;
               await openCase(String(caseId));
@@ -245,7 +245,7 @@ if (!window.__investigationWorkspace) {
     analysisReads[type] = token;
     q<HTMLButtonElement>(`#${type}-more`).disabled = true;
     try {
-      const value = await call("investigation.case.items", { case_id: currentCase.case_id,
+      const value = await call("investigate.case.items", { case_id: currentCase.case_id,
         case_revision: currentCase.revision, type, limit: 50, ...(continuation ? { cursor } : {}) }, token);
       if (!value || token !== generation) return;
       if (!continuation) {
@@ -383,7 +383,7 @@ if (!window.__investigationWorkspace) {
     const token = generation, attempt = reviewAttempt;
     reviewBusy = true; updateReviewSelection();
     try {
-      const result = await call("investigation.association.review",attempt,token);
+      const result = await call("investigate.association.review",attempt,token);
       if (!result || token !== generation) return;
       reviewAttempt = null;
       await openCase(String(attempt.case_id));
@@ -465,7 +465,7 @@ if (!window.__investigationWorkspace) {
     const selectors = [q<HTMLSelectElement>("#source-id"), q<HTMLSelectElement>("#add-search-source")];
     const current = selectors.map((selector) => selector.value);
     for (const selector of selectors) selector.replaceChildren(new Option("No search source", ""));
-    const result = await call("investigation.source.list", { limit: 100 });
+    const result = await call("investigate.source.list", { limit: 100 });
     for (const source of Array.isArray(result?.sources) ? result.sources : []) {
       const id = String(source.source_id ?? "");
       if (id) for (const selector of selectors) selector.add(new Option(String(source.display_name ?? id), id));
@@ -475,7 +475,7 @@ if (!window.__investigationWorkspace) {
   async function attachResource(uri: string, token = generation, kind = q<HTMLSelectElement>("#attach-kind").value) {
     if (!currentCase || !uri || token !== generation) return;
     try {
-      const result = await call("investigation.source.attach", { case_id: currentCase.case_id,
+      const result = await call("investigate.source.attach", { case_id: currentCase.case_id,
         expected_revision: currentCase.revision, resource_uri: uri, kind }, token);
       if (result) await openCase(currentCase.case_id);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
@@ -492,7 +492,7 @@ if (!window.__investigationWorkspace) {
     }
     const token = generation;
     try {
-      const result = await call("investigation.source.attach", input, token);
+      const result = await call("investigate.source.attach", input, token);
       if (result) await openCase(currentCase.case_id);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   }
@@ -500,7 +500,7 @@ if (!window.__investigationWorkspace) {
     if (!currentCase || !sourceId) return;
     const token = generation;
     try {
-      const result = await call("investigation.document.prepare", { case_id: currentCase.case_id,
+      const result = await call("investigate.document.prepare", { case_id: currentCase.case_id,
         expected_revision: currentCase.revision, source_id: sourceId }, token);
       if (result) { setStatus(`Readable representation prepared (${result.processor_version || "existing text"}).`); await openCase(currentCase.case_id); }
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
@@ -511,7 +511,7 @@ if (!window.__investigationWorkspace) {
     const token = generation;
     const target = q<HTMLDivElement>("#frozen-reports");
     try {
-      const value = await call("investigation.case.items", { case_id: currentCase.case_id,
+      const value = await call("investigate.case.items", { case_id: currentCase.case_id,
         case_revision: currentCase.revision, type: "reports", limit: 50,
         ...(continuation ? { cursor: reportCursor } : {}) }, token);
       if (!value || token !== generation) return;
@@ -552,7 +552,7 @@ if (!window.__investigationWorkspace) {
     const token = ++generation;
     try {
       setStatus("Loading case…");
-      const result = await call("investigation.case.open", { case_id: id }, token);
+      const result = await call("investigate.case.open", { case_id: id }, token);
       if (!result) return;
       if (!result.case) throw new Error("The host returned no case.");
       showCase(result.case);
@@ -569,7 +569,7 @@ if (!window.__investigationWorkspace) {
     const isCurrent = beginCaseListRead();
     try {
       setStatus("Loading cases in this scope…");
-      const value = await call("investigation.case.list", { limit: 50, after_case_id: after }, token);
+      const value = await call("investigate.case.list", { limit: 50, after_case_id: after }, token);
       if (!value || !isCurrent()) return;
       const target = q<HTMLDivElement>("#case-list-items");
       if (!after) target.replaceChildren();
@@ -646,7 +646,7 @@ if (!window.__investigationWorkspace) {
     const token = generation;
     const isCurrent = beginGraphRead();
     try {
-      const value = await call("investigation.graph.expand", {
+      const value = await call("investigate.graph.expand", {
         case_id: currentCase.case_id, case_revision: currentCase.revision,
         center_entity_id: center || currentCase.first_entity_id || "",
         max_depth: 2, max_nodes: 100, max_edges: 200,
@@ -674,7 +674,7 @@ if (!window.__investigationWorkspace) {
       }
       q<HTMLButtonElement>("#events-more").disabled = true;
       const args: Json = { ...eventQuery, ...(continuation && eventsCursor ? { cursor: eventsCursor } : {}) };
-      const value = await call("investigation.events", args, token);
+      const value = await call("investigate.events", args, token);
       if (!value || !isCurrent()) return;
       eventsCursor = String(value.next_cursor ?? "");
       renderTimeline(value.events ?? [], Boolean(value.has_more), continuation);
@@ -742,7 +742,7 @@ if (!window.__investigationWorkspace) {
     const token = generation;
     try {
       const context = selectedContext();
-      const result = await call("investigation.analyze", { case_id: context.case_id,
+      const result = await call("investigate.analyze", { case_id: context.case_id,
         analysis: "source_followup", source_ids: context.source_ids, max_expansions: 10000 }, token);
       if (!result || token !== generation) return;
       const target = q<HTMLDivElement>("#followup-steps"); target.replaceChildren();
@@ -769,7 +769,7 @@ if (!window.__investigationWorkspace) {
     if (!text) return;
     const token = generation;
     try {
-      const value = await call("investigation.claim.hypothesize", {
+      const value = await call("investigate.claim.hypothesize", {
         case_id: currentCase.case_id, expected_revision: currentCase.revision,
         claim_id: `hypothesis-${Date.now()}`, text,
         ...(selectedEvent ? { supporting_event_ids: [selectedEvent] } : {}),
@@ -783,7 +783,7 @@ if (!window.__investigationWorkspace) {
     if (!currentCase) return;
     const token = generation;
     try {
-      const result = await call("investigation.report.compose", {
+      const result = await call("investigate.report.compose", {
         case_id: currentCase.case_id, expected_revision: currentCase.revision,
         visualization_uris: q<HTMLTextAreaElement>("#snapshot-refs").value.split(/[\r\n,]+/).map((uri) => uri.trim()).filter(Boolean),
       }, token);
@@ -802,7 +802,7 @@ if (!window.__investigationWorkspace) {
     if (!sourceId && !resourceUri) { setStatus("Choose a configured search source or a host-authorized resource.", true); return; }
     if (sourceId && (!start || !end || start >= end)) { setStatus("A configured log source requires a valid, non-empty time window.", true); return; }
     try {
-      const value = await call("investigation.case.create", {
+      const value = await call("investigate.case.create", {
         title: q<HTMLInputElement>("#case-title").value.trim(),
         question: q<HTMLInputElement>("#case-question").value.trim(),
         ...(sourceId ? { source_id: sourceId, window_start_ms: start, window_end_ms: end } : {}),
@@ -825,7 +825,7 @@ if (!window.__investigationWorkspace) {
     const token = ++generation;
     try {
       setStatus("Opening saved visualization…");
-      const result = await call("visualization.open", { visualization_uri: uri }, token);
+      const result = await call("visualize.open", { visualization_uri: uri }, token);
       if (result) showVisualization(result);
     } catch (error) { if (token === generation) setStatus(error instanceof Error ? error.message : String(error), true); }
   });
@@ -849,7 +849,7 @@ if (!window.__investigationWorkspace) {
       let binary = "";
       for (let offset = 0; offset < bytes.length; offset += 0x8000)
         binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 0x8000)));
-      const result = await call("visualization.snapshot", {
+      const result = await call("visualize.snapshot", {
         ...(visualizationUri ? { visualization_uri: visualizationUri } : { visualization: projection }),
         image_base64: btoa(binary),
         view_json: JSON.stringify(viewMetadata),

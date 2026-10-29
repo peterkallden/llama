@@ -711,7 +711,7 @@ investigation family after bounded repair, but failed planner admission:
 849 inventory tokens, 172 instruction tokens, 163 memory/policy tokens, 27
 cognitive-mode tokens and 13 request tokens. These counts exclude template
 interaction and therefore do not sum to the exact rendered admission count.
-The inventory remains relevant to `investigation.collect` in the same selected
+The inventory remains relevant to `investigate.collect` in the same selected
 family; deleting it based on the words in the request would be incorrect.
 A narrower next-operation contract is needed before its corresponding inventory
 can be omitted safely. No automatic context increase or contract truncation is

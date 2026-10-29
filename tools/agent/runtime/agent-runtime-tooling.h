@@ -30,6 +30,7 @@ struct common_agent_runtime_tooling {
     // Host-owned descriptions for model-facing family preflight. This is
     // presentation metadata only and does not grant tools or change names.
     std::map<std::string, std::string> family_descriptions;
+    std::map<std::string, std::vector<std::string>> additional_tool_families;
     // Host-resolved semantic capabilities used for pre-selection eligibility.
     std::vector<std::string> capabilities;
     // Host facts that workflows may require for materialization. Unlike

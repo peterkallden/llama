@@ -23,7 +23,7 @@ int main() {
         payload.session.namespace_id = std::string("namespace-") + scope;
         payload.session.session_id = std::string("session-") + scope;
         payload.project_id = std::string("project-") + scope;
-        payload.tool_name = "investigation.report";
+        payload.tool_name = "investigate.report.compose";
         payload.mcp_app_call = true;
         common_agent_daemon_command command;
         command.type = common_agent_daemon_command_type::execute_tool;

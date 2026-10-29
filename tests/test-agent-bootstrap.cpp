@@ -232,6 +232,18 @@ int main() {
     assert(starter_repeat.installed_memory_ids.empty() && starter_repeat.installed_blueprint_ids.empty());
     assert(starter_repeat.existing_memory_ids.size() == 3 && starter_repeat.existing_blueprint_ids.size() == 2);
 
+    auto changed_procedure = starter_package;
+    changed_procedure.procedures.front().content += " Changed definition.";
+    common_agent_bootstrap_result conflicting_import;
+    assert(!common_agent_install_bootstrap_package(starter_memory, starter_plans, config,
+        changed_procedure, embed, conflicting_import, error));
+    assert(error.find("procedure identity conflicts") != std::string::npos);
+    auto changed_blueprint = starter_package;
+    changed_blueprint.blueprints.front().source_revision = "different-revision";
+    assert(!common_agent_install_bootstrap_package(starter_memory, starter_plans, config,
+        changed_blueprint, embed, conflicting_import, error));
+    assert(error.find("blueprint identity conflicts") != std::string::npos);
+
     // The checked-in package is the operator-facing import artifact. Parse and
     // install that exact file rather than relying only on the smaller inline
     // fixture above.
@@ -252,7 +264,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v37");
+        checked_in_starter.version == "v38");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -344,7 +356,7 @@ int main() {
     investigation_file_text << investigation_file.rdbuf();
     common_agent_bootstrap_package investigation_package;
     assert(common_agent_package_parse_json(investigation_file_text.str(), investigation_package, error));
-    require_code_workflow(investigation_package.version == "v5",
+    require_code_workflow(investigation_package.version == "v7",
         "investigation package revision is stale");
     const std::vector<std::string> investigation_workflows = {
         "workflow://investigation/identity-analysis",
@@ -376,8 +388,8 @@ int main() {
         assert(!blueprint.steps.empty() && !blueprint.procedure_refs.empty());
     }
     for (const auto & blueprint : investigation_package.blueprints) {
-        require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@v5" &&
-            blueprint.workflow_bindings.front().workflow_revision == "v5",
+        require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@v7" &&
+            blueprint.workflow_bindings.front().workflow_revision == "v7",
             "investigation immutable identity does not match revised authority");
         require_code_workflow(blueprint.next_action == blueprint.steps.front().id,
             "investigation entry phase is not explicit");

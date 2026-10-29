@@ -51,17 +51,27 @@ int main() {
         std::vector<std::string>{"prediction.predict"});
     assert(prediction_family->description.find("predictions from verified history") != std::string::npos);
     const auto investigation_families = common_generate_tool_family_index({
-        {"investigation.case.list", "list cases", "{}", "{}"},
-        {"visualization.create", "create view", "{}", "{}"},
+        {"investigate.case.list", "list cases", "{}", "{}"},
+        {"visualize.create", "create view", "{}", "{}"},
     });
     const auto investigation_view = common_render_tool_family_index(investigation_families);
     assert(investigation_view.find("List and open scoped investigation cases") != std::string::npos);
     assert(investigation_view.find("Create and open visualizations from approved datasets") != std::string::npos);
     const auto family_tools = common_filter_tools_by_families(
-        { {"investigation.case.list", "list", "{}", "{}"},
-          {"visualization.create", "create", "{}", "{}"} },
-        {"investigation", "visualization"});
+        { {"investigate.case.list", "list", "{}", "{}"},
+          {"visualize.create", "create", "{}", "{}"} },
+        {"investigate", "visualize"});
     assert(family_tools.size() == 2);
+    common_chat_tool scholarly{"openalex.listWorks", "search", "{}", "{}"};
+    common_chat_tool statistics{"eurostat.getData", "data", "{}", "{}"};
+    const std::vector<common_chat_tool> shared_tools{scholarly, statistics};
+    const std::map<std::string, std::vector<std::string>> memberships{
+        {"openalex.listWorks", {"research"}}, {"eurostat.getData", {"research"}}};
+    const auto shared = common_generate_tool_family_index(shared_tools, {}, memberships);
+    assert(shared.size() == 3);
+    assert(common_filter_tools_by_families(shared_tools, {"research"}, memberships).size() == 2);
+    assert(common_filter_tools_by_families(shared_tools, {"openalex", "research"}, memberships).size() == 2);
+    assert(common_filter_tools_by_families({scholarly}, {"research"}, memberships).size() == 1);
     const auto configured = common_generate_tool_family_index(
         tools, {{"data", "Query approved datasets from the configured API"}});
     const auto configured_data = [&configured]() -> const common_tool_family_index * {

@@ -114,6 +114,8 @@ public:
     virtual ~agent_tool_view() = default;
 
     virtual const std::vector<common_chat_tool> & chat_tools() const = 0;
+    // Host-owned routing metadata for tools already exposed by this view.
+    virtual std::vector<std::string> additional_tool_families(const std::string &) const { return {}; }
     // App-visible tools are kept separate so app-only tools never leak into
     // model tool selection. The daemon may publish these to its UI status.
     virtual const std::vector<common_chat_tool> & app_tools() const {
@@ -204,6 +206,7 @@ private:
 
 struct mcp_agent_tool_definition {
     std::string provider_id;
+    std::vector<std::string> additional_families;
     std::string name;
     std::string description;
     std::string input_schema_json = R"({"type":"object"})";

@@ -251,7 +251,7 @@ provider-owned and are fetched through that provider.
 
 The Resources workspace exposes project/session research resources and saved
 work products. Research evidence graphs and report-block evidence graphs use
-`visualization.research_graph`; the host resolves either the selected active
+`visualize.research_graph`; the host resolves either the selected active
 research resource or the report's exact frozen snapshot. Selecting a current
 research resource does not change an older report's saved evidence. Research identity,
 chat drafts and compare-and-swap publication are described in

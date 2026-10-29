@@ -34,14 +34,15 @@ std::string family_description_for_id(const std::string & id) {
         {"document",   "Extract structured content from documents"},
         {"mcp",        "Discover and invoke MCP resources and tools"},
         {"repository", "Search and inspect repository-backed content"},
-        {"investigation", "List and open scoped investigation cases, collect source events, explore evidence graphs and timelines, analyze findings and compose reports"},
-        {"visualization", "Create and open visualizations from approved datasets and save snapshots"},
+        {"investigate", "List and open scoped investigation cases, collect source events, explore evidence graphs and timelines, analyze findings and compose reports"},
+        {"visualize", "Create and open visualizations from approved datasets and save snapshots"},
         {"math",       "Perform bounded arithmetic calculations"},
         {"memory",     "Search and manage scoped runtime memory"},
         {"openapi",    "Load a fetched OpenAPI spec and expose its permitted API operations"},
         {"prediction", "Inspect predictions from verified history, including probabilities, uncertainty and evidence coverage"},
         {"oracle",     "When a user states rules for a small placement game or one-variable linear equations: define/correct session rules, then verify proposed moves or rewrites. Not general game search or general math"},
         {"resource",   "Inspect and read host-owned resources"},
+        {"research",   "Conduct research using authorized sources and manage research workspaces"},
         {"statistics", "Describe datasets and compute summaries"},
         {"time",       "Read current time and date information"},
         {"web",        "Search and fetch public web content, including API specifications"},
@@ -61,11 +62,16 @@ bool is_tool_name_char(char ch) {
 
 std::vector<common_tool_family_index> common_generate_tool_family_index(
         const std::vector<common_chat_tool> & tools,
-        const std::map<std::string, std::string> & descriptions) {
+        const std::map<std::string, std::string> & descriptions,
+        const std::map<std::string, std::vector<std::string>> & additional_families) {
     std::map<std::string, std::set<std::string>> grouped;
     for (const auto & tool : tools) {
         if (tool.name.empty()) continue;
         grouped[family_id_for_tool(tool.name)].insert(tool.name);
+        const auto extra = additional_families.find(tool.name);
+        if (extra != additional_families.end())
+            for (const auto & family : extra->second)
+                if (!family.empty()) grouped[family].insert(tool.name);
     }
 
     std::vector<common_tool_family_index> result;
@@ -127,19 +133,27 @@ std::string common_tool_family_required_selection_repair_prompt() {
 
 std::vector<common_chat_tool> common_filter_tools_by_families(
         const std::vector<common_chat_tool> & tools,
-        const std::vector<std::string> & family_ids) {
+        const std::vector<std::string> & family_ids,
+        const std::map<std::string, std::vector<std::string>> & additional_families) {
     const std::set<std::string> selected(family_ids.begin(), family_ids.end());
     std::vector<common_chat_tool> result;
     for (const auto & tool : tools) {
-        if (selected.count(family_id_for_tool(tool.name))) result.push_back(tool);
+        const auto extra = additional_families.find(tool.name);
+        if (selected.count(family_id_for_tool(tool.name)) ||
+                (extra != additional_families.end() &&
+                 std::any_of(extra->second.begin(), extra->second.end(),
+                    [&](const auto & family) { return selected.count(family) != 0; }))) {
+            result.push_back(tool);
+        }
     }
     return result;
 }
 
 std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
         const std::vector<common_chat_tool> & tools,
-        const std::vector<std::string> & family_ids) {
-    auto result = common_filter_tools_by_families(tools, family_ids);
+        const std::vector<std::string> & family_ids,
+        const std::map<std::string, std::vector<std::string>> & additional_families) {
+    auto result = common_filter_tools_by_families(tools, family_ids, additional_families);
     const std::set<std::string> selected(family_ids.begin(), family_ids.end());
 
     // Scoped memory reads are shared host capabilities, not an authorization

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-investigation-workflows",
-  "version": "v4",
+  "version": "v6",
   "procedures": [
     {
       "id": "investigation-evidence-discipline-v2",
@@ -13,7 +13,7 @@
     {
       "id": "investigation-source-boundaries-v2",
       "summary": "Respect configured sources, case scope, time windows and analysis budgets.",
-      "content": "Use only sources configured by the host and available in the current namespace or project scope. Keep collection within the case time window and declared budgets. Treat truncated, timed-out or approximate search results as partial. Never infer that a missing event proves an event did not occur. For uploaded logs, prepare text and call investigation.log.import with an explicit JSONL or CSV field mapping. Use JSON pointers for nested JSON and exact headers for CSV. Preserve rejected records, missing timestamps and parser coverage. Continue bounded pages or resume host-saved progress; never treat a parsed page as complete case coverage. Keep original processor provenance separate from the parser profile.",
+      "content": "Use only sources configured by the host and available in the current namespace or project scope. Keep collection within the case time window and declared budgets. Treat truncated, timed-out or approximate search results as partial. Never infer that a missing event proves an event did not occur. For uploaded logs, prepare text and call investigate.log.import with an explicit JSONL or CSV field mapping. Use JSON pointers for nested JSON and exact headers for CSV. Preserve rejected records, missing timestamps and parser coverage. Continue bounded pages or resume host-saved progress; never treat a parsed page as complete case coverage. Keep original processor provenance separate from the parser profile.",
       "importance": 1.0,
       "confidence": 1.0
     },
@@ -34,7 +34,7 @@
     {
       "id": "investigation-event-chain-v2",
       "summary": "Construct a time-ordered event chain with explicit clock limits.",
-      "content": "Use the bounded temporal_path analysis for a candidate start and target. The host requires relation intervals to be time-compatible. Preserve unknown timestamps, uncertainty and clock limitations; a missing edge is not proof that the event did not occur. Use source-backed timestamps from selected documents and log sources. Preserve whether a time was reported in a document or recorded independently by a system. Do not treat a reported event as an independently observed event. Keep uncertainty and missing time links explicit. Import uploaded structured logs with investigation.log.import before using event algorithms. A document reported_event is a source statement, not an independent log event. Keep event time, reported time, document creation and collection time distinct. Use possible_same_event links only as explicit proposals backed by the anchored reported statement; do not rewrite event identities.",
+      "content": "Use the bounded temporal_path analysis for a candidate start and target. The host requires relation intervals to be time-compatible. Preserve unknown timestamps, uncertainty and clock limitations; a missing edge is not proof that the event did not occur. Use source-backed timestamps from selected documents and log sources. Preserve whether a time was reported in a document or recorded independently by a system. Do not treat a reported event as an independently observed event. Keep uncertainty and missing time links explicit. Import uploaded structured logs with investigate.log.import before using event algorithms. A document reported_event is a source statement, not an independent log event. Keep event time, reported time, document creation and collection time distinct. Use possible_same_event links only as explicit proposals backed by the anchored reported statement; do not rewrite event identities.",
       "importance": 0.95,
       "confidence": 1.0
     },
@@ -55,21 +55,21 @@
     {
       "id": "investigation-report-composition-v2",
       "summary": "Freeze a source-linked report from one exact case revision.",
-      "content": "Confirm the case revision, then use investigation.report.compose. Preserve event ordering, rule IDs, evidence references, hypothesis state and gaps. The report is a frozen resource; further analysis creates a later case revision and a separately composed report. Freeze the exact case revision. Include each source type, retained content hash, processor version, source-anchored statements, comparisons and source dependencies. Distinguish reported events from independent log observations, preserve hypotheses and gaps, and keep the report immutable. Preserve actor candidates, anchored mentions, proposed evidence links, normalized event positions, parser profiles and import coverage in the frozen source manifest. Historical reports must retain their selected revision when new documents are added.",
+      "content": "Confirm the case revision, then use investigate.report.compose. Preserve event ordering, rule IDs, evidence references, hypothesis state and gaps. The report is a frozen resource; further analysis creates a later case revision and a separately composed report. Freeze the exact case revision. Include each source type, retained content hash, processor version, source-anchored statements, comparisons and source dependencies. Distinguish reported events from independent log observations, preserve hypotheses and gaps, and keep the report immutable. Preserve actor candidates, anchored mentions, proposed evidence links, normalized event positions, parser profiles and import coverage in the frozen source manifest. Historical reports must retain their selected revision when new documents are added.",
       "importance": 0.95,
       "confidence": 1.0
     },
     {
       "id": "investigation-actor-relationship-v2",
       "summary": "Extract source-anchored actor mentions and keep identity matches provisional.",
-      "content": "Read only explicitly selected case resources. Propose actor mentions with exact source resource, byte offsets, and verbatim quotes. Distinguish a mention from a resolved identity. Similar names across documents remain separate unless an explicit stable identifier or analyst review supports a binding. Record proposals with investigation.statement.record only after preparing the source text. Supply statement mentions with exact names and absolute UTF-8 byte offsets inside the statement quote. The host creates distinct actor candidates and mention IDs even for equal names. Read actors and actor_mentions through investigation.case.items before proposing possible_same_actor evidence_links. Links require supporting statement IDs and rationale; they do not merge candidates or constitute analyst review.",
+      "content": "Read only explicitly selected case resources. Propose actor mentions with exact source resource, byte offsets, and verbatim quotes. Distinguish a mention from a resolved identity. Similar names across documents remain separate unless an explicit stable identifier or analyst review supports a binding. Record proposals with investigate.statement.record only after preparing the source text. Supply statement mentions with exact names and absolute UTF-8 byte offsets inside the statement quote. The host creates distinct actor candidates and mention IDs even for equal names. Read actors and actor_mentions through investigate.case.items before proposing possible_same_actor evidence_links. Links require supporting statement IDs and rationale; they do not merge candidates or constitute analyst review.",
       "importance": 0.95,
       "confidence": 1.0
     },
     {
       "id": "investigation-narrative-comparison-v2",
       "summary": "Compare source-anchored statements while distinguishing contradiction, qualification, dependency, and uncertainty.",
-      "content": "Extract the relevant statements from selected sources with exact anchors. Compare only statements that address compatible actors, events, time ranges, places, and definitions. Mark contradictions only when the statements make incompatible claims under those conditions. Record source citation or retelling as dependency when supported; do not count dependent accounts as independent corroboration. Preserve unresolved comparisons as inconclusive. Compare newly selected sources with earlier saved statements explicitly chosen for this analysis. Use investigation.analyze source_followup for a bounded structural list of unprocessed sources and unexamined source pairs; suggestions are not semantic matches or executable tool calls. A possible_same_event evidence_link may connect a reported_event statement to a selected normalized log event; it remains a proposal and preserves both observations.",
+      "content": "Extract the relevant statements from selected sources with exact anchors. Compare only statements that address compatible actors, events, time ranges, places, and definitions. Mark contradictions only when the statements make incompatible claims under those conditions. Record source citation or retelling as dependency when supported; do not count dependent accounts as independent corroboration. Preserve unresolved comparisons as inconclusive. Compare newly selected sources with earlier saved statements explicitly chosen for this analysis. Use investigate.analyze source_followup for a bounded structural list of unprocessed sources and unexamined source pairs; suggestions are not semantic matches or executable tool calls. A possible_same_event evidence_link may connect a reported_event statement to a selected normalized log event; it remains a proposal and preserves both observations.",
       "importance": 0.95,
       "confidence": 1.0
     },
@@ -90,15 +90,15 @@
   ],
   "workflows": [
     {
-      "id": "investigation-identity-analysis-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-identity-analysis-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/identity-analysis",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-identity-analysis@v4",
+      "graph_revision": "investigation-identity-analysis@v6",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
+        "investigate.collect",
         "investigation.graph"
       ],
       "required_context": [],
@@ -108,15 +108,15 @@
       ]
     },
     {
-      "id": "investigation-communication-analysis-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-communication-analysis-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/communication-analysis",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-communication-analysis@v4",
+      "graph_revision": "investigation-communication-analysis@v6",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
+        "investigate.collect",
         "investigation.graph"
       ],
       "required_context": [],
@@ -126,12 +126,12 @@
       ]
     },
     {
-      "id": "investigation-event-chain-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-event-chain-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/event-chain",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-event-chain@v4",
+      "graph_revision": "investigation-event-chain@v6",
       "required_capabilities": [
         "investigation.case",
         "investigation.graph",
@@ -139,21 +139,21 @@
       ],
       "required_context": [],
       "optional_capabilities": [
-        "investigation.collect",
+        "investigate.collect",
         "investigation.hypothesis",
         "resource.read"
       ]
     },
     {
-      "id": "investigation-integration-trace-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-integration-trace-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/integration-trace",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-integration-trace@v4",
+      "graph_revision": "investigation-integration-trace@v6",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
+        "investigate.collect",
         "investigation.graph"
       ],
       "required_context": [],
@@ -163,31 +163,31 @@
       ]
     },
     {
-      "id": "investigation-hypothesis-testing-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-hypothesis-testing-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/hypothesis-testing",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-hypothesis-testing@v4",
+      "graph_revision": "investigation-hypothesis-testing@v6",
       "required_capabilities": [
         "investigation.case",
         "investigation.hypothesis"
       ],
       "required_context": [],
       "optional_capabilities": [
-        "investigation.collect",
+        "investigate.collect",
         "investigation.graph",
         "investigation.analysis",
         "resource.read"
       ]
     },
     {
-      "id": "investigation-report-composition-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-report-composition-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/report-composition",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-report-composition@v4",
+      "graph_revision": "investigation-report-composition@v6",
       "required_capabilities": [
         "investigation.case",
         "investigation.report",
@@ -197,7 +197,7 @@
         "artifact.export",
         "document.open",
         "document.save",
-        "investigation.collect",
+        "investigate.collect",
         "investigation.graph",
         "investigation.analysis",
         "investigation.hypothesis"
@@ -205,12 +205,12 @@
       "required_context": []
     },
     {
-      "id": "investigation-actor-relationship-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-actor-relationship-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/actor-relationship",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-actor-relationship@v4",
+      "graph_revision": "investigation-actor-relationship@v6",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -219,12 +219,12 @@
       "required_context": []
     },
     {
-      "id": "investigation-narrative-comparison-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-narrative-comparison-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/narrative-comparison",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-narrative-comparison@v4",
+      "graph_revision": "investigation-narrative-comparison@v6",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -232,16 +232,16 @@
       ],
       "required_context": [],
       "optional_capabilities": [
-        "investigation.collect"
+        "investigate.collect"
       ]
     },
     {
-      "id": "investigation-document-provenance-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-document-provenance-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "workflow_ref": "workflow://investigation/document-provenance",
-      "workflow_revision": "v4",
+      "workflow_revision": "v6",
       "family": "investigation",
-      "graph_revision": "investigation-document-provenance@v4",
+      "graph_revision": "investigation-document-provenance@v6",
       "required_capabilities": [
         "investigation.case",
         "resource.inspect"
@@ -254,15 +254,15 @@
   ],
   "blueprints": [
     {
-      "id": "investigation-identity-analysis-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-identity-analysis-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Trace an identity through hosts and authentication events.",
       "purpose": "Establish which configured sources record authentication activity for the selected identity.",
       "goal": "Produce a source-linked account of observed authentication destinations and related events.",
       "success_criteria": "Every stated destination is supported by retained source events; uncertain identity bindings and coverage gaps remain explicit.",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
+        "investigate.collect",
         "investigation.graph"
       ],
       "workflow_policy": "preferred",
@@ -275,7 +275,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/identity-analysis",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [
@@ -320,15 +320,15 @@
       "next_action": "select-scope"
     },
     {
-      "id": "investigation-communication-analysis-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-communication-analysis-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Trace observed network communication from a host or address.",
       "purpose": "Describe source-linked communication paths and their time coverage.",
       "goal": "Identify the observed peers and supporting flow records for the selected host or address.",
       "success_criteria": "Relations retain their derivation rule and event evidence; communication is not presented as causation.",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
+        "investigate.collect",
         "investigation.graph"
       ],
       "workflow_policy": "preferred",
@@ -341,7 +341,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/communication-analysis",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [
@@ -386,8 +386,8 @@
       "next_action": "select-scope"
     },
     {
-      "id": "investigation-event-chain-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-event-chain-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Find a bounded time-compatible chain between two entities.",
       "purpose": "Test whether recorded relations form a time-ordered path under explicit bounds.",
       "goal": "Return a bounded shortest-hop temporal path or an explicit no-path/budget-limited result.",
@@ -407,7 +407,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/event-chain",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [
@@ -452,15 +452,15 @@
       "next_action": "define-endpoints"
     },
     {
-      "id": "investigation-integration-trace-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-integration-trace-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Follow an exact trace, correlation or message identifier across services.",
       "purpose": "Reconstruct an integration path from source events that share a stable trace identifier.",
       "goal": "Describe the observed service/event sequence with its timestamps and source evidence.",
       "success_criteria": "The path uses exact identifier matches, preserves missing spans and does not invent unobserved service transitions.",
       "required_capabilities": [
         "investigation.case",
-        "investigation.collect",
+        "investigate.collect",
         "investigation.graph"
       ],
       "workflow_policy": "preferred",
@@ -473,7 +473,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/integration-trace",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [
@@ -518,8 +518,8 @@
       "next_action": "select-trace"
     },
     {
-      "id": "investigation-hypothesis-testing-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-hypothesis-testing-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Evaluate a testable claim against supporting and contradicting evidence.",
       "purpose": "Keep an explanation as a hypothesis until an analyst reviews the evidence.",
       "goal": "Record a hypothesis with both supporting and contradicting source references and explicit limitations.",
@@ -537,7 +537,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/hypothesis-testing",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [
@@ -574,8 +574,8 @@
       "next_action": "state-claim"
     },
     {
-      "id": "investigation-report-composition-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-report-composition-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Freeze a report from a selected investigation case revision.",
       "purpose": "Create an auditable report resource tied to one immutable case revision.",
       "goal": "Produce a source-linked report containing a timeline, relations, hypotheses and coverage limitations.",
@@ -599,7 +599,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/report-composition",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [
@@ -611,7 +611,7 @@
         {
           "id": "compose-report",
           "title": "Compose report",
-          "objective": "Use investigation.report.compose for the selected revision. Result: frozen report resource and fingerprint preserving source versions, processing provenance, evidence, hypotheses and gaps.",
+          "objective": "Use investigate.report.compose for the selected revision. Result: frozen report resource and fingerprint preserving source versions, processing provenance, evidence, hypotheses and gaps.",
           "depends_on": [
             "confirm-revision"
           ]
@@ -628,8 +628,8 @@
       "next_action": "confirm-revision"
     },
     {
-      "id": "investigation-actor-relationship-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-actor-relationship-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Compare named actors across explicitly selected source documents.",
       "purpose": "Record source-anchored actor mentions and proposed relationships without merging identities by name alone.",
       "goal": "Produce a paginated actor and relationship view with every mention linked to its retained source anchor.",
@@ -649,7 +649,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/actor-relationship",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [
@@ -686,8 +686,8 @@
       "next_action": "select-sources"
     },
     {
-      "id": "investigation-narrative-comparison-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-narrative-comparison-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Compare event descriptions and statements across selected documents and logs.",
       "purpose": "Find supported agreement, contradiction, qualification, source dependency, and unresolved differences.",
       "goal": "Record comparable source-anchored statements and explicitly qualified pairwise comparisons.",
@@ -707,7 +707,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/narrative-comparison",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [
@@ -760,8 +760,8 @@
       "next_action": "select-sources"
     },
     {
-      "id": "investigation-document-provenance-v4",
-      "source_revision": "agent-investigation-workflows@v4",
+      "id": "investigation-document-provenance-v6",
+      "source_revision": "agent-investigation-workflows@v6",
       "selection_description": "Inspect origin, versions, and processing history of selected investigation documents.",
       "purpose": "Summarize verifiable metadata and representation lineage for the case sources.",
       "goal": "Produce a source-by-source provenance account with explicit metadata gaps and processor history.",
@@ -780,7 +780,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/document-provenance",
-          "workflow_revision": "v4"
+          "workflow_revision": "v6"
         }
       ],
       "steps": [

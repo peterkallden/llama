@@ -153,32 +153,32 @@ int main() {
     assert(document_patch && document_patch->requires_confirmation && document_patch->mcp_app_write_authorized);
     assert(research_publish->risk_class == common_tool_risk_class::artifact_write &&
         research_publish->requires_confirmation && !research_publish->mcp_app_write_authorized);
-    for (const auto * name : {"investigation.case.create", "investigation.source.attach", "investigation.document.prepare",
-            "investigation.statement.record", "investigation.association.review", "investigation.collect", "investigation.log.import", "investigation.claim.hypothesize",
-            "investigation.report.compose", "visualization.snapshot"}) {
+    for (const auto * name : {"investigate.case.create", "investigate.source.attach", "investigate.document.prepare",
+            "investigate.statement.record", "investigate.association.review", "investigate.collect", "investigate.log.import", "investigate.claim.hypothesize",
+            "investigate.report.compose", "visualize.snapshot"}) {
         const auto * definition = catalog.find_definition(name);
         assert(definition && definition->risk_class == common_tool_risk_class::artifact_write &&
             definition->requires_confirmation && definition->mcp_app_write_authorized);
     }
-    const auto * source_attach = catalog.find_definition("investigation.source.attach");
+    const auto * source_attach = catalog.find_definition("investigate.source.attach");
     assert(source_attach);
     const auto source_attach_schema = nlohmann::json::parse(source_attach->input_schema_json);
     assert(source_attach_schema["properties"].contains("resource_uri") &&
         source_attach_schema["properties"].contains("provider_id") &&
         source_attach_schema["properties"].contains("window_start_ms") &&
         source_attach_schema["properties"].contains("window_end_ms"));
-    const auto * investigation_source_list = catalog.find_definition("investigation.source.list");
+    const auto * investigation_source_list = catalog.find_definition("investigate.source.list");
     assert(investigation_source_list && investigation_source_list->risk_class == common_tool_risk_class::local_read &&
         !investigation_source_list->requires_confirmation);
-    const auto * case_items = catalog.find_definition("investigation.case.items");
+    const auto * case_items = catalog.find_definition("investigate.case.items");
     assert(case_items);
     const auto case_items_schema = nlohmann::json::parse(case_items->input_schema_json);
     const auto & item_types = case_items_schema["properties"]["type"]["enum"];
     assert(item_types.is_array() && std::find(item_types.begin(), item_types.end(), "reports") != item_types.end() &&
         std::find(item_types.begin(), item_types.end(), "sources") != item_types.end() &&
         std::find(item_types.begin(), item_types.end(), "statements") != item_types.end());
-    const auto * investigation_collect = catalog.find_definition("investigation.collect");
-    const auto * visualization_create = catalog.find_definition("visualization.create");
+    const auto * investigation_collect = catalog.find_definition("investigate.collect");
+    const auto * visualization_create = catalog.find_definition("visualize.create");
     assert(investigation_collect && investigation_collect->risk_class == common_tool_risk_class::artifact_write &&
         investigation_collect->requires_confirmation);
     assert(visualization_create && visualization_create->risk_class == common_tool_risk_class::artifact_write &&
@@ -491,7 +491,7 @@ int main() {
                 "artifact.export") != definition.capabilities.end());
         } else if (definition.name == "document.create" || definition.name == "document.import" || definition.name == "document.save" ||
                 definition.name == "document.propose_patch" || definition.name == "document.apply_patch" ||
-                definition.name == "visualization.create") {
+                definition.name == "visualize.create") {
             assert(definition.requires_confirmation);
         } else {
             assert(!definition.requires_confirmation);

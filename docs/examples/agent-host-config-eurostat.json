@@ -20,6 +20,7 @@
       {
         "type": "openapi",
         "id": "eurostat-statistics",
+        "additional_families": ["research"],
         "enabled": true,
         "spec_path": "eurostat-statistics-openapi.json",
         "base_url": "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0",
@@ -30,6 +31,7 @@
       {
         "type": "openapi",
         "id": "eurostat-sdmx-structure",
+        "additional_families": ["research"],
         "enabled": true,
         "spec_path": "eurostat-sdmx-openapi.json",
         "base_url": "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1",

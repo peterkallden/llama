@@ -122,7 +122,7 @@ int main() {
     failed.status = common_plan_step_status::failed;
     failed.semantic_alias = "workflow-transition:collect";
     composite.steps.push_back(failed);
-    composite.observations.push_back({"tool:" + failed.id + ":investigation.collect", "investigation.collect",
+    composite.observations.push_back({"tool:" + failed.id + ":investigate.collect", "investigate.collect",
         R"({"failure":{"code":"tool.investigation.dataset_unavailable","retryable":false}})", 1.0f});
     if (common_plan_find_tool_observation_step(composite, composite.observations.front()) != &composite.steps.front() ||
             common_plan_render_tool_observations(composite, evidence_cfg).find("status: completed") != std::string::npos) {

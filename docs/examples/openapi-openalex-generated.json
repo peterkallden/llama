@@ -1,6 +1,7 @@
 {
   "type": "openapi",
   "id": "openalex",
+  "additional_families": ["research"],
   "enabled": true,
   "required": true,
   "prefix": "openalex",
