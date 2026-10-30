@@ -56,6 +56,18 @@ with tempfile.TemporaryDirectory(prefix="agent-clangd-workspace-") as temporary:
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         inspect = call(2, "code.inspect", {})
         assert inspect["compile_commands"] == str(root) and inspect["index_coverage"] == "unknown"
+        inspected_file = call(19, "code.inspect", {"path": "caller.cpp"})
+        assert inspected_file["compilation_database_status"] == "available" and inspected_file["source_in_database"] is True
+        inspected_header = call(20, "code.inspect", {"path": "api.h"})
+        assert inspected_header["source_in_database"] is False
+        # A no-hint query starts the project index without the caller opening
+        # either source. Index completion is asynchronous, so allow it time.
+        deadline = time.monotonic() + 30
+        while True:
+            cold = call(21, "code.symbols", {"symbol": "fixture_caller"})
+            if any(item["path"] == "caller.cpp" for item in cold["items"]): break
+            if time.monotonic() >= deadline: raise AssertionError(f"project index did not find caller: {cold}")
+            time.sleep(0.2)
         caller = call(3, "code.symbols", {"symbol": "fixture_caller", "path_hint": "caller.cpp"})
         assert caller["items"] and caller["complete"] is False
         target = call(4, "code.symbols", {"symbol": "fixture_target", "path_hint": "target.cpp"})
@@ -80,6 +92,29 @@ with tempfile.TemporaryDirectory(prefix="agent-clangd-workspace-") as temporary:
 
     assert list(index_dir.glob("*")), "clangd index was lost after server shutdown"
     print("clangd workspace MCP: disk index remains after server shutdown")
+
+    p = subprocess.Popen([str(server), "--config", str(root / "config.json"), "--repository-root", str(root)],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    lines = queue.Queue()
+    threading.Thread(target=lambda: [lines.put(line) for line in p.stdout], daemon=True).start()
+    try:
+        rpc(30, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                "clientInfo": {"name": "restart-test", "version": "1"}})
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        deadline = time.monotonic() + 30
+        while True:
+            found = call(31, "code.symbols", {"symbol": "fixture_caller"})
+            if any(item["path"] == "caller.cpp" for item in found["items"]): break
+            if time.monotonic() >= deadline: raise AssertionError(f"restart lookup failed: {found}")
+            time.sleep(0.2)
+        print("clangd workspace MCP: project lookup after server restart passed")
+    finally:
+        p.terminate()
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
 
     # A fake provider hangs once and then succeeds after the host restarts it.
     fake = root / "fake-clangd"

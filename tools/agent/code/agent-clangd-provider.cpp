@@ -73,7 +73,51 @@ json coverage(bool truncated, bool incomplete) {
 }
 
 agent_clangd_code_provider::agent_clangd_code_provider(agent_clangd_session_config config)
-    : session_(std::make_unique<agent_clangd_session>(config)), repository_root_(std::move(config.repository_root)) {}
+    : session_(std::make_unique<agent_clangd_session>(config)), repository_root_(std::move(config.repository_root)),
+      compile_commands_dir_(std::move(config.compile_commands_dir)) {}
+
+void agent_clangd_code_provider::start_project_index() {
+    if (repository_root_.empty()) return;
+    if (project_index_started_ && session_->initialized()) return;
+    project_index_started_ = false;
+    std::error_code ec;
+    auto directory = compile_commands_dir_.empty() || compile_commands_dir_ == "auto"
+        ? std::filesystem::path(repository_root_) : std::filesystem::path(compile_commands_dir_);
+    auto database = std::filesystem::absolute(directory / "compile_commands.json", ec);
+    if (ec) return;
+    const auto size = std::filesystem::file_size(database, ec);
+    if (ec || size > 16 * 1024 * 1024) return;
+    std::ifstream input(database, std::ios::binary);
+    if (!input) return;
+    std::string contents(16 * 1024 * 1024 + 1, '\0');
+    input.read(&contents[0], contents.size());
+    contents.resize(static_cast<size_t>(input.gcount()));
+    if (input.bad() || contents.size() > 16 * 1024 * 1024) return;
+    const auto entries = json::parse(contents, nullptr, false);
+    if (!entries.is_array()) return;
+    for (const auto & entry : entries) {
+        if (!entry.is_object() || !entry.contains("directory") || !entry["directory"].is_string() ||
+                !entry.contains("file") || !entry["file"].is_string()) continue;
+        std::filesystem::path source;
+        std::string error;
+        const auto path = std::filesystem::path(entry["directory"].get<std::string>()) /
+            std::filesystem::path(entry["file"].get<std::string>());
+        if (!agent_clangd_repository_path(repository_root_, path, source, error)) continue;
+        const auto bytes = std::filesystem::file_size(source, ec);
+        if (ec || bytes > 4 * 1024 * 1024) { ec.clear(); continue; }
+        std::ifstream file(source, std::ios::binary);
+        if (!file) continue;
+        std::string text(4 * 1024 * 1024 + 1, '\0');
+        file.read(&text[0], text.size());
+        text.resize(static_cast<size_t>(file.gcount()));
+        if (file.bad() || text.size() > 4 * 1024 * 1024) continue;
+        // Opening one authorized translation unit makes clangd discover its
+        // compilation database and schedule its own background index.
+        if (session_->open_document(agent_clangd_file_uri(source), language_id(source), text, error))
+            project_index_started_ = true;
+        return;
+    }
+}
 
 common_tool_execution_result agent_clangd_code_provider::symbol(const std::string & arguments_json) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -90,6 +134,7 @@ common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const 
             !agent_clangd_repository_path(repository_root_, arguments["path_hint"].get<std::string>(), hint, error))
         return common_tool_execution_result::failure("tool.diagnostics.symbol.invalid_arguments",
             common_tool_failure_class::validation, false, "Symbol path is outside the repository.", error);
+    if (hint.empty()) start_project_index();
     std::error_code fs_error;
     if (!hint.empty() && std::filesystem::is_regular_file(hint, fs_error) && !fs_error) {
         constexpr size_t source_limit = 4 * 1024 * 1024;

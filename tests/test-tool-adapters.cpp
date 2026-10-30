@@ -1214,6 +1214,8 @@ int main() {
         std::vector<nlohmann::json> neighborhood_requests;
         std::string override_page;
         bool provider_timed_out = false;
+        bool fail_service = false;
+        bool invalid_service = false;
         impact_bindings.code_calls = [&](const std::string & input) {
             if (provider_timed_out) return common_tool_execution_result::failure(
                 "tool.diagnostics.call_hierarchy.timeout", common_tool_failure_class::timeout,
@@ -1222,6 +1224,10 @@ int main() {
             neighborhood_requests.push_back(request);
             const auto path = request.value("path_hint", request.value("definition_path", std::string{}));
             const auto line = request.value("line", request.value("definition_line", 0));
+            if (fail_service && path == "src/service.cpp") return common_tool_execution_result::failure(
+                "tool.diagnostics.call_hierarchy.timeout", common_tool_failure_class::timeout,
+                true, "Semantic provider timed out.", "private provider diagnostic");
+            if (invalid_service && path == "src/service.cpp") return common_tool_execution_result::success(R"({"count":0})");
             if (!override_page.empty() && path == "src/entry.cpp")
                 return common_tool_execution_result::success(override_page);
             if (path == "src/entry.cpp" && line == 1) return common_tool_execution_result::success(
@@ -1249,6 +1255,28 @@ int main() {
         assert(impact_result.ok);
         const auto depth_limited = nlohmann::json::parse(impact_result.output);
         assert(depth_limited["truncated"] == true && depth_limited["complete"] == false);
+        assert(depth_limited["continuations"].size() == 1 &&
+            depth_limited["continuations"][0]["arguments"]["symbol"] == "service" &&
+            depth_limited["continuations"][0]["reason"] == "depth_limit");
+        const auto continuation_result = impact_registry.execute({"code.impact", depth_limited["continuations"][0]["arguments"].dump()});
+        assert(continuation_result.ok && nlohmann::json::parse(continuation_result.output)["relationship_count"] == 2);
+        fail_service = true;
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":2})"});
+        assert(impact_result.ok);
+        const auto partial = nlohmann::json::parse(impact_result.output);
+        assert(partial["complete"] == false && partial["relationship_count"] == 1 &&
+            partial["provider_failures"].size() == 1 && partial["provider_failures"][0]["class"] == "timeout" &&
+            partial["continuations"][0]["reason"] == "provider_failure" &&
+            impact_result.output.find("private provider diagnostic") == std::string::npos);
+        fail_service = false;
+        invalid_service = true;
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":2})"});
+        assert(impact_result.ok);
+        const auto invalid_partial = nlohmann::json::parse(impact_result.output);
+        assert(invalid_partial["complete"] == false && invalid_partial["relationship_count"] == 1 &&
+            invalid_partial["provider_failures"].size() == 1 &&
+            invalid_partial["continuations"][0]["reason"] == "invalid_provider_response");
+        invalid_service = false;
         impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_nodes":2})"});
         assert(impact_result.ok);
         const auto node_limited = nlohmann::json::parse(impact_result.output);

@@ -57,6 +57,9 @@ opens and parses that file before querying the workspace index. Directory hints
 and searches without a hint remain subject to asynchronous index availability.
 `code.inspect` reports the configured `compile_commands` setting and marks
 project index coverage as unknown; the setting `auto` is not a resolved path.
+With an explicitly configured compilation database it reports whether that
+database can be read, and an optional repository-relative `path` reports
+whether the source is present, or null when this cannot be determined.
 Clangd's background index persists under the compilation database directory's
 `.cache/clangd/index` when writable and is reused across process restarts.
 `diagnostics.semantic_request_timeout_ms` bounds an individual clangd request
@@ -64,6 +67,9 @@ Clangd's background index persists under the compilation database directory's
 multi-request operation can take longer than one request, and its outer budget
 is checked separately. Index contents depend on the build configuration and
 do not prove that every translation unit has been indexed.
+For an unhinted symbol search with an explicit readable compilation database,
+the provider opens one authorized translation unit to trigger clangd's own
+background project indexing. Queries can return before the index is ready.
 
 Backlog: propagate one shared operation deadline and cancellation through MCP,
 the tool queue, multi-step code operations and in-flight clangd requests. The
@@ -144,6 +150,14 @@ Execution artifacts remain available on both successful and failed results. Outp
 failures are recorded explicitly in the receipt and never reported as complete evidence.
 
 ## Presentation and current limits
+
+`code.impact` returns `continuations` with a reason and an `arguments` object
+that can be passed directly to another `code.impact` call for a bounded or
+failed branch. If a provider fails after relations
+have already been collected, the response keeps the graph, marks it incomplete,
+and reports bounded safe `provider_failures`; a failure on the initial request
+still returns the ordinary tool error. Continuations do not guarantee that the
+remaining graph is complete or that a failed provider will succeed on retry.
 
 `code.calls` and `code.impact` include a `relationship` visualization projection in their results.
 The runtime validates visualization projections against the shared contract

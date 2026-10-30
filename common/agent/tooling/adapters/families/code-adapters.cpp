@@ -391,34 +391,64 @@ call_neighborhood_result call_neighborhood(const common_native_tool_bindings & b
     pending.push_back({seed, args.value("symbol", std::string{}), 0});
 
     json relationships = {{"callers", json::array()}, {"callees", json::array()}};
+    json continuations = json::array(), failures = json::array();
+    std::set<std::string> continuation_ids;
     std::set<std::string> discovered_nodes, queued_locations, expanded_locations;
     std::set<std::pair<std::string, std::string>> edges;
     std::vector<std::string> limitations;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     size_t requests = 0;
     bool complete = true, truncated = false;
-    const auto invalid_page = [](const std::string & reason) {
-        return call_neighborhood_result{nullptr, false, false,
-            common_adapter_execution_failure("tool.code.impact.provider_failed", reason,
-                "The semantic provider returned an invalid bounded code analysis.")};
-    };
     const auto stop_at_bound = [&](const std::string & reason) {
         complete = false;
         truncated = true;
         add_limitation(limitations, reason);
     };
+    const auto add_continuation = [&](const pending_location & location, const char * reason) {
+        const auto id = location_id(location.location);
+        if (id.empty() || location.symbol.empty() || location.symbol.size() > 256 ||
+                location.symbol.find('\0') != std::string::npos ||
+                (location.location.contains("column") && location.location["column"] == 0) ||
+                continuation_ids.count(id) || continuations.size() >= max_nodes) return;
+        json arguments = {{"symbol", location.symbol}, {"definition_path", location.location["path"]},
+            {"definition_line", location.location["line"]}, {"direction", direction}};
+        if (location.location.contains("column")) arguments["definition_column"] = location.location["column"];
+        continuations.push_back({{"reason", reason}, {"arguments", std::move(arguments)}});
+        continuation_ids.insert(id);
+    };
+    pending_location active;
+    const auto invalid_page = [&](const std::string & reason) {
+        if (edges.empty()) return call_neighborhood_result{nullptr, false, false,
+            common_adapter_execution_failure("tool.code.impact.provider_failed", reason,
+                "The semantic provider returned an invalid bounded code analysis.")};
+        add_limitation(limitations, "A provider response was invalid after partial results were collected.");
+        add_continuation(active, "invalid_provider_response");
+        for (const auto & remaining : pending) add_continuation(remaining, "unexpanded");
+        failures.push_back({{"code", "tool.code.impact.provider_failed"}, {"class", "execution"},
+            {"retryable", false}, {"summary", "The semantic provider returned an invalid bounded code analysis."},
+            {"symbol", active.symbol}, {"path", active.location["path"]}, {"line", active.location["line"]}});
+        relationships["limitations"] = limitations;
+        relationships["provider_requests"] = requests;
+        relationships["continuations"] = continuations;
+        relationships["provider_failures"] = failures;
+        return call_neighborhood_result{relationships, false, truncated, std::nullopt};
+    };
 
     while (!pending.empty()) {
         auto current = std::move(pending.front());
         pending.pop_front();
+        active = current;
         const auto current_id = location_id(current.location);
         if (expanded_locations.count(current_id)) continue;
         if (current.depth >= max_depth) {
             stop_at_bound("The requested call-neighborhood depth limit was reached; boundary nodes were not expanded.");
+            add_continuation(current, "depth_limit");
             continue;
         }
         if (requests >= max_nodes || std::chrono::steady_clock::now() >= deadline) {
             stop_at_bound("The call-neighborhood provider-request or elapsed-time budget was reached.");
+            add_continuation(current, requests >= max_nodes ? "request_limit" : "time_limit");
+            for (const auto & remaining : pending) add_continuation(remaining, "budget_limit");
             break;
         }
         expanded_locations.insert(current_id);
@@ -430,7 +460,17 @@ call_neighborhood_result call_neighborhood(const common_native_tool_bindings & b
         ++requests;
         auto result = bindings.code_calls(request.dump());
         if (!result.ok) {
-            return {nullptr, false, false, std::move(result)};
+            if (edges.empty()) return {nullptr, false, false, std::move(result)};
+            complete = false;
+            add_limitation(limitations, "A provider request failed after partial results were collected.");
+            add_continuation(current, "provider_failure");
+            if (failures.size() < max_nodes) failures.push_back({
+                {"code", result.failure_code.substr(0, 256)},
+                {"class", common_tool_failure_class_name(result.failure_class)},
+                {"retryable", result.retryable},
+                {"summary", result.safe_summary.substr(0, 512)},
+                {"symbol", current.symbol}, {"path", current.location["path"]}, {"line", current.location["line"]}});
+            continue;
         }
         if (result.output.size() > 64 * 1024) {
             return invalid_page("semantic call provider exceeded its neighborhood page byte limit");
@@ -486,6 +526,10 @@ call_neighborhood_result call_neighborhood(const common_native_tool_bindings & b
                 if ((edges.count(edge_key) == 0 && edges.size() >= max_edges) ||
                         discovered_nodes.size() + new_nodes > max_nodes) {
                     stop_at_bound("The call-neighborhood node or edge limit was reached.");
+                    const auto & next = relation[incoming ? "from" : "to"];
+                    if (next.contains("name") && next["name"].is_string())
+                        add_continuation({next, next["name"].get<std::string>(), current.depth + 1, true},
+                            edges.size() >= max_edges ? "edge_limit" : "node_limit");
                     continue;
                 }
                 discovered_nodes.insert(from_id);
@@ -510,6 +554,7 @@ call_neighborhood_result call_neighborhood(const common_native_tool_bindings & b
         }
         if (std::chrono::steady_clock::now() >= deadline) {
             stop_at_bound("The call-neighborhood elapsed-time budget was reached.");
+            for (const auto & remaining : pending) add_continuation(remaining, "time_limit");
             break;
         }
     }
@@ -517,6 +562,8 @@ call_neighborhood_result call_neighborhood(const common_native_tool_bindings & b
         add_limitation(limitations, "The provider or bounded traversal returned incomplete coverage.");
     relationships["limitations"] = std::move(limitations);
     relationships["provider_requests"] = requests;
+    relationships["continuations"] = std::move(continuations);
+    relationships["provider_failures"] = std::move(failures);
     return {std::move(relationships), complete, truncated, std::nullopt};
 }
 
@@ -588,8 +635,11 @@ bool common_try_register_code_tool_adapter(
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
             json args;
             std::string parse_error;
-            if (!common_adapter_parse_object(input, args, parse_error) || !args.empty())
-                return common_adapter_validation_failure("tool.code.invalid_arguments", "code.inspect requires an empty argument object");
+            if (!common_adapter_parse_object(input, args, parse_error) ||
+                    !valid_optional_string(args, "path", 512, parse_error) ||
+                    (args.contains("path") && args["path"].is_string() && args["path"].get_ref<const std::string &>().empty()) ||
+                    args.size() > (args.contains("path") ? 1u : 0u))
+                return common_adapter_validation_failure("tool.code.invalid_arguments", "code.inspect accepts an optional repository-relative path");
             std::error_code root_error;
             const bool repository_available = !bindings.repository_root.empty() &&
                 std::filesystem::is_directory(bindings.repository_root, root_error) && !root_error;
@@ -598,10 +648,50 @@ bool common_try_register_code_tool_adapter(
             const bool calls_semantic = static_cast<bool>(bindings.code_calls);
             const bool semantic_provider = repository_available &&
                 (symbols_semantic || references_semantic || calls_semantic);
+            std::filesystem::path requested;
+            if (args.contains("path") &&
+                    !resolve_repository_path(bindings.repository_root, args["path"].get<std::string>(), requested, parse_error))
+                return common_adapter_validation_failure("tool.code.invalid_arguments", std::move(parse_error));
+            std::string database_status = "unknown";
+            json source_in_database = nullptr;
+            if (!bindings.code_compile_commands.empty() && bindings.code_compile_commands != "auto") {
+                std::error_code db_error;
+                auto db = std::filesystem::absolute(bindings.code_compile_commands, db_error);
+                if (!db_error && std::filesystem::is_directory(db, db_error)) db /= "compile_commands.json";
+                const auto size = !db_error ? std::filesystem::file_size(db, db_error) : 0;
+                if (db_error || size > 16 * 1024 * 1024) database_status = "unavailable";
+                else {
+                    std::ifstream file(db, std::ios::binary);
+                    std::string contents(16 * 1024 * 1024 + 1, '\0');
+                    if (file) file.read(&contents[0], contents.size());
+                    contents.resize(static_cast<size_t>(file.gcount()));
+                    const auto entries = !file.bad() && contents.size() <= 16 * 1024 * 1024
+                        ? json::parse(contents, nullptr, false) : json();
+                    if (!entries.is_array()) database_status = "unavailable";
+                    else {
+                        database_status = "available";
+                        if (!requested.empty()) {
+                            bool found = false, invalid = false;
+                            for (const auto & entry : entries) {
+                                if (!entry.is_object() || !entry.contains("directory") || !entry["directory"].is_string() ||
+                                        !entry.contains("file") || !entry["file"].is_string()) { invalid = true; continue; }
+                                std::error_code entry_error;
+                                const auto candidate = std::filesystem::weakly_canonical(
+                                    std::filesystem::path(entry["directory"].get<std::string>()) /
+                                    std::filesystem::path(entry["file"].get<std::string>()), entry_error);
+                                if (entry_error) { invalid = true; continue; }
+                                if (candidate == requested) { found = true; break; }
+                            }
+                            if (found || !invalid) source_in_database = found;
+                        }
+                    }
+                }
+            }
             return common_adapter_success_json({{"schema", "code-capabilities.v1"},
                 {"repository_available", repository_available},
                 {"backend", semantic_provider ? "semantic_provider" : "bounded_text"},
                 {"compile_commands", bindings.code_compile_commands.empty() ? json(nullptr) : json(bindings.code_compile_commands)},
+                {"compilation_database_status", database_status}, {"source_in_database", source_in_database},
                 {"index_coverage", semantic_provider ? "unknown" : "unavailable"},
                 {"capabilities", {{"symbols", repository_available ? (symbols_semantic ? "semantic" : "text_fallback") : "unavailable"},
                     {"references", repository_available ? (references_semantic ? "semantic" : "text_fallback") : "unavailable"},
@@ -747,6 +837,8 @@ bool common_try_register_code_tool_adapter(
                 {"max_depth", args.value("max_depth", 2)},
                 {"complete", graph.complete}, {"truncated", graph.truncated},
                 {"provider_requests", analysis.relationships["provider_requests"]},
+                {"continuations", analysis.relationships["continuations"]},
+                {"provider_failures", analysis.relationships["provider_failures"]},
                 {"relationship_count", graph.edges.size()}, {"visualization", graph_json},
                 {"limitations", graph.limitations}};
             if (response.dump().size() > 64 * 1024)
