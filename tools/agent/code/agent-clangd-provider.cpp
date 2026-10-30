@@ -13,6 +13,10 @@ namespace {
 using json = agent_clangd_json;
 
 common_tool_execution_result provider_error(const std::string & code, const std::string & detail) {
+    if (detail == "clangd request timed out") {
+        return common_tool_execution_result::failure("tool.code.clangd_timeout",
+            common_tool_failure_class::timeout, true, "Clangd semantic code analysis timed out.", detail);
+    }
     return common_tool_execution_result::failure(code, common_tool_failure_class::execution, false, "Clangd semantic code analysis is unavailable.", detail);
 }
 
@@ -60,9 +64,10 @@ bool result_array(const json & response, json & result) {
 
 json coverage(bool truncated, bool incomplete) {
     json limitations = json::array();
+    limitations.push_back("Project-wide clangd index coverage is unknown; results may omit symbols and relationships.");
     if (incomplete) limitations.push_back("Some provider entries were invalid or outside the authorized repository.");
     if (truncated) limitations.push_back("The configured result limit was reached.");
-    return {{"complete", !truncated && !incomplete}, {"truncated", truncated}, {"limitations", limitations}};
+    return {{"complete", false}, {"truncated", truncated}, {"limitations", limitations}};
 }
 
 }
@@ -85,6 +90,23 @@ common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const 
             !agent_clangd_repository_path(repository_root_, arguments["path_hint"].get<std::string>(), hint, error))
         return common_tool_execution_result::failure("tool.diagnostics.symbol.invalid_arguments",
             common_tool_failure_class::validation, false, "Symbol path is outside the repository.", error);
+    std::error_code fs_error;
+    if (!hint.empty() && std::filesystem::is_regular_file(hint, fs_error) && !fs_error) {
+        constexpr size_t source_limit = 4 * 1024 * 1024;
+        std::ifstream input(hint, std::ios::binary);
+        if (!input) return provider_error("tool.diagnostics.symbol.provider_unavailable", "could not open the hinted source file");
+        std::string source(source_limit + 1, '\0');
+        input.read(&source[0], source.size());
+        source.resize(static_cast<size_t>(input.gcount()));
+        if (input.bad() || source.size() > source_limit)
+            return provider_error("tool.diagnostics.symbol.provider_unavailable", "hinted source read failed or exceeded its byte limit");
+        const auto uri = agent_clangd_file_uri(hint);
+        if (!session_->open_document(uri, language_id(hint), source, error))
+            return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
+        json parsed;
+        if (!session_->request("textDocument/documentSymbol", {{"textDocument", {{"uri", uri}}}}, parsed, error))
+            return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
+    }
     if (!session_->request("workspace/symbol", {{"query", arguments["symbol"]}}, response, error)) return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
     json definitions = json::array(), result;
     if (!result_array(response, result)) return provider_error("tool.diagnostics.symbol.invalid_result", "clangd returned an invalid symbol result");

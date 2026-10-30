@@ -98,24 +98,48 @@ def probe(launcher, workdir, check_web_limit=False, resource_uri=None, timeout=1
                 print("repository_changed_files=passed files=" + str(len(changed_result["files"])) +
                       " truncated=" + str(changed_result.get("truncated")), flush=True)
             if clangd:
-                outside = rpc(12, "tools/call", {"name": "diagnostics.call_hierarchy", "arguments": {
+                inspected = rpc(18, "tools/call", {"name": "code.inspect", "arguments": {}})
+                inspected_data = inspected.get("structuredContent", {}).get("result", {})
+                if inspected.get("isError") or inspected_data.get("index_coverage") != "unknown" or not inspected_data.get("compile_commands"):
+                    raise RuntimeError(f"clangd configuration or coverage not reported: {inspected}")
+                # Exercise the canonical code tools in one long-lived MCP
+                # session. The file hint must work on a cold clangd index.
+                if "code.impact" not in names:
+                    raise RuntimeError("code.impact is missing from the Codex audit profile")
+                source = "common/agent/adaptation/flydelta/flydelta-deep-search.cpp"
+                symbol_name = "common_flydelta_run_deep_search_batched"
+                found = rpc(16, "tools/call", {"name": "code.symbols", "arguments": {
+                    "symbol": symbol_name, "path_hint": source, "max_results": 5}})
+                found_data = found.get("structuredContent", {}).get("result", {})
+                locations = [item for item in found_data.get("items", []) if item.get("path") == source]
+                if found.get("isError") or not locations or found_data.get("complete") is not False:
+                    raise RuntimeError(f"cold clangd symbol lookup or coverage failed: {found}")
+                callers = rpc(17, "tools/call", {"name": "code.calls", "arguments": {
+                    "symbol": symbol_name, "path_hint": source, "line": locations[0]["line"],
+                    "direction": "callers", "max_results": 16}})
+                callers_data = callers.get("structuredContent", {}).get("result", {})
+                if callers.get("isError") or callers_data.get("complete") is not False:
+                    raise RuntimeError(f"clangd call hierarchy or coverage failed: {callers}")
+                print("clangd_code_probe=passed cold_file_hint=true coverage=unknown", flush=True)
+                outside = rpc(12, "tools/call", {"name": "code.calls", "arguments": {
                     "symbol": "root", "path_hint": "../../../../etc/passwd",
                     "line": 1, "direction": "both", "max_results": 3}})
                 outside_error = outside.get("structuredContent", {}).get("error", {})
-                if not outside.get("isError") or outside_error.get("code") != "tool.diagnostics.call_hierarchy.invalid_arguments":
+                if not outside.get("isError") or outside_error.get("code") != "tool.code.call_hierarchy.invalid_arguments":
                     raise RuntimeError(f"call hierarchy accepted a source outside the repository: {outside}")
-                mismatched = rpc(13, "tools/call", {"name": "diagnostics.call_hierarchy", "arguments": {
+                mismatched = rpc(13, "tools/call", {"name": "code.calls", "arguments": {
                     "symbol": "symbol_fallback",
                     "path_hint": "common/agent/tooling/adapters/families/diagnostics-adapters.cpp",
                     "line": 1, "direction": "both", "max_results": 3}})
                 mismatch_error = mismatched.get("structuredContent", {}).get("error", {})
-                if not mismatched.get("isError") or mismatch_error.get("code") != "tool.diagnostics.call_hierarchy.invalid_arguments":
+                if not mismatched.get("isError") or mismatch_error.get("code") != "tool.code.call_hierarchy.invalid_arguments":
                     raise RuntimeError(f"call hierarchy accepted a source line without its symbol: {mismatched}")
-                hierarchy = rpc(14, "tools/call", {"name": "diagnostics.call_hierarchy", "arguments": {
-                    "symbol": "symbol_fallback",
-                    "path_hint": "common/agent/tooling/adapters/families/diagnostics-adapters.cpp",
-                    "line": 70, "column": 40, "direction": "both", "max_results": 3}})
-                symbol = rpc(15, "tools/call", {"name": "diagnostics.symbol", "arguments": {
+                hierarchy = rpc(14, "tools/call", {"name": "code.calls", "arguments": {
+                    "symbol": symbol_name, "path_hint": source,
+                    "line": locations[0]["line"], "direction": "both", "max_results": 3}})
+                if hierarchy.get("isError"):
+                    raise RuntimeError(f"call hierarchy failed: {hierarchy}")
+                symbol = rpc(15, "tools/call", {"name": "code.symbols", "arguments": {
                     "symbol": "common_schema_normalize_and_validate_object", "max_results": 3}})
                 print("clangd_symbol_probe=" + json.dumps(symbol, ensure_ascii=False), flush=True)
                 print("clangd_call_hierarchy_probe=" + json.dumps(hierarchy, ensure_ascii=False), flush=True)

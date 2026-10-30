@@ -767,13 +767,14 @@ bool resolve_agent_host_tool_selection(
 #ifdef LLAMA_AGENT_TOOLS_USE_CLANG
         std::shared_ptr<agent_clangd_code_provider> clangd_provider;
         if (request.diagnostics.semantic_backend == "clangd" && !repository_root.empty()) {
-            clangd_provider = std::make_shared<agent_clangd_code_provider>(agent_clangd_session_config{
+            clangd_provider = request.clangd_provider ? request.clangd_provider : std::make_shared<agent_clangd_code_provider>(agent_clangd_session_config{
                 request.diagnostics.clangd_executable,
                 repository_root,
                 request.diagnostics.compile_commands,
-                request.tool_context.default_timeout_ms,
-                request.tool_context.default_timeout_ms,
+                request.diagnostics.semantic_request_timeout_ms,
+                1000,
             });
+            bindings.code_compile_commands = request.diagnostics.compile_commands;
             bindings.code_symbols = [clangd_provider](const std::string & input) { return clangd_provider->symbol(input); };
             bindings.code_references = [clangd_provider](const std::string & input) { return clangd_provider->references(input); };
             bindings.code_calls = [clangd_provider](const std::string & input) { return clangd_provider->call_hierarchy(input); };

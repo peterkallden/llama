@@ -23,6 +23,7 @@
 #include <vector>
 
 class agent_openapi_dynamic_registry;
+class agent_clangd_code_provider;
 
 struct common_agent_cli_tool_selection {
     common_agent_runtime_tooling tooling;
@@ -59,6 +60,8 @@ struct agent_host_stdio_mcp_provider_request {
 
 struct agent_host_tool_selection_request {
     agent_tool_context tool_context;
+    // Optional host-owned session shared across refreshed tool selections.
+    std::shared_ptr<agent_clangd_code_provider> clangd_provider;
     std::string repository_root;
     agent_resource_store_config resource_store_config;
     common_agent_data_store_config data_store_config;

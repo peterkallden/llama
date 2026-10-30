@@ -7,6 +7,9 @@
 
 #include "../cli/agent-cli-host-adapter.h"
 #include "../cli/agent-cli-selection.h"
+#ifdef LLAMA_AGENT_TOOLS_USE_CLANG
+#include "../code/agent-clangd-provider.h"
+#endif
 #include "../host/agent-host-config.h"
 #include "../resource/agent-resource-store.h"
 #include "../tooling/agent-tool-provider.h"
@@ -759,6 +762,14 @@ int main(int argc, char ** argv) {
         options,
         repository_root,
         configured_mcp_providers);
+#ifdef LLAMA_AGENT_TOOLS_USE_CLANG
+    if (tool_request.diagnostics.semantic_backend == "clangd" && !repository_root.empty()) {
+        tool_request.clangd_provider = std::make_shared<agent_clangd_code_provider>(agent_clangd_session_config{
+            tool_request.diagnostics.clangd_executable, repository_root,
+            tool_request.diagnostics.compile_commands,
+            tool_request.diagnostics.semantic_request_timeout_ms, 1000});
+    }
+#endif
     const auto memory_query = make_memory_query(options);
     const auto resolve_selection = [&](
             common_agent_cli_tool_selection & selection,

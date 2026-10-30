@@ -46,6 +46,29 @@ root, including when that root comes from the host tool context. The provider an
 transport are implemented under `tools/agent/code/`; native compiler and crash
 diagnostics remain under `tools/agent/diagnostics/`.
 
+The stdio MCP server retains its clangd session while refreshing tool policy
+for each call. Indexing is asynchronous and the provider cannot establish
+project-wide index coverage: clangd results therefore report `complete: false`
+and an explicit coverage limitation even when all returned entries were parsed.
+An empty result does not prove that a symbol or caller is absent. The Codex MCP
+audit profile includes `code.impact`; its bounded graph has the same limitation.
+For a regular source file supplied as `code.symbols.path_hint`, the provider
+opens and parses that file before querying the workspace index. Directory hints
+and searches without a hint remain subject to asynchronous index availability.
+`code.inspect` reports the configured `compile_commands` setting and marks
+project index coverage as unknown; the setting `auto` is not a resolved path.
+Clangd's background index persists under the compilation database directory's
+`.cache/clangd/index` when writable and is reused across process restarts.
+`diagnostics.semantic_request_timeout_ms` bounds an individual clangd request
+(default 180000, range 100–180000 ms); the host tool budget also applies. A
+multi-request operation can take longer than one request, and its outer budget
+is checked separately. Index contents depend on the build configuration and
+do not prove that every translation unit has been indexed.
+
+Backlog: propagate one shared operation deadline and cancellation through MCP,
+the tool queue, multi-step code operations and in-flight clangd requests. The
+current independent limits do not guarantee a hard end-to-end time bound.
+
 ## Provider boundary and source positions
 
 `agent-clangd-projection` normalizes LSP locations and incoming/outgoing calls

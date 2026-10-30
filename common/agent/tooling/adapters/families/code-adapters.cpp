@@ -601,6 +601,8 @@ bool common_try_register_code_tool_adapter(
             return common_adapter_success_json({{"schema", "code-capabilities.v1"},
                 {"repository_available", repository_available},
                 {"backend", semantic_provider ? "semantic_provider" : "bounded_text"},
+                {"compile_commands", bindings.code_compile_commands.empty() ? json(nullptr) : json(bindings.code_compile_commands)},
+                {"index_coverage", semantic_provider ? "unknown" : "unavailable"},
                 {"capabilities", {{"symbols", repository_available ? (symbols_semantic ? "semantic" : "text_fallback") : "unavailable"},
                     {"references", repository_available ? (references_semantic ? "semantic" : "text_fallback") : "unavailable"},
                     {"calls", repository_available && calls_semantic ? "semantic" : "unavailable"},
@@ -608,6 +610,7 @@ bool common_try_register_code_tool_adapter(
                 {"execution", "read_only"},
                 {"limitations", json::array({
                     "Text fallback finds text occurrences only; it does not resolve code semantics.",
+                    "Semantic provider capability does not establish project-wide index coverage or readiness.",
                     "Code analysis uses the host's current repository state; the current result contract does not pin a commit or content snapshot."})}});
         }, error);
     } else if (symbols || references) {

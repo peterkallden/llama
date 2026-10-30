@@ -11,7 +11,7 @@ struct agent_clangd_session_config {
     std::string executable = "clangd";
     std::string repository_root;
     std::string compile_commands_dir;
-    uint32_t request_timeout_ms = 10000;
+    uint32_t request_timeout_ms = 180000;
     uint32_t shutdown_timeout_ms = 1000;
 };
 

@@ -1299,6 +1299,7 @@ bool parse_agent_host_config_json(
         read_optional(diagnostics, "clang_executable", config.diagnostics.clang_executable);
         read_optional(diagnostics, "clangd_executable", config.diagnostics.clangd_executable);
         read_optional(diagnostics, "compile_commands", config.diagnostics.compile_commands);
+        read_optional(diagnostics, "semantic_request_timeout_ms", config.diagnostics.semantic_request_timeout_ms);
         read_optional(diagnostics, "native_crash_backend", config.diagnostics.native_crash_backend);
         read_optional(diagnostics, "gdb_executable", config.diagnostics.gdb_executable);
         read_optional(diagnostics, "cdb_executable", config.diagnostics.cdb_executable);
@@ -1947,6 +1948,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"clang_executable", config.diagnostics.clang_executable},
             {"clangd_executable", config.diagnostics.clangd_executable},
             {"compile_commands", config.diagnostics.compile_commands},
+            {"semantic_request_timeout_ms", config.diagnostics.semantic_request_timeout_ms},
             {"native_crash_backend", config.diagnostics.native_crash_backend},
             {"gdb_executable", config.diagnostics.gdb_executable},
             {"cdb_executable", config.diagnostics.cdb_executable},
@@ -2361,6 +2363,10 @@ bool validate_agent_host_config(
     }
     if (config.diagnostics.compile_commands.empty()) {
         error = "diagnostics.compile_commands must not be empty";
+        return false;
+    }
+    if (config.diagnostics.semantic_request_timeout_ms < 100 || config.diagnostics.semantic_request_timeout_ms > 180000) {
+        error = "diagnostics.semantic_request_timeout_ms must be between 100 and 180000";
         return false;
     }
     if (config.diagnostics.gdb_executable.empty() || config.diagnostics.cdb_executable.empty()) {

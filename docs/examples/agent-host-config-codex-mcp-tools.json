@@ -123,6 +123,7 @@
         "code.symbols",
         "code.references",
         "code.calls",
+        "code.impact",
         "diagnostics.compile",
         "diagnostics.test_failures",
         "diagnostics.format",
