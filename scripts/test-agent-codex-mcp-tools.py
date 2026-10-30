@@ -61,6 +61,9 @@ def probe(launcher, workdir, check_web_limit=False, resource_uri=None, timeout=1
             math = rpc(4, "tools/call", {"name": "math.calculate", "arguments": {"expression": "2+3"}})
             if math.get("isError") or math.get("structuredContent", {}).get("result", {}).get("value") != 5:
                 raise RuntimeError(f"unexpected calculator result: {math}")
+            graph = rpc(19, "tools/call", {"name": "graph.find", "arguments": {"query": "planning"}})
+            if graph.get("isError") or not graph.get("structuredContent", {}).get("ok"):
+                raise RuntimeError(f"graph lookup failed: {graph}")
             if check_web_limit:
                 bounded = rpc(5, "tools/call", {"name": "web.fetch", "arguments": {
                     "url": "https://example.com/", "max_bytes": 32}})

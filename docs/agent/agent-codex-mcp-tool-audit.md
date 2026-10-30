@@ -25,6 +25,11 @@ root. A running Codex UI may need to reload its MCP connections to see a
 newly added entry. The reproducible smoke starts a fresh Codex client and
 does not depend on a UI reload.
 
+Graph reads use project `llama` in namespace `local` by default. Set
+`LLAMA_AGENT_GRAPH_PROJECT` to select another project. The audit data store is
+isolated; matching project and namespace alone do not share graph data with a
+different store. Restart the MCP connection after changing launcher settings.
+
 The host profile is
 [`agent-host-config-codex-mcp-tools.json`](../examples/agent-host-config-codex-mcp-tools.json).
 It uses the existing OpenAlex provider fragment and the checked-in Eurostat
