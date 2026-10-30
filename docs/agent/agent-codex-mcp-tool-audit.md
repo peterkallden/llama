@@ -25,9 +25,9 @@ root. A running Codex UI may need to reload its MCP connections to see a
 newly added entry. The reproducible smoke starts a fresh Codex client and
 does not depend on a UI reload.
 
-This standalone server uses an isolated audit store. For standalone graph
-reads, add `--memory-project` and the actual project ID to the launcher args;
-use `--memory-namespace` when the namespace is not `local`. The same IDs do
+This standalone server uses an isolated audit store and defaults to project
+`llama-agent`. To select another project, add `--memory-project` and its ID to
+the launcher args; use `--memory-namespace` when the namespace is not `local`. The same IDs do
 not share graph data across different stores. To use the running daemon's
 graph, connect to its inbound MCP endpoint as described in
 [Project context graph](context-graph.md); do not open its store in a second
