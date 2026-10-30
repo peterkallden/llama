@@ -15,7 +15,7 @@
 
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"
-#include "../cli/agent-cli-selection.h"
+#include "../runtime/agent-planning-selection.h"
 
 #include <nlohmann/json.hpp>
 
@@ -1366,7 +1366,7 @@ static bool transition_to_workflow(
         selected = catalog.candidates.front();
     } else {
         std::string selection_error;
-        const auto choice = select_llama_cli_route(execution.inference,
+        const auto choice = select_agent_planning_route(execution.inference,
             execution.runtime_config.generation_config, request, catalog, selection_error);
         const auto found = choice.route_id ? std::find_if(catalog.candidates.begin(),
             catalog.candidates.end(), [&](const auto & candidate) { return candidate.id == *choice.route_id; })
@@ -1520,7 +1520,7 @@ static bool transition_to_workflow(
     workflow_request.investigation_source_kinds = tooling.investigation_source_kinds;
     workflow_request.investigation_context = tooling.investigation_context;
     std::string action_error;
-    const auto action = select_llama_cli_workflow_action(
+    const auto action = select_agent_planning_workflow_action(
         execution.inference, execution.runtime_config.generation_config,
         workflow_request, relevant_tools, route_bindings,
         host_resolved_dataset_tools, execution.tool_output_format, action_error);
@@ -1989,7 +1989,7 @@ bool run_agent_runtime_driver(
         request.result_requirement_selector = [&execution, &model_tools](
                 const common_agent_request & current, const common_plan_state & plan,
                 const common_plan_step & step, std::string & requirement, common_agent_generated_text_result & generated, std::string & selection_error) {
-            return select_llama_cli_result_requirement(execution.inference,
+            return select_agent_planning_result_requirement(execution.inference,
                 execution.runtime_config.generation_config, current, plan, step,
                 model_tools, requirement, selection_error, &generated);
         };
@@ -2040,7 +2040,7 @@ bool run_agent_runtime_driver(
                         choice_error = "workflow has no eligible continuation for the selected sources and capabilities";
                         return false;
                     }
-                    return select_llama_cli_workflow_candidate(execution.inference,
+                    return select_agent_planning_workflow_candidate(execution.inference,
                         execution.runtime_config.generation_config, current_request,
                         observation, available, candidate_id, choice_error);
                 }, [&execution, choice_request, route](const common_plan_state & plan,
@@ -2052,7 +2052,7 @@ bool run_agent_runtime_driver(
                         if (std::find(route.resolved_tools.begin(), route.resolved_tools.end(), tool.name) != route.resolved_tools.end())
                             allowed.push_back(tool);
                     }
-                    return select_llama_cli_workflow_transition_arguments(execution.inference,
+                    return select_agent_planning_workflow_transition_arguments(execution.inference,
                         execution.runtime_config.generation_config, choice_request, allowed,
                         plan, observation, transition, seed, arguments, argument_error);
                 });

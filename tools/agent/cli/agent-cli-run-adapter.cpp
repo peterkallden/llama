@@ -3,7 +3,7 @@
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 
 #include "../resource/agent-resource-store.h"
-#include "agent-cli-selection.h"
+#include "tools/agent/runtime/agent-planning-selection.h"
 
 #include "agent/thinking/deliberation-policy.h"
 

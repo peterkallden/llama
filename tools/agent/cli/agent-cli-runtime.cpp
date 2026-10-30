@@ -1,5 +1,5 @@
 #include "agent-cli-runtime.h"
-#include "agent-cli-generation-utils.h"
+#include "tools/agent/runtime/agent-runtime-generation-utils.h"
 #include "../runtime/agent-runtime-assembly.h"
 
 #include "agent/thinking/reflection-json.h"
@@ -1342,11 +1342,11 @@ public:
                     request.prompt + "\nSelect the configured operation by calling it once."
                 };
                 auto operation_generation = inference.generate_result(
-                    make_agent_cli_generation_request(
+                    make_agent_runtime_generation_request(
                         request,
                         common_agent_generation_purpose::operation_selection,
                         {operation_system, operation_user},
-                        make_agent_cli_generation_options(generation_config, 48),
+                        make_agent_runtime_generation_options(generation_config, 48),
                         {},
                         {native_selection_tool},
                         COMMON_CHAT_TOOL_CHOICE_REQUIRED));
@@ -1619,11 +1619,11 @@ public:
                     "\nargs: " + target.base_arguments_json +
                     "\n[Host validation error]\n" + json(target.validation_error).dump(),
                 };
-                auto repair_request = make_agent_cli_generation_request(
+                auto repair_request = make_agent_runtime_generation_request(
                     request,
                     common_agent_generation_purpose::planner,
                     {repair_system, repair_user},
-                    make_agent_cli_generation_options(generation_config, std::min(planner_n_predict, 256)),
+                    make_agent_runtime_generation_options(generation_config, std::min(planner_n_predict, 256)),
                     compact_dsl_output ? std::string() : planner_argument_repair_schema(target, tool_definitions));
                 if (compact_dsl_output) {
                     const auto selected = std::find_if(tool_definitions.begin(), tool_definitions.end(),
@@ -1683,9 +1683,9 @@ public:
                 attempt.content += "\n[Repair] Return the complete corrected plan in the same format." +
                     render_planner_binding_repair_context(request, parse_error);
             }
-            auto generation_request = make_agent_cli_generation_request(
+            auto generation_request = make_agent_runtime_generation_request(
                 request, common_agent_generation_purpose::planner, {system, attempt},
-                make_agent_cli_generation_options(generation_config, planner_n_predict),
+                make_agent_runtime_generation_options(generation_config, planner_n_predict),
                 compact_dsl_output ? std::string() : common_plan_model_facing_json_schema(
                     allowed_tools, request.require_tool_execution, model_max_steps, model_max_goal_length));
             generation_request.grammar = planner_grammar;
@@ -1847,7 +1847,7 @@ public:
             return proposal;
         }
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("model planner generation", generation_result);
+            error = describe_agent_runtime_generation_failure("model planner generation", generation_result);
             return proposal;
         }
 
@@ -1924,18 +1924,18 @@ public:
             }
             user.content += "\n[Host numeric evidence handles]\n" + visible.dump();
         }
-        auto generation_request = make_agent_cli_generation_request(
+        auto generation_request = make_agent_runtime_generation_request(
             request,
             common_agent_generation_purpose::draft,
             {system, user},
             // Drafts must be able to state the completed tool-backed result;
             // a short cap can end mid-sentence and trigger an unnecessary
             // reflection/re-draft cycle on small CPU models.
-            make_agent_cli_generation_options(generation_config, std::min(generation_config.n_predict, 256)), grounded_schema);
+            make_agent_runtime_generation_options(generation_config, std::min(generation_config.n_predict, 256)), grounded_schema);
         if (grounded && !grounded_json) generation_request.grammar = common_agent_grounded_draft_grammar(grounding_handles);
         const auto generation_result = inference.generate_result(std::move(generation_request));
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("model draft generation", generation_result);
+            error = describe_agent_runtime_generation_failure("model draft generation", generation_result);
             return common_agent_generated_text_result_from_generation_result(generation_result);
         }
         error.clear();
@@ -2060,16 +2060,16 @@ public:
             artifact_schema["properties"]["blocks"]["items"]["properties"]["kind"]["enum"]=artifact_allowed_kinds;
             output_schema=artifact_schema.dump();
         }
-        auto generation_request = make_agent_cli_generation_request(
+        auto generation_request = make_agent_runtime_generation_request(
             request,
             artifact_section ? common_agent_generation_purpose::artifact_section : common_agent_generation_purpose::reasoning,
             {system, user},
-            make_agent_cli_generation_options(generation_config, std::min(generation_config.n_predict, artifact_section ? 512 : 128)),
+            make_agent_runtime_generation_options(generation_config, std::min(generation_config.n_predict, artifact_section ? 512 : 128)),
             output_schema);
         if(artifact_dsl)generation_request.grammar=std::move(artifact_dsl_grammar);
         const auto generation_result = inference.generate_result(generation_request);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("model reasoning generation", generation_result);
+            error = describe_agent_runtime_generation_failure("model reasoning generation", generation_result);
             return common_agent_generated_text_result_from_generation_result(generation_result);
         }
         error.clear();
@@ -2244,11 +2244,11 @@ public:
                       "Regenerate one complete JSON object from the beginning. Do not continue partial JSON "
                       "or include commentary.";
             }
-            auto generation_request = make_agent_cli_generation_request(
+            auto generation_request = make_agent_runtime_generation_request(
                 request,
                 common_agent_generation_purpose::reflection,
                 {system, attempt},
-                make_agent_cli_generation_options(
+                make_agent_runtime_generation_options(
                     generation_config,
                     compact_dsl_output && !failed_mandatory_tool_step && !retryable_validation_repair_required
                         ? generation_config.n_predict
@@ -2353,7 +2353,7 @@ public:
             }
         };
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("model reflection generation", generation_result);
+            error = describe_agent_runtime_generation_failure("model reflection generation", generation_result);
             log_reflection_failure_io(error);
             return result;
         }
@@ -2476,11 +2476,11 @@ public:
                     "Regenerate one complete JSON object from the beginning, or emit a complete null candidate. "
                     "Do not continue partial JSON or include commentary.";
             }
-            return inference.generate_result(make_agent_cli_generation_request(
+            return inference.generate_result(make_agent_runtime_generation_request(
                 request,
                 common_agent_generation_purpose::memory_learning,
                 {system, attempt},
-                make_agent_cli_generation_options(
+                make_agent_runtime_generation_options(
                     generation_config,
                     generation_config.memory_learning_n_predict > 0
                         ? generation_config.memory_learning_n_predict
@@ -2498,7 +2498,7 @@ public:
             });
         auto generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("model candidate generation", generation_result);
+            error = describe_agent_runtime_generation_failure("model candidate generation", generation_result);
             return {{}, {}, generation};
         }
         if (!parsed_ok) return {{}, {}, generation};

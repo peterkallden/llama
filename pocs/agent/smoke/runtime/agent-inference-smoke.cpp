@@ -7,7 +7,7 @@
 #include "tools/agent/cli/agent-cli-host-adapter.h"
 #include "tools/agent/cli/agent-cli-run-adapter.h"
 #include "tools/agent/cli/agent-cli-runtime.h"
-#include "tools/agent/cli/agent-cli-selection.h"
+#include "tools/agent/runtime/agent-planning-selection.h"
 #include "tools/agent/runtime/agent-runtime-assembly.h"
 #include "tools/agent/runtime/agent-runtime-chat-driver.h"
 #include "tools/agent/runtime/agent-runtime-execution.h"
@@ -1186,7 +1186,7 @@ static void test_selection_generation_metadata() {
     first.goal = "Resume";
     first.next_action = "Continue";
     std::string error;
-    const auto selected = select_llama_cli_plan_result(inference, make_agent_generation_config(options), request, {first}, error);
+    const auto selected = select_agent_planning_plan_result(inference, make_agent_generation_config(options), request, {first}, error);
     assert(error.empty() && selected.plan_id && *selected.plan_id == "plan-1");
     assert(selected.generation);
     assert(selected.generation->stop_reason == common_agent_generation_stop_reason::json_schema);
@@ -1201,7 +1201,7 @@ static void test_selection_generation_metadata() {
     repository_candidate.assumptions.push_back({"workspace", "A controlled repository workspace is available.", 0.9f, true, {}});
     repository_candidate.contributions = {"inspect current state", "apply a bounded change", "verify the result"};
     std::vector<common_blueprint_candidate> candidates = {repository_candidate};
-    auto selector = make_llama_cli_blueprint_selector(inference, make_agent_generation_config(options));
+    auto selector = make_agent_planning_blueprint_selector(inference, make_agent_generation_config(options));
     const auto blueprint = selector->select_result(request, candidates, error);
     assert(error.empty());
     assert(blueprint.decision == common_blueprint_selection_decision::instantiate);
@@ -1241,7 +1241,7 @@ static void test_selection_generation_metadata() {
     tool_view.tools = {
         {"lookup", "Look up a record", R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})"},
     };
-    const auto binding = bind_llama_cli_blueprint_tools_result(inference, make_agent_generation_config(options), tool_view, request, store, "task-1", error);
+    const auto binding = bind_agent_planning_blueprint_tools_result(inference, make_agent_generation_config(options), tool_view, request, store, "task-1", error);
     assert(error.empty());
     assert(binding.applied);
     assert(binding.bound_steps == 1);
@@ -1311,7 +1311,7 @@ static void test_selection_generation_failure_metadata() {
     first.id = "plan-1";
     first.goal = "Resume";
     first.next_action = "Continue";
-    const auto selected = select_llama_cli_plan_result(inference, make_agent_generation_config(options), request, {first}, error);
+    const auto selected = select_agent_planning_plan_result(inference, make_agent_generation_config(options), request, {first}, error);
     assert(!selected.plan_id);
     assert(selected.generation);
     assert(error == "plan selector generation failed (status=cancelled, stop=cancelled): resident inference cancelled");
@@ -1341,7 +1341,7 @@ static void test_selection_generation_failure_metadata() {
     tool_view.tools = {
         {"lookup", "Look up a record", R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})"},
     };
-    const auto binding = bind_llama_cli_blueprint_tools_result(inference, make_agent_generation_config(options), tool_view, request, store, "task-1", error);
+    const auto binding = bind_agent_planning_blueprint_tools_result(inference, make_agent_generation_config(options), tool_view, request, store, "task-1", error);
     assert(!binding.applied);
     assert(binding.generation);
     assert(error == "blueprint binding generation failed (status=errored, stop=error): tool binding stream failed");

@@ -55,10 +55,10 @@ add_subdirectory(${LLAMA_SRC} build-llama)
 # full runtime so Android does not grow a second agent contract.
 add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/cli/agent-cli-generation.cpp
-        ${LLAMA_SRC}/tools/agent/cli/agent-cli-generation-utils.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-generation-utils.cpp
         ${LLAMA_SRC}/tools/agent/cli/agent-cli-inference.cpp
         ${LLAMA_SRC}/tools/agent/cli/agent-cli-runtime.cpp
-        ${LLAMA_SRC}/tools/agent/cli/agent-cli-selection.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-planning-selection.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-assembly.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-chat-driver.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-execution.cpp

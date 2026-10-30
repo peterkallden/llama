@@ -6,7 +6,7 @@
 #include "tools/agent/cli/agent-cli-memory-tools.h"
 
 #include "../cli/agent-cli-host-adapter.h"
-#include "../cli/agent-cli-selection.h"
+#include "../runtime/agent-planning-selection.h"
 #ifdef LLAMA_AGENT_TOOLS_USE_CLANG
 #include "../code/agent-clangd-provider.h"
 #endif

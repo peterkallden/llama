@@ -3,7 +3,7 @@
 #include "agent/template-library.h"
 #include "hash/hash.h"
 
-#include "../cli/agent-cli-selection.h"
+#include "../runtime/agent-planning-selection.h"
 #include "../tooling/agent-tool-provider.h"
 #include "tools/agent/cli/agent-cli-scope.h"
 #include "agent-dataset-workflow-adapter.h"
@@ -235,7 +235,7 @@ bool maybe_auto_select_plan(
     if (!candidates.empty()) {
         const auto selection_request = make_orchestration_selection_request(context.config, context.scope, context.tool_output_format);
         std::string selection_error;
-        const auto selection_result = select_llama_cli_plan_result(
+        const auto selection_result = select_agent_planning_plan_result(
             context.inference, context.generation_config, selection_request, candidates, selection_error);
         if (selection_result.plan_id) {
             context.current_plan_id = *selection_result.plan_id;
@@ -290,7 +290,7 @@ bool maybe_auto_select_blueprint(
         context.current_plan_id = make_agent_automatic_blueprint_plan_id(context.scope);
     }
 
-    auto selector = make_llama_cli_blueprint_selector(context.inference, context.generation_config);
+    auto selector = make_agent_planning_blueprint_selector(context.inference, context.generation_config);
     common_blueprint_selection_config selection_config;
     selection_config.allow_keyword_fallback = false;
     if(context.tooling)selection_config.template_libraries=context.tooling->template_libraries;
@@ -352,7 +352,7 @@ bool maybe_auto_select_blueprint(
         if (context.tooling != nullptr && context.tooling->profile_tools_active && context.tooling->tool_view != nullptr) {
             const auto binding_request = make_orchestration_selection_request(context.config, context.scope, context.tool_output_format);
             std::string binding_error;
-            const auto binding_result = bind_llama_cli_blueprint_tools_result(
+            const auto binding_result = bind_agent_planning_blueprint_tools_result(
                 context.inference,
                 context.generation_config,
                 *context.tooling->tool_view,
@@ -454,7 +454,7 @@ bool maybe_select_agent_route(
         reason = "single host-compiled route";
     } else {
         std::string selection_error;
-        const auto route_choice = select_llama_cli_route(
+        const auto route_choice = select_agent_planning_route(
             context.inference, context.generation_config,
             make_orchestration_selection_request(context.config, context.scope, context.tool_output_format),
             catalog, selection_error);
@@ -682,7 +682,7 @@ bool maybe_select_agent_route(
                         request.prompt += "\n[Entry " + transition.tool_name + "]\n" + transition.model_instruction;
                 }
             }
-            const auto action = select_llama_cli_workflow_action(
+            const auto action = select_agent_planning_workflow_action(
                 context.inference, context.generation_config, request, selected_tools,
                 request.tool_argument_bindings, host_resolved_dataset_tools,
                 context.tool_output_format, action_error);

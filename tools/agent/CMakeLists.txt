@@ -11,7 +11,7 @@ endif()
 
 set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-config.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-generation-utils.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-generation-utils.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-run-adapter.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-client-admin.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-client-status.cpp
@@ -104,7 +104,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-options.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-generation.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-memory-tools.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-selection.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-planning-selection.cpp
 )
 
 if (LLAMA_MEMORY_COZO)
@@ -158,7 +158,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_HOST_SOURCES})
 # adapters, not CLI frontend code; resident, daemon and MCP hosts may use them
 # without depending on command parsing or process entrypoints.
 set(AGENT_RUNTIME_ADAPTER_SOURCES
-    ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-generation-utils.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-generation-utils.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-generation.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-inference.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-runtime.cpp
@@ -167,7 +167,7 @@ set(AGENT_RUNTIME_ADAPTER_SOURCES
 list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_RUNTIME_ADAPTER_SOURCES})
 
 set(AGENT_RUNTIME_SELECTION_SOURCES
-    ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-selection.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-planning-selection.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-selection-contracts.cpp
 )
 
@@ -191,7 +191,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_TOOL_PROVIDER_SOURCES})
 
 set(AGENT_CLI_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-config.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-generation-utils.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-generation-utils.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-inference.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-memory-tools.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/cli/agent-cli-options.cpp

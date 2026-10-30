@@ -1,4 +1,4 @@
-#include "tools/agent/cli/agent-cli-selection.h"
+#include "tools/agent/runtime/agent-planning-selection.h"
 #include "tools/agent/runtime/agent-runtime-assembly.h"
 #include "tools/agent/runtime/agent-workflow-transition.h"
 #include "tools/agent/tooling/agent-selection-contracts.h"
@@ -47,14 +47,14 @@ void selection_formats() {
     scripted_inference inference;
     inference.replies = {"open! selection.route\nroute_id: normal-plan\nconfidence: 0.9"};
     std::string error;
-    const auto result = select_llama_cli_route(inference, config, request, catalog, error);
+    const auto result = select_agent_planning_route(inference, config, request, catalog, error);
     require(error.empty() && result.route_id == normal.id, "DSL route selection failed: " + error);
     require(inference.requests.front().json_schema.empty() && !inference.requests.front().grammar.empty(),
         "DSL selector exposed native JSON instead of grammar");
     request.tool_output_format = common_agent_tool_output_format::native;
     scripted_inference native;
     native.replies = {R"({"route_id":"normal-plan","confidence":0.9})"};
-    require(select_llama_cli_route(native, config, request, catalog, error).route_id == normal.id && error.empty(),
+    require(select_agent_planning_route(native, config, request, catalog, error).route_id == normal.id && error.empty(),
         "explicit JSON selection was lost");
     require(!native.requests.front().json_schema.empty() && native.requests.front().grammar.empty(),
         "JSON selector received DSL grammar");
@@ -62,7 +62,7 @@ void selection_formats() {
     request.tool_output_format = common_agent_tool_output_format::compact_dsl;
     scripted_inference invalid;
     invalid.replies = {R"({"route_id":"normal-plan","confidence":0.9})"};
-    require(!select_llama_cli_route(invalid, config, request, catalog, error).route_id && !error.empty(),
+    require(!select_agent_planning_route(invalid, config, request, catalog, error).route_id && !error.empty(),
         "DSL silently accepted JSON fallback");
 
     const auto schema = make_agent_plan_selection_schema_json({"work-plan"});
@@ -84,7 +84,7 @@ void selection_formats() {
     scripted_inference choice;
     choice.replies = {"open! selection.candidate\nid: inspect"};
     std::string selected;
-    require(select_llama_cli_workflow_candidate(choice, config, request, observation, transition, selected, error), error);
+    require(select_agent_planning_workflow_candidate(choice, config, request, observation, transition, selected, error), error);
     require(selected == "inspect" && choice.requests.front().json_schema.empty(), "workflow choice escaped DSL");
     observation.summary = R"({"ok":false,"count":0,"items":[],"complete":false})";
     require(!common_plan_workflow_choice_available(observation, transition.choices.front()),
@@ -116,7 +116,7 @@ void result_requirement_selection() {
     scripted_inference dsl;
     dsl.replies = {"open! selection.analysis_result\ndataset: d1\ncolumns: amount\nmeasures: count, mean\ngroup_by: []\ncoverage: complete"};
     std::string requirement, error;
-    require(select_llama_cli_result_requirement(dsl, config, request, plan, step, {tool}, requirement, error), error);
+    require(select_agent_planning_result_requirement(dsl, config, request, plan, step, {tool}, requirement, error), error);
     const auto value = json::parse(requirement);
     require(value["value"]["dataset"] == orders.ref.uri && value["value"]["group_by"].empty(), "result interpretation copied wrong grouping");
     require(dsl.requests.size() == 1 && dsl.requests[0].json_schema.empty() && !dsl.requests[0].grammar.empty(), "result selection bypassed DSL default");
@@ -126,7 +126,7 @@ void result_requirement_selection() {
     request.tool_output_format = common_agent_tool_output_format::native;
     scripted_inference native;
     native.replies = {R"({"dataset":"d1","columns":["amount"],"measures":["count","mean"],"group_by":[],"coverage":"complete"})"};
-    require(select_llama_cli_result_requirement(native, config, request, plan, step, {tool}, requirement, error), error);
+    require(select_agent_planning_result_requirement(native, config, request, plan, step, {tool}, requirement, error), error);
     require(!native.requests[0].json_schema.empty() && native.requests[0].grammar.empty(), "explicit native mode received DSL");
     for (const auto interrupted : {true, false}) {
         scripted_inference stopped;
@@ -134,12 +134,12 @@ void result_requirement_selection() {
         stopped.status = interrupted ? common_agent_generation_status::cancelled : common_agent_generation_status::completed;
         stopped.stop = interrupted ? common_agent_generation_stop_reason::cancelled : common_agent_generation_stop_reason::limit;
         common_agent_generated_text_result generated;
-        require(!select_llama_cli_result_requirement(stopped, config, request, plan, step, {tool}, requirement, error, &generated) &&
+        require(!select_agent_planning_result_requirement(stopped, config, request, plan, step, {tool}, requirement, error, &generated) &&
             stopped.requests.size() == 1 && requirement.empty() && generated.stop_reason == stopped.stop,
             "cancellation or output exhaustion became an ordinary selector repair/fallback");
     }
     scripted_inference unauthorized;
-    require(!select_llama_cli_result_requirement(unauthorized, config, request, plan, step, {}, requirement, error) &&
+    require(!select_agent_planning_result_requirement(unauthorized, config, request, plan, step, {}, requirement, error) &&
         unauthorized.requests.empty(), "result selection widened the authorized operation view");
 }
 
@@ -169,7 +169,7 @@ void workflow_action_dataset_handles() {
     config.n_predict = 128;
     scripted_inference inference;
     inference.replies = {"open! statistics.describe\ndataset: d2\ncolumns: amount"};
-    const auto selected = select_llama_cli_workflow_action(inference, config, request,
+    const auto selected = select_agent_planning_workflow_action(inference, config, request,
         {tool}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
     require(error.empty() && selected.action.has_value(), "dataset handle action selection failed: " + error);
     const auto arguments = json::parse(selected.action->arguments_json, nullptr, false);
@@ -184,7 +184,7 @@ void workflow_action_dataset_handles() {
 
     scripted_inference native;
     native.replies = {R"({"tool":"statistics.describe","args":{"dataset":"d2","columns":["amount"]}})"};
-    const auto native_action = select_llama_cli_workflow_action(native, config, request,
+    const auto native_action = select_agent_planning_workflow_action(native, config, request,
         {tool}, {}, {}, common_agent_tool_output_format::native, error);
     require(error.empty() && native_action.action && !native.requests.front().json_schema.empty() &&
         native.requests.front().grammar.empty() && json::parse(native_action.action->arguments_json)["dataset"] == orders.ref.uri,
@@ -195,7 +195,7 @@ void workflow_action_dataset_handles() {
         "open! statistics.describe\ndataset: d2\ncolumns: amount\ngroup_by: null_count",
         "open! statistics.describe\ndataset: d2\ncolumns: amount",
     };
-    const auto repaired = select_llama_cli_workflow_action(repair, config, request,
+    const auto repaired = select_agent_planning_workflow_action(repair, config, request,
         {tool}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
     require(error.empty() && repaired.action.has_value() && repair.requests.size() == 2,
         "workflow action did not recover after a rejected optional field: " + error);
@@ -215,7 +215,7 @@ void workflow_action_dataset_handles() {
         "open! statistics.describe\ndataset: d1\ncolumns: amount",
         "open! statistics.describe\ndataset: d2\ncolumns: amount",
     };
-    const auto corrected = select_llama_cli_workflow_action(cross_dataset, config, request,
+    const auto corrected = select_agent_planning_workflow_action(cross_dataset, config, request,
         {tool}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
     require(error.empty() && corrected.action && cross_dataset.requests.size() == 2,
         "column validation did not permit repairing the dataset selection: " + error);
@@ -228,7 +228,7 @@ void workflow_action_dataset_handles() {
     request.available_datasets[1].ref.column_count = 4;
     scripted_inference named_columns;
     named_columns.replies = {"open! statistics.describe\ndataset: d2\ncolumns: null_count\ngroup_by: [\"null\", \"none\"]"};
-    const auto named = select_llama_cli_workflow_action(named_columns, config, request,
+    const auto named = select_agent_planning_workflow_action(named_columns, config, request,
         {tool}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
     require(error.empty() && named.action.has_value(), "valid result-like source columns were rejected: " + error);
     require(json::parse(named.action->arguments_json)["group_by"] == json::array({"null", "none"}),
@@ -355,16 +355,16 @@ void blueprint_and_publication_context() {
     common_chat_tool events{"investigate.events", "Read events", R"({"type":"object","required":["case_id","case_revision"],"properties":{"case_id":{"type":"string"},"case_revision":{"type":"integer"}},"additionalProperties":false})"};
     common_plan_workflow_transition next; next.tool_name = events.name;
     scripted_inference inference; common_agent_generation_config config; std::string args;
-    require(select_llama_cli_workflow_transition_arguments(inference, config, request, {events}, plan,
+    require(select_agent_planning_workflow_transition_arguments(inference, config, request, {events}, plan,
         plan.observations.back(), next, "{}", args, error), error);
     require(json::parse(args)["case_revision"] == 3 && inference.requests.empty(),
         "deterministic continuation failed to use its successful publication baseline");
     request.investigation_context->revision = 3;
-    require(select_llama_cli_workflow_transition_arguments(inference, config, request, {events}, plan,
+    require(select_agent_planning_workflow_transition_arguments(inference, config, request, {events}, plan,
         plan.observations.back(), next, "{}", args, error), "resume failed to replay its own revision chain: " + error);
     auto concurrent = read; concurrent.id = "concurrent-read"; plan.steps.push_back(concurrent);
     plan.observations.push_back({"tool:concurrent-read:open", "investigate.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":4}}})", 1.0f});
-    require(!select_llama_cli_workflow_transition_arguments(inference, config, request, {events}, plan,
+    require(!select_agent_planning_workflow_transition_arguments(inference, config, request, {events}, plan,
         plan.observations.back(), next, "{}", args, error), "a read silently rebased the workflow onto an external revision");
 }
 

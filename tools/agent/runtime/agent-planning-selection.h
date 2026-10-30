@@ -2,7 +2,6 @@
 
 #include "agent/agent-inference.h"
 #include "agent/learning/blueprint-selector.h"
-#include "tools/agent/cli/agent-cli-options.h"
 #include "tools/agent/runtime/agent-runtime-package-io.h"
 #include "tools/agent/runtime/agent-route-compiler.h"
 
@@ -33,7 +32,7 @@ bool common_agent_workflow_tool_eligible(const common_agent_request &,
 // Select one exact tool and schema-valid argument object inside a compiled
 // workflow route. The host later owns plan IDs, dependencies and materializing
 // any deterministic A* prefix.
-common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
+common_agent_workflow_action_selection_result select_agent_planning_workflow_action(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
     const common_agent_request & request,
@@ -45,7 +44,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
 
 // Interpret the result independently, through the existing DSL/JSON selection
 // boundary. The runtime owns persistence and subsequent contract checks.
-bool select_llama_cli_result_requirement(common_agent_inference &,
+bool select_agent_planning_result_requirement(common_agent_inference &,
     const common_agent_generation_config &, const common_agent_request &,
     const common_plan_state &, const common_plan_step &,
     const std::vector<common_chat_tool> &, std::string &, std::string &,
@@ -53,7 +52,7 @@ bool select_llama_cli_result_requirement(common_agent_inference &,
 
 // Materialize a later declared transition using the same DSL/native action
 // generator, with case baselines drawn only from successful completed steps.
-bool select_llama_cli_workflow_transition_arguments(
+bool select_agent_planning_workflow_transition_arguments(
     common_agent_inference &, const common_agent_generation_config &,
     const common_agent_request &, const std::vector<common_chat_tool> &,
     const common_plan_state &, const common_plan_observation &,
@@ -62,7 +61,7 @@ bool select_llama_cli_workflow_transition_arguments(
 
 // Choose one exact entity id from a host-recorded observation.  The caller
 // validates the result against the same observation before binding it.
-bool select_llama_cli_workflow_candidate(
+bool select_agent_planning_workflow_candidate(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
     const common_agent_request & request,
@@ -78,21 +77,21 @@ struct common_agent_route_selection_result {
     std::optional<common_agent_generated_text_result> generation;
 };
 
-common_agent_route_selection_result select_llama_cli_route(
+common_agent_route_selection_result select_agent_planning_route(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
     const common_agent_request & request,
     const common_agent_route_catalog & catalog,
     std::string & error);
 
-common_agent_workflow_selection_result select_llama_cli_blueprint_workflow(
+common_agent_workflow_selection_result select_agent_planning_blueprint_workflow(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
     const common_agent_request & request,
     const std::vector<common_plan_workflow_binding> & bindings,
     std::string & error);
 
-std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
+std::unique_ptr<common_blueprint_selector> make_agent_planning_blueprint_selector(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config);
 
@@ -104,14 +103,14 @@ struct common_agent_plan_selection_result {
     std::optional<common_agent_generated_text_result> generation;
 };
 
-common_agent_plan_selection_result select_llama_cli_plan_result(
+common_agent_plan_selection_result select_agent_planning_plan_result(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
     const common_agent_request & request,
     const std::vector<common_plan_state> & candidates,
     std::string & error);
 
-std::optional<std::string> select_llama_cli_plan(
+std::optional<std::string> select_agent_planning_plan(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
     const common_agent_request & request,
@@ -125,7 +124,7 @@ struct common_agent_blueprint_binding_result {
     std::optional<common_agent_generated_text_result> generation;
 };
 
-common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
+common_agent_blueprint_binding_result bind_agent_planning_blueprint_tools_result(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
     agent_tool_view & tool_view,
@@ -134,7 +133,7 @@ common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
     const std::string & plan_id,
     std::string & error);
 
-bool bind_llama_cli_blueprint_tools(
+bool bind_agent_planning_blueprint_tools(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
     agent_tool_view & tool_view,

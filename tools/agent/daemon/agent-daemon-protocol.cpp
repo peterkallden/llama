@@ -2,7 +2,7 @@
 #include "agent-daemon-event-json.h"
 
 #include "agent/tooling/contracts/tool-result-contracts.h"
-#include "../cli/agent-cli-selection.h"
+#include "../runtime/agent-planning-selection.h"
 #include "base64.hpp"
 
 #include <limits>

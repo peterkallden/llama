@@ -5095,9 +5095,9 @@ The recent contract work removed several of the highest-friction JSON seams, but
 
    This file is much cleaner now: request-tool safe defaults plus the bounded user-correction, failure-observation, reflection-hint, and reasoning-observation payload seams all go through named runtime JSON helpers. The remaining runtime-core cleanup is more about reducing mixed responsibilities than about raw JSON literals.
 
-2. `tools/agent/cli/agent-cli-selection.cpp`
+2. `tools/agent/runtime/agent-planning-selection.cpp`
 
-   This seam is narrower now too: selection schemas are requested through named schema-string helpers, and blueprint-binding tool arguments travel as a named plan tool-arguments contract instead of raw nested JSON until the final plan serializer step. The remaining work there is mostly around separating more assembly responsibility out of the CLI adapter, not about ad hoc nested selection payloads.
+   This seam is narrower now too: selection schemas are requested through named schema-string helpers, and blueprint-binding tool arguments travel as a named plan tool-arguments contract instead of raw nested JSON until the final plan serializer step. The selection implementation is shared by CLI and daemon runtime orchestration; remaining cleanup concerns assembly responsibilities, not ad hoc nested selection payloads.
 
 3. `tools/agent/daemon/agent-daemon-adapter.cpp` plus `tools/agent/daemon/agent-daemon-client.cpp`
 
@@ -6066,10 +6066,10 @@ daemon
 The CLI split follows the same rule. The current `llama-agent-cli.so` is the
 low-level CLI implementation slice consumed by runtime support; the executable
 target keeps its historical name `llama-agent-cli`. The remaining CLI assembly
-(`agent-cli-host-adapter`, `agent-cli-runtime`, `agent-cli-selection` and the
-top-level run path) stays in support until runtime assembly has a lower-level
-seam that can be reused without a cycle. This is intentional partial
-extraction, not a duplicated CLI implementation.
+(`agent-cli-host-adapter`, `agent-cli-runtime` and the top-level run path)
+stays in support until runtime assembly has a lower-level seam that can be reused
+without a cycle. Planning selection belongs to the shared runtime selection
+library and is used by both CLI and daemon.
 
 The branches describe the intended link direction from the higher-level
 assembly to the lower-level implementation it consumes. In particular,

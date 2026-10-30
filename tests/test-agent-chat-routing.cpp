@@ -3,7 +3,7 @@
 #include "tools/agent/runtime/agent-runtime-host.h"
 #include "tools/agent/runtime/agent-plan-orchestration.h"
 #include "tools/agent/runtime/agent-dataset-workflow-adapter.h"
-#include "tools/agent/cli/agent-cli-selection.h"
+#include "tools/agent/runtime/agent-planning-selection.h"
 #include "tools/agent/cli/agent-cli-runtime.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/contracts/schema-contract.h"
@@ -159,7 +159,7 @@ int main() {
         planner_prompt_inference action_inference;
         action_inference.replies = {"open! code.inspect"};
         std::string action_error;
-        const auto selected = select_llama_cli_workflow_action(action_inference, config, action_request,
+        const auto selected = select_agent_planning_workflow_action(action_inference, config, action_request,
             {inspect}, {}, {}, common_agent_tool_output_format::compact_dsl, action_error);
         require(action_error.empty() && selected.action && selected.action->tool_name == inspect.name,
             "no-argument workflow action failed selection");
@@ -185,7 +185,7 @@ int main() {
         const std::vector<common_agent_tool_argument_binding> bindings{
             {read.name, R"({"case_id":"case-bound"})", "host", false}};
         std::string error;
-        const auto selected = select_llama_cli_workflow_action(inference, config, request,
+        const auto selected = select_agent_planning_workflow_action(inference, config, request,
             {record, read}, bindings, {}, common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && selected.action && selected.action->tool_name == read.name,
             "two-stage workflow choice failed: " + error);
@@ -209,7 +209,7 @@ int main() {
             "two-stage selection silently changed the response reservation");
         planner_prompt_inference context_only;
         context_only.replies = {read.name, "open! investigate.case.open"};
-        const auto context_selected = select_llama_cli_workflow_action(context_only, config, request,
+        const auto context_selected = select_agent_planning_workflow_action(context_only, config, request,
             {record, read}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && context_selected.action &&
             context_selected.action->arguments_json.find("case-bound") != std::string::npos,
@@ -219,36 +219,36 @@ int main() {
             R"({"type":"object","required":["case_id","expected_revision"],"properties":{"case_id":{"type":"string"},"expected_revision":{"type":"integer","minimum":1}}})", "{}"};
         planner_prompt_inference revision_inference;
         revision_inference.replies = {"open! investigate.test.write"};
-        const auto revision_selected = select_llama_cli_workflow_action(revision_inference, config, request,
+        const auto revision_selected = select_agent_planning_workflow_action(revision_inference, config, request,
             {write}, {}, {}, common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && revision_selected.action && nlohmann::ordered_json::parse(revision_selected.action->arguments_json)["expected_revision"] == 7,
             "selected CAS baseline was left for the model to invent: " + error);
         planner_prompt_inference revision_conflict;
-        select_llama_cli_workflow_action(revision_conflict, config, request, {write},
+        select_agent_planning_workflow_action(revision_conflict, config, request, {write},
             {{write.name, R"({"expected_revision":6})", "host", false}}, {}, common_agent_tool_output_format::compact_dsl, error);
         require(!error.empty() && revision_conflict.requests.empty(), "conflicting selected revisions reached inference");
         planner_prompt_inference json_inference;
         json_inference.replies = {R"("investigate.case.open")", R"({"tool":"investigate.case.open","args":{}})"};
-        select_llama_cli_workflow_action(json_inference, config, request, {read, record}, {}, {},
+        select_agent_planning_workflow_action(json_inference, config, request, {read, record}, {}, {},
             common_agent_tool_output_format::native, error);
         require(error.empty() && json_inference.requests.size() == 2 &&
             json_inference.requests.front().grammar.empty() && !json_inference.requests.front().json_schema.empty() &&
             json_inference.requests.back().grammar.empty() && !json_inference.requests.back().json_schema.empty(),
             "explicit JSON selection lost its schema or silently switched formats: " + error);
         planner_prompt_inference conflicting;
-        select_llama_cli_workflow_action(conflicting, config, request, {read},
+        select_agent_planning_workflow_action(conflicting, config, request, {read},
             {{read.name, R"({"case_id":"different-case"})", "host", false}}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(!error.empty() && conflicting.requests.empty(),
             "conflicting host case bindings reached inference");
         planner_prompt_inference invalid;
         invalid.replies = {"unlisted.tool", "unlisted.tool"};
-        select_llama_cli_workflow_action(invalid, config, request, {read, record}, bindings, {},
+        select_agent_planning_workflow_action(invalid, config, request, {read, record}, bindings, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(!error.empty() && invalid.requests.size() == 2,
             "invalid operation choice escaped bounded repair or guessed a candidate");
         planner_prompt_inference failed;
-        select_llama_cli_workflow_action(failed, config, request, {read, record}, bindings, {},
+        select_agent_planning_workflow_action(failed, config, request, {read, record}, bindings, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(!error.empty() && failed.requests.size() == 1,
             "generation failure was retried as a semantic choice error");
@@ -266,14 +266,14 @@ int main() {
             common_investigation_source_kind::search_connector};
         planner_prompt_inference known;
         known.replies = {"open! search.collect"};
-        const auto selected = select_llama_cli_workflow_action(known, config, request, {document, search}, {}, {},
+        const auto selected = select_agent_planning_workflow_action(known, config, request, {document, search}, {}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && selected.action && known.requests.size() == 1,
             "declared source readiness did not narrow candidates");
         request.investigation_source_kinds.reset();
         planner_prompt_inference unknown;
         unknown.replies = {"document.extract", "open! document.extract"};
-        select_llama_cli_workflow_action(unknown, config, request, {search, document}, {}, {},
+        select_agent_planning_workflow_action(unknown, config, request, {search, document}, {}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && unknown.requests.size() == 2,
             "unknown source readiness silently removed candidates");
@@ -281,7 +281,7 @@ int main() {
             common_investigation_source_kind::search_connector, common_investigation_source_kind::document};
         planner_prompt_inference mixed;
         mixed.replies = {"document.extract", "open! document.extract"};
-        select_llama_cli_workflow_action(mixed, config, request, {search, document}, {}, {},
+        select_agent_planning_workflow_action(mixed, config, request, {search, document}, {}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && mixed.requests.size() == 2,
             "mixed sources lost a valid document operation");
@@ -303,14 +303,14 @@ int main() {
         std::string error;
         planner_prompt_inference unbound;
         unbound.replies = {"open! analysis.inspect"};
-        const auto unbound_result = select_llama_cli_workflow_action(unbound, config, request, {inspect}, {}, {},
+        const auto unbound_result = select_agent_planning_workflow_action(unbound, config, request, {inspect}, {}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(error.empty(), "unbound dataset fixture failed: " + error);
         require(unbound_result.action && unbound_result.action->arguments_json.find("dataset") == std::string::npos,
             "dataset name in user text or sole inventory item became a binding");
         planner_prompt_inference bound;
         bound.replies = {"open! analysis.inspect"};
-        const auto bound_result = select_llama_cli_workflow_action(bound, config, request, {inspect},
+        const auto bound_result = select_agent_planning_workflow_action(bound, config, request, {inspect},
             {{inspect.name, R"({"dataset":"dataset://selected/orders"})", "host", false}}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(error.empty(), "explicit dataset binding fixture failed: " + error);
@@ -333,7 +333,7 @@ int main() {
         planner_prompt_inference inference;
         inference.replies = {"open! statistics.describe\ndataset: dataset://selected/orders"};
         std::string error;
-        const auto selected = select_llama_cli_workflow_action(inference, config, request, {inspect}, {}, {},
+        const auto selected = select_agent_planning_workflow_action(inference, config, request, {inspect}, {}, {},
             common_agent_tool_output_format::compact_dsl, error);
         require(error.empty() && selected.action &&
             selected.action->arguments_json.find("dataset://selected/orders") != std::string::npos,
@@ -341,7 +341,7 @@ int main() {
         require(inference.requests.front().messages[1].content.find("dataset (required") != std::string::npos,
             "dataset workflow advertised a source as inferable without a binding");
         planner_prompt_inference unresolved;
-        select_llama_cli_workflow_action(unresolved, config, request, {inspect}, {}, {inspect.name},
+        select_agent_planning_workflow_action(unresolved, config, request, {inspect}, {}, {inspect.name},
             common_agent_tool_output_format::compact_dsl, error);
         require(!error.empty() && unresolved.requests.empty(),
             "unresolved dataset was hidden from the contract before actual host selection");
@@ -526,7 +526,7 @@ int main() {
         candidate.id = "saved-plan";
         candidate.goal = "Continue investigation";
         std::string selection_error;
-        const auto invalid = select_llama_cli_plan_result(
+        const auto invalid = select_agent_planning_plan_result(
             inference, generation_config, selection_request, {candidate}, selection_error);
         require(!invalid.plan_id && invalid.invalid_selection && !selection_error.empty(),
             "malformed plan choice was not distinguished from a valid new-task choice");
@@ -541,28 +541,28 @@ int main() {
         require(inference.requests.back().messages.back().content.find(selection_request.prompt) != std::string::npos,
             "plan selector lost the host-composed request context");
         inference.plan_selection = R"({"decision":"new","plan_id":"","confidence":1})";
-        const auto new_task = select_llama_cli_plan_result(
+        const auto new_task = select_agent_planning_plan_result(
             inference, generation_config, selection_request, {candidate}, selection_error);
         require(!new_task.plan_id && !new_task.invalid_selection && selection_error.empty(),
             "valid new-task decision was not distinguished from a failed selection");
         inference.plan_selection = R"({"decision":"resume","plan_id":"saved-plan","confidence":0.9})";
-        const auto resume = select_llama_cli_plan_result(
+        const auto resume = select_agent_planning_plan_result(
             inference, generation_config, selection_request, {candidate}, selection_error);
         require(resume.plan_id == candidate.id && !resume.invalid_selection && selection_error.empty(),
             "valid resume decision did not select the host-provided plan");
         inference.plan_selection = R"({"decision":"other","plan_id":"","confidence":1})";
-        const auto inconsistent = select_llama_cli_plan_result(
+        const auto inconsistent = select_agent_planning_plan_result(
             inference, generation_config, selection_request, {candidate}, selection_error);
         require(!inconsistent.plan_id && inconsistent.invalid_selection && !selection_error.empty(),
             "unknown plan decision was treated as a valid new-task choice");
         inference.plan_selection = R"({"decision":"resume","plan_id":"saved-plan","confidence":1.2})";
-        const auto out_of_range_confidence = select_llama_cli_plan_result(
+        const auto out_of_range_confidence = select_agent_planning_plan_result(
             inference, generation_config, selection_request, {candidate}, selection_error);
         require(!out_of_range_confidence.plan_id && out_of_range_confidence.invalid_selection &&
             !selection_error.empty(), "out-of-range confidence bypassed plan selection validation");
         inference.plan_selection = "not-json";
         inference.fail_plan_selection = true;
-        const auto failed = select_llama_cli_plan_result(
+        const auto failed = select_agent_planning_plan_result(
             inference, generation_config, selection_request, {candidate}, selection_error);
         require(!failed.invalid_selection && !selection_error.empty(),
             "inference failure was treated as an invalid selection eligible for new-task fallback");

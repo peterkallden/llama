@@ -2,7 +2,7 @@ include_directories(${PROJECT_SOURCE_DIR})
 
 set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/cli/agent-cli-config.cpp
-    ../../tools/agent/cli/agent-cli-generation-utils.cpp
+    ../../tools/agent/runtime/agent-runtime-generation-utils.cpp
     ../../tools/agent/cli/agent-cli-run-adapter.cpp
     ../../tools/agent/daemon/agent-daemon-client-admin.cpp
     ../../tools/agent/daemon/agent-daemon-client-status.cpp
@@ -60,7 +60,7 @@ set(AGENT_MEMORY_RUNTIME_SOURCES
     ../../tools/agent/runtime/agent-server-inference.cpp
     ../../tools/agent/runtime/agent-runtime-assembly.cpp
     ../../tools/agent/cli/agent-cli-runtime.cpp
-    ../../tools/agent/cli/agent-cli-selection.cpp
+    ../../tools/agent/runtime/agent-planning-selection.cpp
 )
 
 if (LLAMA_MEMORY_COZO)

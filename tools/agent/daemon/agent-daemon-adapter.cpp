@@ -2,7 +2,7 @@
 
 #include "agent/thinking/deliberation-policy.h"
 
-#include "../cli/agent-cli-selection.h"
+#include "../runtime/agent-planning-selection.h"
 #include "agent-daemon-dispatcher.h"
 #include "agent-daemon-jsonl-protocol.h"
 #include "../host/agent-host-config.h"

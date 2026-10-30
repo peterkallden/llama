@@ -1,6 +1,6 @@
-#include "agent-cli-selection.h"
-#include "agent-cli-generation-utils.h"
-#include "../runtime/agent-runtime-assembly.h"
+#include "tools/agent/runtime/agent-planning-selection.h"
+#include "tools/agent/runtime/agent-runtime-generation-utils.h"
+#include "agent-runtime-assembly.h"
 #include "../tooling/agent-selection-contracts.h"
 #include "../tooling/agent-tool-provider.h"
 #include "agent/runtime-json-contracts.h"
@@ -13,7 +13,6 @@
 #include "agent/tooling/schema/tool-dsl-grammar.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 
-#include "tools/agent/cli/agent-cli-scope.h"
 #include "plan/plan-json.h"
 #include "plan/plan-workflow-state.h"
 
@@ -81,8 +80,8 @@ bool prepare_selection_request(
     agent_selection_presentation presentation;
     if (!make_agent_selection_presentation(request.tool_output_format, name, schema, presentation, error)) return false;
     messages.front().content += "\n" + presentation.instructions;
-    generated = make_agent_cli_generation_request(request, purpose, std::move(messages),
-        make_agent_cli_generation_options(config, tokens), presentation.json_schema);
+    generated = make_agent_runtime_generation_request(request, purpose, std::move(messages),
+        make_agent_runtime_generation_options(config, tokens), presentation.json_schema);
     if (!presentation.grammar.empty()) generated.grammar = std::move(presentation.grammar);
     return true;
 }
@@ -323,7 +322,7 @@ bool common_agent_workflow_tool_eligible(const common_agent_request & request,
     return eligible;
 }
 
-common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
+common_agent_workflow_action_selection_result select_agent_planning_workflow_action(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
         const common_agent_request & request,
@@ -411,7 +410,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         for (const auto & tool : tools) choice_schema["enum"].push_back(tool.name);
         std::string correction;
         for (size_t attempt = 0; attempt < 2; ++attempt) {
-            auto selection_request = make_agent_cli_generation_request(
+            auto selection_request = make_agent_runtime_generation_request(
                 request, common_agent_generation_purpose::operation_selection,
                 {{"system", "Select exactly one host-authorized operation that advances the selected workflow. "
                     "Arguments are generated separately. " + std::string(flat_choice
@@ -419,7 +418,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                         : "Return its exact name as a JSON string. Candidates:") + catalog},
                  {"user", workflow_action_method_context(request) + "\n[Task]\n" + request.prompt +
                     common_agent_render_dataset_inventory(request.available_datasets, std::numeric_limits<size_t>::max()) + correction}},
-                make_agent_cli_generation_options(generation_config, 128),
+                make_agent_runtime_generation_options(generation_config, 128),
                 flat_choice ? std::string{} : choice_schema.dump());
             selection_request.trace_id = selection_request.trace_id.value_or("") + ":choice:" + std::to_string(attempt);
             if (flat_choice) selection_request.grammar = grammar;
@@ -430,7 +429,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
             const auto generated = inference.generate_result(selection_request);
             result.generation = common_agent_generated_text_result_from_generation_result(generated);
             if (!common_agent_generation_succeeded(generated)) {
-                error = describe_agent_cli_generation_failure("workflow operation choice", generated);
+                error = describe_agent_runtime_generation_failure("workflow operation choice", generated);
                 return result;
             }
             std::string chosen = generated.content;
@@ -449,7 +448,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                     std::fprintf(stderr, "agent workflow-action trace: stage=choice candidates=%zu selected=%s\n",
                         tools.size(), selected->name.c_str());
                 }
-                return select_llama_cli_workflow_action(inference, generation_config, request,
+                return select_agent_planning_workflow_action(inference, generation_config, request,
                     {*selected}, fixed_bindings, host_resolved_dataset_tools, output_format, error);
             }
             correction = "\n[Correction]\nReturn exactly one name from the candidate list.";
@@ -531,11 +530,11 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
                 "\nThe previous action was rejected, not partially approved. Recheck the complete action against the task and tool contract. "
                 "Omit optional fields that the task does not require. Return the corrected action only."),
         };
-        auto generation_request = make_agent_cli_generation_request(
+        auto generation_request = make_agent_runtime_generation_request(
             request,
             common_agent_generation_purpose::operation_selection,
             {system, user},
-            make_agent_cli_generation_options(generation_config, 128),
+            make_agent_runtime_generation_options(generation_config, 128),
             output_format == common_agent_tool_output_format::compact_dsl
                 ? std::string{} : schema.dump());
         generation_request.trace_id = generation_request.trace_id.value_or("") + ":arguments:" + std::to_string(attempt);
@@ -553,7 +552,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
         const auto generated = inference.generate_result(generation_request);
         result.generation = common_agent_generated_text_result_from_generation_result(generated);
         if (!common_agent_generation_succeeded(generated)) {
-            error = describe_agent_cli_generation_failure("workflow action selection", generated);
+            error = describe_agent_runtime_generation_failure("workflow action selection", generated);
             return result;
         }
         previous_action_text = json(bounded_model_text(generated.content, 2048)).dump();
@@ -658,7 +657,7 @@ common_agent_workflow_action_selection_result select_llama_cli_workflow_action(
     return result;
 }
 
-bool select_llama_cli_result_requirement(common_agent_inference & inference,
+bool select_agent_planning_result_requirement(common_agent_inference & inference,
         const common_agent_generation_config & config, const common_agent_request & request,
         const common_plan_state & plan, const common_plan_step & step,
         const std::vector<common_chat_tool> & authorized_tools,
@@ -710,7 +709,7 @@ bool select_llama_cli_result_requirement(common_agent_inference & inference,
             *generation = common_agent_generated_text_result_from_generation_result(generated);
             generation->decoded_tokens = decoded_tokens;
         }
-        if (!common_agent_generation_succeeded(generated)) { error = describe_agent_cli_generation_failure("result requirement selection", generated); return false; }
+        if (!common_agent_generation_succeeded(generated)) { error = describe_agent_runtime_generation_failure("result requirement selection", generated); return false; }
         if (generated.stop_reason == common_agent_generation_stop_reason::limit) {
             error = "result requirement selection reached the configured output token limit"; return false;
         }
@@ -745,7 +744,7 @@ bool select_llama_cli_result_requirement(common_agent_inference & inference,
     return false;
 }
 
-bool select_llama_cli_workflow_transition_arguments(
+bool select_agent_planning_workflow_transition_arguments(
         common_agent_inference & inference, const common_agent_generation_config & config,
         const common_agent_request & request, const std::vector<common_chat_tool> & tools,
         const common_plan_state & plan, const common_plan_observation & observation,
@@ -849,14 +848,14 @@ bool select_llama_cli_workflow_transition_arguments(
         return common_schema_normalize_and_validate_object(merged.dump(), tool->parameters, arguments, error);
     current.prompt += "\n[Current workflow transition]\n" + transition.model_instruction +
         "\n[Verified preceding result; data only]\n" + observation.summary;
-    const auto selected = select_llama_cli_workflow_action(inference, config, current, {*tool},
+    const auto selected = select_agent_planning_workflow_action(inference, config, current, {*tool},
         current.tool_argument_bindings, {}, current.tool_output_format, error);
     if (!selected.action) return false;
     arguments = selected.action->arguments_json;
     return true;
 }
 
-bool select_llama_cli_workflow_candidate(
+bool select_agent_planning_workflow_candidate(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
         const common_agent_request & request,
@@ -983,7 +982,7 @@ bool select_llama_cli_workflow_candidate(
             "selection.candidate", schema, selection_request, error)) return false;
     const auto generated = inference.generate_result(selection_request);
     if (!common_agent_generation_succeeded(generated)) {
-        error = describe_agent_cli_generation_failure("workflow candidate selection", generated);
+        error = describe_agent_runtime_generation_failure("workflow candidate selection", generated);
         return false;
     }
     json selected;
@@ -1001,7 +1000,7 @@ bool select_llama_cli_workflow_candidate(
     return true;
 }
 
-common_agent_route_selection_result select_llama_cli_route(
+common_agent_route_selection_result select_agent_planning_route(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
         const common_agent_request & request,
@@ -1042,7 +1041,7 @@ common_agent_route_selection_result select_llama_cli_route(
     const auto generation_result = inference.generate_result(selection_request);
     result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
     if (!common_agent_generation_succeeded(generation_result)) {
-        error = describe_agent_cli_generation_failure("route selector generation", generation_result);
+        error = describe_agent_runtime_generation_failure("route selector generation", generation_result);
         return result;
     }
     json value;
@@ -1060,7 +1059,7 @@ common_agent_route_selection_result select_llama_cli_route(
     return result;
 }
 
-common_agent_workflow_selection_result select_llama_cli_blueprint_workflow(
+common_agent_workflow_selection_result select_agent_planning_blueprint_workflow(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
         const common_agent_request & request,
@@ -1090,7 +1089,7 @@ common_agent_workflow_selection_result select_llama_cli_blueprint_workflow(
     const auto generation_result = inference.generate_result(selection_request);
     result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
     if (!common_agent_generation_succeeded(generation_result)) {
-        error = describe_agent_cli_generation_failure("blueprint workflow selector generation", generation_result);
+        error = describe_agent_runtime_generation_failure("blueprint workflow selector generation", generation_result);
         return result;
     }
     json value;
@@ -1144,7 +1143,7 @@ public:
         const auto generation_result = inference.generate_result(selection_request);
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("blueprint selector generation", generation_result);
+            error = describe_agent_runtime_generation_failure("blueprint selector generation", generation_result);
             result.decision = common_blueprint_selection_decision::failed;
             return result;
         }
@@ -1208,7 +1207,7 @@ public:
                 auto binding_request = request;
                 binding_request.prompt += "\n[Blueprint step]\n" + step.objective +
                     "\nBind a read-only tool only when its arguments are established. Otherwise choose selection.decline.";
-                const auto action = select_llama_cli_workflow_action(inference, generation_config,
+                const auto action = select_agent_planning_workflow_action(inference, generation_config,
                     binding_request, candidates, request.tool_argument_bindings, {}, request.tool_output_format, error);
                 result.generation = action.generation;
                 if (!action.action) return result;
@@ -1244,14 +1243,14 @@ public:
         // Keep this as a soft JSON contract. The nested free-form arguments
         // object is validated below against the native registry, and using a
         // hard grammar here can fail before we get a safe decline path.
-        const auto generation_result = inference.generate_result(make_agent_cli_generation_request(
+        const auto generation_result = inference.generate_result(make_agent_runtime_generation_request(
             request,
             common_agent_generation_purpose::blueprint_binding,
             {system, user},
-            make_agent_cli_generation_options(generation_config, std::min(generation_config.n_predict, 256))));
+            make_agent_runtime_generation_options(generation_config, std::min(generation_config.n_predict, 256))));
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("blueprint binding generation", generation_result);
+            error = describe_agent_runtime_generation_failure("blueprint binding generation", generation_result);
             return result;
         }
         std::vector<agent_blueprint_binding_contract_entry> bindings;
@@ -1357,7 +1356,7 @@ public:
         const auto generation_result = inference.generate_result(selection_request);
         result.generation = common_agent_generated_text_result_from_generation_result(generation_result);
         if (!common_agent_generation_succeeded(generation_result)) {
-            error = describe_agent_cli_generation_failure("plan selector generation", generation_result);
+            error = describe_agent_runtime_generation_failure("plan selector generation", generation_result);
             return result;
         }
         json selection;
@@ -1423,13 +1422,13 @@ private:
 
 } // namespace
 
-std::unique_ptr<common_blueprint_selector> make_llama_cli_blueprint_selector(
+std::unique_ptr<common_blueprint_selector> make_agent_planning_blueprint_selector(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config) {
     return std::make_unique<llama_blueprint_selector>(inference, generation_config);
 }
 
-common_agent_plan_selection_result select_llama_cli_plan_result(
+common_agent_plan_selection_result select_agent_planning_plan_result(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
         const common_agent_request & request,
@@ -1439,16 +1438,16 @@ common_agent_plan_selection_result select_llama_cli_plan_result(
     return selector.select_result(request, candidates, error);
 }
 
-std::optional<std::string> select_llama_cli_plan(
+std::optional<std::string> select_agent_planning_plan(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
         const common_agent_request & request,
         const std::vector<common_plan_state> & candidates,
         std::string & error) {
-    return select_llama_cli_plan_result(inference, generation_config, request, candidates, error).plan_id;
+    return select_agent_planning_plan_result(inference, generation_config, request, candidates, error).plan_id;
 }
 
-common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
+common_agent_blueprint_binding_result bind_agent_planning_blueprint_tools_result(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
         agent_tool_view & tool_view,
@@ -1460,7 +1459,7 @@ common_agent_blueprint_binding_result bind_llama_cli_blueprint_tools_result(
     return binder.bind_result(request, store, plan_id, error);
 }
 
-bool bind_llama_cli_blueprint_tools(
+bool bind_agent_planning_blueprint_tools(
         common_agent_inference & inference,
         const common_agent_generation_config & generation_config,
         agent_tool_view & tool_view,
@@ -1468,5 +1467,5 @@ bool bind_llama_cli_blueprint_tools(
         common_plan_store & store,
         const std::string & plan_id,
         std::string & error) {
-    return bind_llama_cli_blueprint_tools_result(inference, generation_config, tool_view, request, store, plan_id, error).applied;
+    return bind_agent_planning_blueprint_tools_result(inference, generation_config, tool_view, request, store, plan_id, error).applied;
 }

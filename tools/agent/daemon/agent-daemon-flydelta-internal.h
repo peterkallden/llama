@@ -8,7 +8,7 @@
 #include "../adaptation/agent-learning-lifecycle-store.h"
 
 #include "../cli/agent-cli-host-adapter.h"
-#include "../cli/agent-cli-selection.h"
+#include "../runtime/agent-planning-selection.h"
 #include "../runtime/agent-inference-capacity-gate.h"
 #include "../runtime/agent-model-loaders.h"
 #include "../runtime/agent-server-context-host.h"

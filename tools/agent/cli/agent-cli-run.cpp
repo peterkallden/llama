@@ -6,7 +6,7 @@
 
 #ifdef LLAMA_MEMORY_POC_USE_AGENT_TOOLS
 #include "agent-cli-host-adapter.h"
-#include "agent-cli-selection.h"
+#include "tools/agent/runtime/agent-planning-selection.h"
 #include "agent-cli-runtime.h"
 #include "../runtime/agent-plan-orchestration.h"
 #include "../runtime/agent-runtime-assembly.h"

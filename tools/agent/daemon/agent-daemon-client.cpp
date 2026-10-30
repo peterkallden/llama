@@ -2,7 +2,7 @@
 
 #include "agent-daemon-client-admin.h"
 #include "../cli/agent-cli-config.h"
-#include "../cli/agent-cli-selection.h"
+#include "../runtime/agent-planning-selection.h"
 #include "../resource/agent-resource-store.h"
 #include "agent-daemon-client-status.h"
 #include "agent-daemon-jsonl-protocol.h"

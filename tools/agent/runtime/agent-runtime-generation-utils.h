@@ -1,23 +1,23 @@
 #pragma once
 
-#include "../runtime/agent-runtime-assembly.h"
+#include "agent-runtime-assembly.h"
 
 #include <string>
 #include <vector>
 
-std::string make_agent_cli_generation_trace_id(
+std::string make_agent_runtime_generation_trace_id(
     const common_agent_request & request,
     common_agent_generation_purpose purpose);
 
-std::string describe_agent_cli_generation_failure(
+std::string describe_agent_runtime_generation_failure(
     const char * label,
     const common_agent_generation_result & result);
 
-common_agent_generation_options make_agent_cli_generation_options(
+common_agent_generation_options make_agent_runtime_generation_options(
     const common_agent_generation_config & generation_config,
     int n_predict);
 
-common_agent_generation_request make_agent_cli_generation_request(
+common_agent_generation_request make_agent_runtime_generation_request(
     const common_agent_request & request,
     common_agent_generation_purpose purpose,
     std::vector<common_chat_msg> messages,
