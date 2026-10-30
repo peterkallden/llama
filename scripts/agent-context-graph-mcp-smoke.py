@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
     p, rpc, call = start("project-a")
     try:
         names = {tool["name"] for tool in rpc(2, "tools/list", {})["tools"]}
-        assert {"graph.find", "graph.get", "graph.expand", "graph.source", "graph.link.propose", "graph.retract.propose"} <= names, names
+        assert {"graph.find", "graph.get", "graph.expand", "graph.search", "graph.source", "graph.link.propose", "graph.retract.propose"} <= names, names
         denied = rpc(20, "tools/call", {"name": "graph.source", "arguments": {
             "source": "code", "arguments": {"symbol": "f", "path_hint": "a.cpp", "line": 1}}})
         assert denied.get("isError") or denied.get("structuredContent", {}).get("ok") is False, denied
@@ -71,12 +71,19 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
         actor = call(21, "graph.link.propose", {"from": {"kind": "actor", "name": "Alice", "source_ref": "case:a/entity:alice"},
             "to": {"id": edge["from"]}, "relation": "associated_with", "rationale": "investigate the association"})
         actor_id = actor["edge"]["from"]
+        authored = call(24, "graph.link.propose", {"from": {"id": actor_id},
+            "to": {"kind": "resource", "name": "Paper", "source_ref": "paper:one"},
+            "relation": "authored", "rationale": "source credits Alice"})["edge"]
+        assert len(call(25, "graph.search", {"from": actor_id, "relation": "authored"})["edges"]) == 1
+        assert len(call(26, "graph.search", {"to": authored["to"], "relation": "authored"})["edges"]) == 1
+        assert len(call(27, "graph.expand", {"id": authored["to"]})["edges"]) == 1
     finally:
         stop(p)
     p, rpc, call = start("project-a")
     try:
         assert len(call(5, "graph.find", {"query": "planning"})["nodes"]) == 1
         assert call(22, "graph.get", {"id": actor_id})["node"]["source_ref"] == "case:a/entity:alice"
+        assert len(call(28, "graph.search", {"to": authored["to"], "relation": "authored"})["edges"]) == 1
         retracted = call(6, "graph.retract.propose", {"id": edge["id"], "expected_version": 1, "rationale": "recheck"})
         assert retracted["edge"]["status"] == "retraction_proposed"
     finally:

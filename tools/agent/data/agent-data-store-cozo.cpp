@@ -18,6 +18,7 @@ extern "C" {
 #include <cmath>
 #include <map>
 #include <set>
+#include <stdexcept>
 
 using json = nlohmann::ordered_json;
 
@@ -653,7 +654,8 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
     bool rows_present = false, values_present = false, order_present = false, dataset_present = false,
         investigation_present = false, investigation_index_present = false, investigation_report_index_present = false,
         research_current_present = false, research_revisions_present = false, research_drafts_present = false,
-        graph_present = false, graph_nodes_present = false, graph_edges_present = false, graph_history_present = false;
+        graph_present = false, graph_nodes_present = false, graph_edges_present = false, graph_history_present = false,
+        graph_forward_present = false, graph_reverse_present = false, graph_relation_present = false;
     if (parsed.is_object() && parsed.contains("rows")) for (const auto & row : parsed["rows"]) if (row.is_array() && !row.empty() && row[0].is_string()) {
         rows_present |= row[0] == "agent_data_rows";
         values_present |= row[0] == "agent_data_values";
@@ -669,6 +671,13 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
         graph_nodes_present |= row[0] == "agent_context_node";
         graph_edges_present |= row[0] == "agent_context_edge";
         graph_history_present |= row[0] == "agent_context_history";
+        graph_forward_present |= row[0] == "agent_context_edge_forward";
+        graph_reverse_present |= row[0] == "agent_context_edge_reverse";
+        graph_relation_present |= row[0] == "agent_context_edge_relation";
+    }
+    if (!(graph_present || graph_nodes_present || graph_edges_present || graph_history_present) &&
+            (graph_forward_present || graph_reverse_present || graph_relation_present)) {
+        error = "Cozo context graph index exists without graph storage"; close(); return false;
     }
     if (!(graph_present || graph_nodes_present || graph_edges_present || graph_history_present)) {
         const std::string schema = R"COZO(
@@ -685,6 +694,39 @@ bool common_agent_cozo_data_store::open(const std::string & path, std::string & 
         if (!run(schema, "{}", ignored, error)) { close(); return false; }
     } else if (!(graph_present && graph_nodes_present && graph_edges_present && graph_history_present)) {
         error = "Cozo context graph schema is incomplete"; close(); return false;
+    }
+    if (!(graph_forward_present || graph_reverse_present || graph_relation_present)) {
+        std::string raw;
+        if (!run("?[scope_key, id, payload] := *agent_context_edge[scope_key, id, payload]", "{}", raw, error)) { close(); return false; }
+        const auto rows = json::parse(raw, nullptr, false);
+        if (!rows.is_object() || !rows.contains("rows") || !rows["rows"].is_array()) { error = "context graph index migration could not read edges"; close(); return false; }
+        json forward = json::array(), reverse = json::array(), relations_index = json::array();
+        try {
+            for (const auto & row : rows["rows"]) {
+                if (!row.is_array() || row.size() != 3 || !row[0].is_string() || !row[1].is_string() || !row[2].is_string()) throw std::runtime_error("invalid edge row");
+                const auto edge = json::parse(row[2].get<std::string>());
+                const auto a = edge.at("from").get<std::string>(), b = edge.at("to").get<std::string>(), rel = edge.at("relation").get<std::string>();
+                if (a.empty() || b.empty() || rel.empty() || edge.at("id") != row[1]) throw std::runtime_error("invalid edge payload");
+                forward.push_back({row[0], a, rel, b, row[1]}); reverse.push_back({row[0], b, rel, a, row[1]});
+                relations_index.push_back({row[0], rel, a, b, row[1]});
+            }
+        } catch (const std::exception &) { error = "context graph index migration encountered malformed data"; close(); return false; }
+        const auto params = json{{"forward",forward},{"reverse",reverse},{"relations",relations_index}}.dump();
+        const std::string migration = R"COZO(
+            { ?[scope_key, from_id, relation, to_id, id] <- [['__probe__','__probe__','__probe__','__probe__','__probe__']] :create agent_context_edge_forward { scope_key: String, from_id: String, relation: String, to_id: String, id: String } }
+            { ?[scope_key, to_id, relation, from_id, id] <- [['__probe__','__probe__','__probe__','__probe__','__probe__']] :create agent_context_edge_reverse { scope_key: String, to_id: String, relation: String, from_id: String, id: String } }
+            { ?[scope_key, relation, from_id, to_id, id] <- [['__probe__','__probe__','__probe__','__probe__','__probe__']] :create agent_context_edge_relation { scope_key: String, relation: String, from_id: String, to_id: String, id: String } }
+            { ?[scope_key, from_id, relation, to_id, id] <- [['__probe__','__probe__','__probe__','__probe__','__probe__']] :delete agent_context_edge_forward { scope_key, from_id, relation, to_id, id } }
+            { ?[scope_key, to_id, relation, from_id, id] <- [['__probe__','__probe__','__probe__','__probe__','__probe__']] :delete agent_context_edge_reverse { scope_key, to_id, relation, from_id, id } }
+            { ?[scope_key, relation, from_id, to_id, id] <- [['__probe__','__probe__','__probe__','__probe__','__probe__']] :delete agent_context_edge_relation { scope_key, relation, from_id, to_id, id } }
+            { ?[scope_key, from_id, relation, to_id, id] <- $forward :put agent_context_edge_forward { scope_key, from_id, relation, to_id, id } }
+            { ?[scope_key, to_id, relation, from_id, id] <- $reverse :put agent_context_edge_reverse { scope_key, to_id, relation, from_id, id } }
+            { ?[scope_key, relation, from_id, to_id, id] <- $relations :put agent_context_edge_relation { scope_key, relation, from_id, to_id, id } }
+        )COZO";
+        std::string ignored;
+        if (!run(migration, params, ignored, error)) { close(); return false; }
+    } else if (!(graph_forward_present && graph_reverse_present && graph_relation_present)) {
+        error = "Cozo context graph search index schema is incomplete"; close(); return false;
     }
     if (!rows_present) { std::string ignored; if (!run(agent_cozo_schema_script(), "{}", ignored, error)) { close(); return false; } }
     else if (!values_present) { std::string ignored; if (!run(agent_cozo_values_schema_script(), "{}", ignored, error)) { close(); return false; } }
@@ -813,6 +855,41 @@ bool common_agent_cozo_data_store::get_context_graph(const common_agent_scope & 
     return load_context_graph(scope, out, error);
 }
 
+bool common_agent_cozo_data_store::find_context_graph_edges(const common_agent_scope & scope, uint64_t revision,
+        const std::string & from, const std::string & relation, const std::string & to,
+        std::vector<std::string> & ids, std::string & error) {
+    std::lock_guard<std::mutex> guard(graph_mutex_);
+    if (scope.namespace_id.empty() || scope.project_id.empty()) { error = "context graph requires a namespace and project"; return false; }
+    const auto key = context_graph_scope_key(scope);
+    const auto params = json{{"scope",key},{"from",from},{"relation",relation},{"to",to}}.dump();
+    std::string query;
+    if (!from.empty()) query = "?[id] := *agent_context_edge_forward[$scope, $from, relation, to_id, id]";
+    else if (!to.empty()) query = "?[id] := *agent_context_edge_reverse[$scope, $to, relation, from_id, id]";
+    else if (!relation.empty()) query = "?[id] := *agent_context_edge_relation[$scope, $relation, from_id, to_id, id]";
+    else query = "?[id] := *agent_context_edge_forward[$scope, from_id, relation, to_id, id]";
+    if (!relation.empty() && (!from.empty() || !to.empty())) query += ", relation = $relation";
+    if (!to.empty() && !from.empty()) query += ", to_id = $to";
+    std::string raw;
+    if (!run(query, params, raw, error)) return false;
+    const auto response = json::parse(raw, nullptr, false);
+    if (!response.is_object() || !response.contains("rows") || !response["rows"].is_array() || response["rows"].size() > 4096) {
+        error = "context graph search index is invalid"; return false;
+    }
+    ids.clear();
+    for (const auto & row : response["rows"]) {
+        if (!row.is_array() || row.size() != 1 || !row[0].is_string()) { error = "invalid graph search index row"; return false; }
+        ids.push_back(row[0].get<std::string>());
+    }
+    if (!run("?[revision] := *agent_context_graph[$scope, revision]", json{{"scope", key}}.dump(), raw, error)) return false;
+    const auto metadata = json::parse(raw, nullptr, false);
+    if (!metadata.is_object() || !metadata.contains("rows") || !metadata["rows"].is_array() || metadata["rows"].size() > 1 ||
+            (metadata["rows"].empty() ? revision != 0 : !metadata["rows"][0].is_array() || metadata["rows"][0].size() != 1 ||
+                !metadata["rows"][0][0].is_number_unsigned() || metadata["rows"][0][0].get<uint64_t>() != revision)) {
+        error = "context graph revision conflict"; return false;
+    }
+    error.clear(); return true;
+}
+
 common_agent_publication_status common_agent_cozo_data_store::publish_context_graph(
         const common_agent_scope & scope, uint64_t expected, const common_context_graph_state & input,
         common_context_graph_state & out, std::string & error) {
@@ -843,9 +920,7 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
         if (edge.id.empty() || edge.id.size() > 256 || !edge_ids.insert(edge.id).second ||
                 !node_ids.count(edge.from) || !node_ids.count(edge.to) || edge.rationale.empty() || edge.rationale.size() > 512 ||
                 edge.source != "model" || (edge.status != "proposed" && edge.status != "retraction_proposed") ||
-                (edge.relation != "calls" && edge.relation != "references" && edge.relation != "contains" &&
-                 edge.relation != "depends_on" && edge.relation != "implements" && edge.relation != "related_to" &&
-                 edge.relation != "supports" && edge.relation != "contradicts" && edge.relation != "associated_with" && edge.relation != "observed_in") ||
+                edge.relation.empty() || edge.relation.size() > 64 || edge.relation.find('\0') != std::string::npos ||
                 edge.evidence_refs.size() > 16 || edge.source_revision.size() > 256 || edge.version == 0) {
             error = "context graph edge is invalid"; return common_agent_publication_status::invalid;
         }
@@ -869,16 +944,21 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
     }
     const auto key = context_graph_scope_key(scope);
     json nodes = json::array(), edges = json::array(), history = json::array();
+    json forward = json::array(), reverse = json::array(), relations_index = json::array();
     for (const auto & node : input.nodes) nodes.push_back({key, node.id, context_graph_node_json(node).dump()});
     for (const auto & edge : input.edges) {
         const auto payload = context_graph_edge_json(edge).dump();
         edges.push_back({key, edge.id, payload});
+        forward.push_back({key, edge.from, edge.relation, edge.to, edge.id});
+        reverse.push_back({key, edge.to, edge.relation, edge.from, edge.id});
+        relations_index.push_back({key, edge.relation, edge.from, edge.to, edge.id});
         const auto prior = std::find_if(current.edges.begin(), current.edges.end(), [&](const auto & value) { return value.id == edge.id; });
         if (prior == current.edges.end() || context_graph_edge_json(*prior) != context_graph_edge_json(edge))
             history.push_back({key, input.revision, edge.id, payload});
     }
     const auto params = json{{"metadata", json::array({json::array({key, input.revision})})},
-        {"nodes", nodes}, {"edges", edges}, {"history", history}, {"scope_key", key}, {"expected", expected}}.dump();
+        {"nodes", nodes}, {"edges", edges}, {"history", history}, {"forward",forward}, {"reverse",reverse},
+        {"relations",relations_index}, {"scope_key", key}, {"expected", expected}}.dump();
     const std::string revision_guard = expected == 0
         ? "{ ?[scope_key, revision] <- [[$scope_key, -1]] :ensure_not agent_context_graph { scope_key, revision } }\n"
         : "{ ?[scope_key, revision] <- [[$scope_key, $expected]] :ensure agent_context_graph { scope_key, revision } }\n";
@@ -886,6 +966,9 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
         { ?[scope_key, revision] <- $metadata :put agent_context_graph { scope_key => revision } }
         { ?[scope_key, id, payload] <- $nodes :put agent_context_node { scope_key, id => payload } }
         { ?[scope_key, id, payload] <- $edges :put agent_context_edge { scope_key, id => payload } }
+        { ?[scope_key, from_id, relation, to_id, id] <- $forward :put agent_context_edge_forward { scope_key, from_id, relation, to_id, id } }
+        { ?[scope_key, to_id, relation, from_id, id] <- $reverse :put agent_context_edge_reverse { scope_key, to_id, relation, from_id, id } }
+        { ?[scope_key, relation, from_id, to_id, id] <- $relations :put agent_context_edge_relation { scope_key, relation, from_id, to_id, id } }
         { ?[scope_key, revision, id, payload] <- $history :put agent_context_history { scope_key, revision, id => payload } }
     )COZO";
     std::string ignored;

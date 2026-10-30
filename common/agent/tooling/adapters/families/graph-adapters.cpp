@@ -179,6 +179,49 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             if (edge != graph.edges.end()) return common_adapter_success_json({{"revision", graph.revision}, {"edge", edge_json(*edge)}});
             return common_adapter_not_found_failure("tool.graph.not_found", "graph item is unavailable", "Graph item is unavailable.");
         }
+        if (operation == "graph.search") {
+            for (const char * key : {"from", "to", "relation", "from_kind", "to_kind", "status"})
+                if (!text_value(args, key, std::string(key) == "relation" ? 64 :
+                        (std::string(key).find("kind") != std::string::npos || std::string(key) == "status" ? 32 : 256), false) ||
+                        (args.contains(key) && args[key].get_ref<const std::string &>().empty()))
+                    return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid graph search filter");
+            const auto from = args.value("from", std::string{}), to = args.value("to", std::string{});
+            const auto relation = args.value("relation", std::string{}), from_kind = args.value("from_kind", std::string{});
+            const auto to_kind = args.value("to_kind", std::string{}), status = args.value("status", std::string{});
+            if (from.empty() && to.empty() && relation.empty() && from_kind.empty() && to_kind.empty() && status.empty())
+                return common_adapter_validation_failure("tool.graph.invalid_arguments", "at least one graph search filter is required");
+            if (!status.empty() && status != "proposed" && status != "retraction_proposed")
+                return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid graph status");
+            if (args.contains("limit") && (!args["limit"].is_number_integer() || args["limit"] < 1 || args["limit"] > 100))
+                return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid graph search limit");
+            const auto limit = args.value("limit", size_t(32));
+            std::vector<std::string> ids;
+            if (!bindings.data_store->find_context_graph_edges(bindings.tool_scope, graph.revision, from, relation, to, ids, error)) {
+                const bool conflict = error == "context graph revision conflict";
+                return common_adapter_failure("tool.graph.search_failed", conflict ? common_tool_failure_class::conflict : common_tool_failure_class::execution,
+                    conflict, conflict ? "Graph changed during search; retry after reloading." : "Graph search is unavailable.", error);
+            }
+            std::sort(ids.begin(), ids.end());
+            json nodes = json::array(), edges = json::array(); std::set<std::string> seen;
+            bool truncated = false; size_t bytes = 0;
+            for (const auto & id : ids) {
+                const auto edge = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto & e) { return e.id == id; });
+                if (edge == graph.edges.end()) return common_adapter_execution_failure("tool.graph.search_invalid", "index references an unavailable edge", "Graph search index is inconsistent.");
+                const auto * a = find_node(graph, edge->from); const auto * b = find_node(graph, edge->to);
+                if (!a || !b) return common_adapter_execution_failure("tool.graph.search_invalid", "edge endpoint is unavailable", "Graph search index is inconsistent.");
+                if ((!from_kind.empty() && a->kind != from_kind) || (!to_kind.empty() && b->kind != to_kind) ||
+                        (!status.empty() && edge->status != status)) continue;
+                const auto item = edge_json(*edge);
+                size_t added = item.dump().size();
+                if (!seen.count(a->id)) added += node_json(*a).dump().size();
+                if (b->id != a->id && !seen.count(b->id)) added += node_json(*b).dump().size();
+                if (edges.size() >= limit || bytes + added > 22000) { truncated = true; break; }
+                bytes += added; edges.push_back(item);
+                for (const auto * node : {a, b}) if (seen.insert(node->id).second) nodes.push_back(node_json(*node));
+            }
+            return common_adapter_success_json({{"revision", graph.revision}, {"nodes", nodes}, {"edges", edges},
+                {"truncated", truncated}, {"coverage", "saved_project_graph_only"}});
+        }
         if (operation == "graph.expand") {
             if (!text_value(args, "id", 256)) return common_adapter_validation_failure("tool.graph.invalid_arguments", "id is required");
             const auto center = args["id"].get<std::string>();
@@ -227,9 +270,6 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                     (args.contains("evidence_refs") && (!args["evidence_refs"].is_array() || args["evidence_refs"].size() > 16)))
                 return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid link proposal");
             const auto relation = args["relation"].get<std::string>();
-            if (relation != "calls" && relation != "references" && relation != "contains" && relation != "depends_on" && relation != "implements" && relation != "related_to" &&
-                    relation != "supports" && relation != "contradicts" && relation != "associated_with" && relation != "observed_in")
-                return common_adapter_validation_failure("tool.graph.invalid_arguments", "unsupported relation");
             std::vector<std::string> refs;
             if (args.contains("evidence_refs")) for (const auto & value : args["evidence_refs"]) {
                 if (!value.is_string() || value.get_ref<const std::string &>().empty() || value.get_ref<const std::string &>().size() > 512)

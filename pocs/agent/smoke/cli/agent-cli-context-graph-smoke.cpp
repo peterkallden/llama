@@ -51,13 +51,18 @@ int main(int argc, char ** argv) {
     if (!view) { std::cerr << error << '\n'; return 1; }
     const auto setup = view->call({"setup", "graph.link.propose", R"({"from":{"kind":"component","name":"planning"},"to":{"kind":"file","name":"selection","path":"src/selection.cpp"},"relation":"depends_on","rationale":"inspect selection"})"}, error);
     if (!setup.ok) { std::cerr << "setup failed: " << error << '\n'; return 1; }
+    const auto authored = view->call({"authored", "graph.link.propose", R"({"from":{"kind":"actor","name":"Alice","source_ref":"case:a/alice"},"to":{"kind":"resource","name":"Paper","source_ref":"paper:a"},"relation":"authored","rationale":"source credits Alice"})"}, error);
+    if (!authored.ok) { std::cerr << "authorship setup failed: " << error << '\n'; return 1; }
+    const auto authored_result = json::parse(authored.content_json, nullptr, false);
+    if (authored_result.is_discarded() || !authored_result.contains("result")) return 1;
+    const auto edge = authored_result["result"]["edge"];
 
-    common_agent_tool_call selected{"graph.find", R"({"query":"planning"})"};
+    common_agent_tool_call selected{"graph.search", R"({"relation":"authored"})"};
     if (!model.empty()) {
         if (!std::filesystem::is_regular_file(model)) { std::cerr << "model unavailable\n"; return 77; }
         const auto & available = view->chat_tools();
-        const auto it = std::find_if(available.begin(), available.end(), [](const auto & tool) { return tool.name == "graph.find"; });
-        if (it == available.end()) { std::cerr << "graph.find is unavailable\n"; return 1; }
+        const auto it = std::find_if(available.begin(), available.end(), [](const auto & tool) { return tool.name == "graph.search"; });
+        if (it == available.end()) { std::cerr << "graph.search is unavailable\n"; return 1; }
         std::vector<std::string> unsupported;
         const auto instructions = common_render_model_tool_output_instructions(common_agent_tool_output_format::compact_dsl, {*it}, &unsupported, error);
         if (!error.empty() || !unsupported.empty()) { std::cerr << "tool contract unavailable: " << error << '\n'; return 1; }
@@ -74,8 +79,8 @@ int main(int argc, char ** argv) {
         request.trace_id = "context-graph-smoke"; request.options.n_predict = 96; request.options.n_threads = 4;
         request.grammar = common_build_tool_dsl_grammar({*it}, common_tool_dsl_grammar_form::action, error);
         if (request.grammar.empty() || !error.empty()) { std::cerr << "tool grammar unavailable: " << error << '\n'; return 1; }
-        request.messages = {{"system", instructions + "\nTool names are case sensitive. Use the exact tool name graph.find and its query argument. Return only the tool call."},
-            {"user", "Find graph nodes matching planning. Emit the tool call now."}};
+        request.messages = {{"system", instructions + "\nTool names are case sensitive. Use graph.search with its relation argument. Do not invent endpoint IDs. Return only the tool call."},
+            {"user", "Find all graph relationships with the exact relation name authored. No source or target node was provided, so omit from and to. Emit the tool call now."}};
         const auto generated = session.inference->generate_result(request);
         std::cout << "model_output=" << generated.content << '\n';
         if (!common_agent_generation_succeeded(generated) ||
@@ -83,12 +88,22 @@ int main(int argc, char ** argv) {
             std::cerr << "model did not produce a valid graph call: " << error << '\n'; return 1;
         }
     }
-    if (selected.name != "graph.find") { std::cerr << "unexpected model tool " << selected.name << '\n'; return 1; }
+    if (selected.name != "graph.search") { std::cerr << "unexpected model tool " << selected.name << '\n'; return 1; }
     const auto found = view->call({"find", selected.name, selected.arguments_json}, error);
     const auto result = json::parse(found.content_json, nullptr, false);
-    if (!found.ok || result.is_discarded() || !result.contains("result") || result["result"].value("nodes", json::array()).empty()) {
-        std::cerr << "graph search returned no matching nodes: " << error << '\n'; return 1;
+    if (!found.ok || result.is_discarded() || !result.contains("result") || result["result"].value("edges", json::array()).empty()) {
+        std::cerr << "graph search returned no matching relations: " << error << '\n'; return 1;
     }
+    for (const auto & field : {"from", "to"}) {
+        const auto args = json{{field, edge[field]}, {"relation", "authored"}}.dump();
+        const auto search = view->call({"relations", "graph.search", args}, error);
+        const auto payload = json::parse(search.content_json, nullptr, false);
+        if (!search.ok || payload.is_discarded() || payload["result"]["edges"].size() != 1) {
+            std::cerr << "authorship relation search failed: " << error << '\n'; return 1;
+        }
+    }
+    const auto expanded = view->call({"paper", "graph.expand", json{{"id",edge["to"]}}.dump()}, error);
+    if (!expanded.ok) { std::cerr << "paper expansion failed: " << error << '\n'; return 1; }
     std::cout << "context graph smoke passed; mode=" << (model.empty() ? "no-model" : "model") << '\n';
     return 0;
 }

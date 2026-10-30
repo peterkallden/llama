@@ -1,4 +1,7 @@
 #include "agent-data-store-cozo.h"
+extern "C" {
+#include <cozo_c.h>
+}
 
 #include <nlohmann/json.hpp>
 
@@ -93,6 +96,12 @@ int main() {
     domain_edge.relation = "associated_with"; domain_edge.rationale = "inspect case";
     domain_graph.edges.push_back(domain_edge);
     TEST_ASSERT(store.publish_context_graph(graph_scope, 2, domain_graph, graph, error) == common_agent_publication_status::published);
+    std::vector<std::string> graph_ids;
+    TEST_ASSERT(store.find_context_graph_edges(graph_scope, 3, "node:actor", "associated_with", "node:a", graph_ids, error) &&
+        graph_ids.size() == 1 && graph_ids[0] == "edge:actor");
+    TEST_ASSERT(store.find_context_graph_edges(graph_scope, 3, "", "associated_with", "node:a", graph_ids, error) && graph_ids.size() == 1);
+    TEST_ASSERT(store.find_context_graph_edges(other_graph_scope, 0, "", "associated_with", "", graph_ids, error) && graph_ids.empty());
+    TEST_ASSERT(!store.find_context_graph_edges(graph_scope, 2, "", "associated_with", "", graph_ids, error));
     auto missing_graph_scope = graph_scope; missing_graph_scope.project_id.clear();
     TEST_ASSERT(!store.get_context_graph(missing_graph_scope, published_graph, error));
     virtual_dataset_fixture virtual_source;
@@ -460,12 +469,24 @@ int main() {
     TEST_ASSERT(indexed_reports.empty());
 
     store.close();
+    // Recreate a pre-index database while preserving the original graph data.
+    int32_t raw_db = -1;
+    char * open_error = cozo_open_db("sqlite", (root / "data.cozo").string().c_str(), "{}", &raw_db);
+    TEST_ASSERT(open_error == nullptr);
+    for (const char * table : {"agent_context_edge_forward", "agent_context_edge_reverse", "agent_context_edge_relation"}) {
+        const auto command = std::string("::remove ") + table;
+        char * result = cozo_run_query(raw_db, command.c_str(), "{}", false);
+        const auto response = json::parse(result, nullptr, false); cozo_free_str(result);
+        TEST_ASSERT(response.is_object() && response.value("ok", false));
+    }
+    TEST_ASSERT(cozo_close_db(raw_db));
     TEST_ASSERT(store.open((root / "data.cozo").string(), error));
     TEST_ASSERT(store.get_context_graph(graph_scope, published_graph, error) && published_graph.revision == 3 &&
         published_graph.edges.size() == 2 && published_graph.edges[0].status == "retraction_proposed" && published_graph.edges[0].version == 2);
     TEST_ASSERT(std::any_of(published_graph.nodes.begin(), published_graph.nodes.end(), [](const auto & node) {
         return node.kind == "actor" && node.source_ref == "case:a/entity:alice";
     }));
+    TEST_ASSERT(store.find_context_graph_edges(graph_scope, 3, "", "associated_with", "", graph_ids, error) && graph_ids.size() == 1);
     TEST_ASSERT(store.get_research_revision("research-shared", 0, investigation.scope,
         reloaded_research, error));
     TEST_ASSERT(reloaded_research.revision == 2 &&
@@ -506,6 +527,15 @@ int main() {
     TEST_ASSERT(empty_statistics["selected_columns"] == json::array({"amount"}));
     TEST_ASSERT(empty_statistics["columns"][0]["count"] == 0 && empty_statistics["columns"][0]["mean"].is_null());
     store.close();
+    raw_db = -1;
+    open_error = cozo_open_db("sqlite", (root / "data.cozo").string().c_str(), "{}", &raw_db);
+    TEST_ASSERT(open_error == nullptr);
+    char * partial_result = cozo_run_query(raw_db, "::remove agent_context_edge_reverse", "{}", false);
+    const auto partial_response = json::parse(partial_result, nullptr, false); cozo_free_str(partial_result);
+    TEST_ASSERT(partial_response.is_object() && partial_response.value("ok", false));
+    TEST_ASSERT(cozo_close_db(raw_db));
+    TEST_ASSERT(!store.open((root / "data.cozo").string(), error));
+    TEST_ASSERT(error.find("index schema is incomplete") != std::string::npos);
     fs::remove_all(root, ec);
     return 0;
 }

@@ -43,6 +43,20 @@ public:
     virtual bool get_context_graph(const common_agent_scope &, common_context_graph_state &, std::string & error) {
         error = "context graph is unavailable"; return false;
     }
+    // Returns candidate edge IDs for the given graph revision. Empty filters
+    // are wildcards; the caller still applies status and endpoint-kind filters.
+    virtual bool find_context_graph_edges(const common_agent_scope & scope, uint64_t revision,
+            const std::string & from, const std::string & relation, const std::string & to,
+            std::vector<std::string> & ids, std::string & error) {
+        common_context_graph_state graph;
+        if (!get_context_graph(scope, graph, error)) return false;
+        if (graph.revision != revision) { error = "context graph revision conflict"; return false; }
+        ids.clear();
+        for (const auto & edge : graph.edges)
+            if ((from.empty() || edge.from == from) && (relation.empty() || edge.relation == relation) &&
+                    (to.empty() || edge.to == to)) ids.push_back(edge.id);
+        error.clear(); return true;
+    }
     virtual common_agent_publication_status publish_context_graph(const common_agent_scope &,
             uint64_t, const common_context_graph_state &, common_context_graph_state &, std::string & error) {
         error = "context graph is unavailable"; return common_agent_publication_status::storage_error;

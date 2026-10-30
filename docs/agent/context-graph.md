@@ -6,7 +6,7 @@ is not a verified fact. Nodes contain names and optional source locations;
 they do not contain copies of source files. Evidence references and revisions
 are recorded as submitted and require independent verification.
 
-The `graph` tool family offers `graph.find`, `graph.get`, `graph.expand`, `graph.source`,
+The `graph` tool family offers `graph.find`, `graph.get`, `graph.expand`, `graph.search`, `graph.source`,
 `graph.link.propose` and `graph.retract.propose`. New relationships start as
 `proposed`; a withdrawal changes the current status to `retraction_proposed`
 while preserving previous versions. Cozo persistence is scoped by the
@@ -16,6 +16,28 @@ includes its source location and stated revision; ambiguous symbols are not
 silently combined across revisions. Actor, claim, event and plan nodes require
 an opaque source reference, which distinguishes objects with the same name and
 does not grant access to their sources. Returned freshness is `unverified`.
+
+Relation names are strings, up to 64 bytes. Suggested names include `calls`,
+`depends_on`, `authored`, `son_of`, `supports` and `related_to`; arbitrary names
+are accepted. Names are compared exactly: `authored` and `authored_by` are not
+automatically treated as synonyms or inverses.
+
+Use `graph.find` to resolve names to project graph IDs. Then `graph.search`
+accepts any combination of `from`, `to`, `relation`, `from_kind`, `to_kind`
+and `status` (at least one filter is required); `limit` defaults to 32 and is
+at most 100. Both proposed and retraction-proposed edges are included unless a
+status is specified. Results contain the edges and their endpoints, and mark
+truncation. For example, `{ "from": "<alice-id>", "relation": "authored" }`
+finds Alice's saved authorship proposals. Use the paper ID as `to` to search
+in the other direction, or `graph.expand` to browse its other relationships.
+The current adapter still loads the bounded project graph before applying
+endpoint-kind and status filters; the indexes narrow candidate edges but do
+not yet eliminate that graph load.
+
+Opening an older Cozo database builds the graph search indexes from its saved
+edges in an atomic migration. Stop older server processes writing to the same
+database before upgrading; older versions do not maintain these indexes. An
+incomplete index schema fails closed instead of returning incomplete results.
 
 Read-only graph tools are added to the Codex tool-audit profile; the audit
 profile still disallows policy-gated writes. The separate `graph-project`

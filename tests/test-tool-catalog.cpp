@@ -22,6 +22,15 @@ int main() {
     assert(!first.definitions_created.empty());
     assert(catalog.find_definition("memory.search"));
     assert(!catalog.find_definition("memory_search"));
+    const auto * graph_link = catalog.find_definition("graph.link.propose");
+    const auto * graph_search = catalog.find_definition("graph.search");
+    assert(graph_link && graph_search && graph_search->risk_class == common_tool_risk_class::local_read);
+    const auto graph_schema = nlohmann::json::parse(graph_link->input_schema_json);
+    assert(graph_schema["properties"]["relation"]["type"] == "string" && !graph_schema["properties"]["relation"].contains("enum"));
+    std::string graph_error;
+    const auto graph_description = common_render_compact_tool_description(graph_link->name, graph_link->description,
+        graph_link->input_schema_json, graph_link->result_schema_json, graph_error);
+    assert(graph_error.empty() && graph_description.find("authored") != std::string::npos);
     const auto * memory_remember = catalog.find_definition("memory.remember");
     if (!memory_remember) {
         std::fprintf(stderr, "missing memory_remember tool definition\n");
@@ -524,6 +533,12 @@ int main() {
     }));
     assert(std::any_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
         return definition.name == "code.impact" && definition.risk_class == common_tool_risk_class::local_read;
+    }));
+    assert(std::any_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
+        return definition.name == "graph.search" && definition.risk_class == common_tool_risk_class::local_read && !definition.requires_confirmation;
+    }));
+    assert(std::none_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
+        return definition.name == "graph.link.propose" || definition.name == "graph.retract.propose";
     }));
     assert(std::none_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
         return definition.name == "diagnostics.call_hierarchy";

@@ -926,8 +926,8 @@ test-agent-flydelta-alpha-response-search.cpp
 
     if (LLAMA_MEMORY_COZO)
         llama_build_and_test(test-agent-data-store-cozo.cpp)
-        target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo)
-        target_include_directories(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data)
+        target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo ${COZO_LIBRARY})
+        target_include_directories(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data ${COZO_INCLUDE_DIR})
         set_property(TEST test-agent-data-store-cozo PROPERTY LABELS agent)
 
         add_executable(llama-agent-data-store-cozo-seed

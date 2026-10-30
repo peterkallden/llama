@@ -20,6 +20,8 @@ public:
     bool open(const std::string & path, std::string & error);
     void close();
     bool get_context_graph(const common_agent_scope &, common_context_graph_state &, std::string &) override;
+    bool find_context_graph_edges(const common_agent_scope &, uint64_t, const std::string &,
+        const std::string &, const std::string &, std::vector<std::string> &, std::string &) override;
     common_agent_publication_status publish_context_graph(const common_agent_scope &, uint64_t,
         const common_context_graph_state &, common_context_graph_state &, std::string &) override;
     bool put_row(const std::string & dataset, const std::string & row_id, const std::string & row_json, std::string & error) override;

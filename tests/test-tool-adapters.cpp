@@ -729,10 +729,44 @@ int main() {
         assert(id_a != id_b);
         const auto actor = graph_registry.execute({"graph.get", nlohmann::json{{"id",id_a}}.dump()});
         assert(actor.ok && nlohmann::json::parse(actor.output)["node"]["source_ref"] == "case:a/entity:alice");
+        const auto authorship = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",id_a}}}, {"to", {{"kind","resource"},{"name","Paper"},{"source_ref","paper:one"}}},
+            {"relation","authored"}, {"rationale","source credits Alice"}, {"evidence_refs", {"source:one"}}}.dump()});
+        assert(authorship.ok);
+        const auto custom_relation = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",id_a}}}, {"to", {{"id",id_b}}}, {"relation","är släkt med"}, {"rationale","user assertion"}}.dump()});
+        assert(custom_relation.ok);
+        const auto exact_custom = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"relation","är släkt med"}}.dump()});
+        assert(exact_custom.ok && nlohmann::json::parse(exact_custom.output)["edges"].size() == 1);
+        const auto paper = nlohmann::json::parse(authorship.output)["edge"]["to"].get<std::string>();
+        const auto matching = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"relation","authored"},{"to_kind","resource"}}.dump()});
+        assert(matching.ok && nlohmann::json::parse(matching.output)["edges"].size() == 1 &&
+            nlohmann::json::parse(matching.output)["nodes"].size() == 2);
+        const auto incoming = graph_registry.execute({"graph.search", nlohmann::json{{"to",paper},{"relation","authored"}}.dump()});
+        assert(incoming.ok && nlohmann::json::parse(incoming.output)["edges"].size() == 1);
+        const auto both = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"to",paper},{"relation","authored"}}.dump()});
+        assert(both.ok && nlohmann::json::parse(both.output)["edges"].size() == 1);
+        const auto mismatched = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_b},{"to",paper},{"relation","authored"}}.dump()});
+        assert(mismatched.ok && nlohmann::json::parse(mismatched.output)["edges"].empty());
+        const auto wrong_kind = graph_registry.execute({"graph.search", nlohmann::json{{"to",paper},{"from_kind","file"}}.dump()});
+        assert(wrong_kind.ok && nlohmann::json::parse(wrong_kind.output)["edges"].empty());
+        const auto withdrawn_only = graph_registry.execute({"graph.search", nlohmann::json{{"from",from},{"status","retraction_proposed"}}.dump()});
+        assert(withdrawn_only.ok && nlohmann::json::parse(withdrawn_only.output)["edges"].size() == 1);
+        const auto empty_relation = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",id_a}}}, {"to", {{"id",paper}}}, {"relation",""}, {"rationale","invalid"}}.dump()});
+        assert(!empty_relation.ok);
+        const auto long_relation = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",id_a}}}, {"to", {{"id",paper}}}, {"relation",std::string(65, 'a')}, {"rationale","invalid"}}.dump()});
+        assert(!long_relation.ok);
+        assert(!graph_registry.execute({"graph.search", "{}"}).ok);
+        const auto limit = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"limit",1}}.dump()});
+        assert(limit.ok && nlohmann::json::parse(limit.output)["truncated"] == true);
         graph_bindings.tool_scope.project_id = "other-project";
         common_tool_registry other_graph; common_tool_adapter_result other_graph_adapters;
         assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, other_graph, other_graph_adapters, error));
         assert(!other_graph.execute({"graph.get", nlohmann::json{{"id",from}}.dump()}).ok);
+        const auto other_search = other_graph.execute({"graph.search", nlohmann::json{{"relation","authored"}}.dump()});
+        assert(other_search.ok && nlohmann::json::parse(other_search.output)["edges"].empty());
         graph_bindings.tool_scope.project_id.clear(); common_tool_registry no_project; common_tool_adapter_result no_project_adapters;
         assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, no_project, no_project_adapters, error));
         assert(!no_project.execute({"graph.find", R"({"query":"planning"})"}).ok);

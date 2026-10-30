@@ -127,6 +127,7 @@
         "graph.find",
         "graph.get",
         "graph.expand",
+        "graph.search",
         "graph.source",
         "diagnostics.compile",
         "diagnostics.test_failures",
