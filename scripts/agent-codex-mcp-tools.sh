@@ -4,7 +4,6 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 server="${LLAMA_AGENT_MCP_STDIO_SERVER:-${repo_root}/build-agent-vulkan-cozo/bin/llama-agent-mcp-stdio-server}"
 config="${LLAMA_AGENT_CODEX_MCP_CONFIG:-${repo_root}/docs/examples/agent-host-config-codex-mcp-tools.json}"
-project="${LLAMA_AGENT_GRAPH_PROJECT:-llama}"
 
 if [[ ! -x "${server}" ]]; then
     printf 'llama-agent MCP server binary is missing or not executable: %s\n' "${server}" >&2
@@ -23,4 +22,4 @@ cd "${repo_root}"
 # bounded safe summary.
 export LLAMA_AGENT_MCP_TRACE_TOOL_ERRORS=1
 
-exec "${server}" --config "${config}" --repository-root "${repo_root}" --memory-project "${project}"
+exec "${server}" --config "${config}" --repository-root "${repo_root}" "$@"

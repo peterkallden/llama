@@ -22,7 +22,7 @@ def probe(launcher, workdir, check_web_limit=False, resource_uri=None, timeout=1
     with (workdir / "server-stderr.log").open("w") as diagnostics, \
             (workdir / "protocol.jsonl").open("w") as trace:
         process = subprocess.Popen(
-            ["/bin/bash", str(launcher)], stdin=subprocess.PIPE,
+            ["/bin/bash", str(launcher), "--memory-project", "codex-audit-smoke"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=diagnostics, text=True, encoding="utf-8")
         lines = queue.Queue()
         threading.Thread(target=receive_lines, args=(process.stdout, lines), daemon=True).start()

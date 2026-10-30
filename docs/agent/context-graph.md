@@ -42,11 +42,42 @@ incomplete index schema fails closed instead of returning incomplete results.
 Read-only graph tools are added to the Codex tool-audit profile; the audit
 profile still disallows policy-gated writes. The separate `graph-project`
 profile allows graph proposals under the existing memory-proposal policy.
-`scripts/agent-codex-mcp-graph.sh` starts that restricted profile and requires
-`LLAMA_AGENT_GRAPH_PROJECT`. Set `LLAMA_AGENT_GRAPH_CONFIG` to a host config
-using the intended Cozo data store; the default audit config uses an isolated
-store. The project and namespace must match the agent host to share data.
+For a standalone server, `scripts/agent-codex-mcp-graph.sh` accepts the normal
+server options `--memory-project PROJECT` and `--memory-namespace NAMESPACE`.
+`LLAMA_AGENT_GRAPH_CONFIG` selects the host config; the default audit config
+uses an isolated store. Matching project and namespace IDs do not connect
+different stores.
+
+To use the running daemon's graph, connect the MCP client to the daemon's
+inbound HTTP endpoint. Configure an inbound token profile with the same
+`namespace` and `project` as the daemon request, and a tool profile that permits
+the desired graph operations. The daemon's tool profile must expose those tools
+as well. Calls use the daemon dispatcher and its configured data store. The
+token profile is host authority; the client cannot choose another project by
+passing tool arguments. Separate MCP client sessions can access the same
+project graph when their authorized namespace and project match. See
+[inbound MCP HTTP setup](agent-daemon-usage.md#inbound-mcp-http-in-the-daemon-host).
 Reload the MCP connection after changing its profile or tool schema.
+
+For example, add a token profile to the daemon's existing `mcp.inbound.tokens`:
+
+```json
+{
+  "id": "codex-project-reader",
+  "token_env": "LLAMA_AGENT_CODEX_TOKEN",
+  "audience": "llama-agent",
+  "namespace": "<session namespace>",
+  "project": "<session project ID>",
+  "tool_profile": "developer-read",
+  "allow_writes": false
+}
+```
+
+Replace the placeholders with the values used by the daemon session and
+configure the client with the daemon's MCP URL and the same bearer token. This
+profile can read graph data; proposing relations requires a separately
+authorized profile and the existing write policy. A token identifies a fixed
+authorized project, not whichever project a different client last selected.
 
 The saved graph contains proposals only. `graph.source` delegates an explicit
 request to `code.calls`, `visualize.research_graph` or
@@ -76,3 +107,8 @@ with a model-produced tool call; `--n-gpu-layers` selects offloading. The MCP
 smoke in `scripts/agent-context-graph-mcp-smoke.py` additionally checks Cozo
 persistence, project isolation and the read-only profile. Pass the repository
 root as its second argument to exercise the configured clangd provider too.
+
+The daemon scope smoke can be run without inference using
+`python3 scripts/agent-daemon-graph-mcp-smoke.py build-agent-vulkan-cozo/bin/llama-agent-daemon`.
+It uses a temporary data store and verifies shared project access, read-only
+policy, and namespace and project isolation through the daemon dispatcher.
