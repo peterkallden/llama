@@ -3,8 +3,8 @@
 This is a local Codex connection for exercising llama-agent's MCP-exported
 native tools. Codex (GPT-5.6-luna) is the MCP client and chooses/calls tools;
 the optional Qwen daemon is a separate llama-agent runtime and is not the model
-behind these Codex calls. The profile excludes policy-gated writes, workspace
-patching and build/test execution. Dataset materialization is confined to the
+behind these Codex calls. The profile permits memory and graph proposals, but
+does not expose workspace patching or build/test execution. Dataset materialization is confined to the
 audit-specific Cozo store under `var/codex-mcp-tool-audit/`.
 
 This is a selected integration-test profile, not every native catalog tool
@@ -33,12 +33,18 @@ graph, connect to its inbound MCP endpoint as described in
 [Project context graph](context-graph.md); do not open its store in a second
 process.
 
+The launcher binds memory to project scope and persists it in the configured
+Cozo memory store. `memory.remember` is still evaluated by the ordinary memory
+policy; graph relationships are saved as proposals. Run
+`python3 scripts/agent-codex-memory-graph-smoke.py` to check persistence and
+project isolation with temporary stores and no model inference.
+
 The host profile is
 [`agent-host-config-codex-mcp-tools.json`](../examples/agent-host-config-codex-mcp-tools.json).
 It uses the existing OpenAlex provider fragment and the checked-in Eurostat
 Statistics/SDMX adapter contracts, isolated Cozo data/resource stores, local
-DOCX/XLSX processor policies and sets
-`allow_policy_gated_writes=false`.
+DOCX/XLSX processor policies. The selected memory and graph proposal tools are
+allowed by policy; other policy-gated tools are not included in this profile.
 
 ## Verified setup state (2026-10-15)
 

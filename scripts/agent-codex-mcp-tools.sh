@@ -22,4 +22,4 @@ cd "${repo_root}"
 # bounded safe summary.
 export LLAMA_AGENT_MCP_TRACE_TOOL_ERRORS=1
 
-exec "${server}" --config "${config}" --repository-root "${repo_root}" --memory-project llama-agent "$@"
+exec "${server}" --config "${config}" --repository-root "${repo_root}" --memory-scope project --memory-project llama-agent "$@"

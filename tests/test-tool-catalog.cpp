@@ -8,10 +8,23 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
 
 int main() {
+    const auto codex_config_path = std::filesystem::path(__FILE__).parent_path().parent_path() /
+        "docs/examples/agent-host-config-codex-mcp-tools.json";
+    std::ifstream codex_config_file(codex_config_path);
+    assert(codex_config_file);
+    const auto codex_config = nlohmann::json::parse(codex_config_file);
+    const auto & codex_tools = codex_config["tools"]["capabilities"]["codex.audit.tools"];
+    for (const auto * name : {"memory.remember", "graph.link.propose", "graph.retract.propose"}) {
+        assert(std::find(codex_tools.begin(), codex_tools.end(), name) != codex_tools.end());
+    }
+    assert(codex_config["tools"]["profiles"]["codex-tools-audit"]["allow_policy_gated_writes"] == true);
+    assert(codex_config["stores"]["memory"]["backend"] == "cozo");
     common_tool_catalog catalog;
     common_tool_bootstrap_result first;
     std::string error;

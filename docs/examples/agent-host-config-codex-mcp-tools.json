@@ -4,6 +4,10 @@
     "backend": "server-context"
   },
   "stores": {
+    "memory": {
+      "backend": "cozo",
+      "path": "var/codex-mcp-tool-audit/memory.cozo"
+    },
     "data": {
       "backend": "cozo",
       "path": "var/codex-mcp-tool-audit/structured.cozo"
@@ -108,6 +112,7 @@
         "memory.get",
         "memory.inspect",
         "memory.conflict_check",
+        "memory.remember",
         "plan.get",
         "repository.list",
         "repository.search",
@@ -129,6 +134,8 @@
         "graph.expand",
         "graph.search",
         "graph.source",
+        "graph.link.propose",
+        "graph.retract.propose",
         "diagnostics.compile",
         "diagnostics.test_failures",
         "diagnostics.format",
@@ -161,7 +168,7 @@
       "codex-tools-audit": {
         "include_capabilities": ["codex.audit.tools"],
         "allow_network": true,
-        "allow_policy_gated_writes": false
+        "allow_policy_gated_writes": true
       }
     }
   },

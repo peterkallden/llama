@@ -39,8 +39,8 @@ edges in an atomic migration. Stop older server processes writing to the same
 database before upgrading; older versions do not maintain these indexes. An
 incomplete index schema fails closed instead of returning incomplete results.
 
-Read-only graph tools are added to the Codex tool-audit profile; the audit
-profile still disallows policy-gated writes. The separate `graph-project`
+Graph reads and policy-gated relationship proposals are available in the Codex
+tool-audit profile. The separate `graph-project`
 profile allows graph proposals under the existing memory-proposal policy.
 For a standalone server, `scripts/agent-codex-mcp-graph.sh` accepts the normal
 server options `--memory-project PROJECT` and `--memory-namespace NAMESPACE`.
