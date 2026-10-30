@@ -18,7 +18,7 @@ an opaque source reference, which distinguishes objects with the same name and
 does not grant access to their sources. Returned freshness is `unverified`.
 
 Relation names are strings, up to 64 bytes. Suggested names include `calls`,
-`depends_on`, `authored`, `son_of`, `supports` and `related_to`; arbitrary names
+`depends_on`, `related_to`, `contains`, `supports` and `references`; arbitrary names
 are accepted. Names are compared exactly: `authored` and `authored_by` are not
 automatically treated as synonyms or inverses.
 

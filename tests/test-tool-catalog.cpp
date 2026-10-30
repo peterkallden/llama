@@ -30,7 +30,12 @@ int main() {
     std::string graph_error;
     const auto graph_description = common_render_compact_tool_description(graph_link->name, graph_link->description,
         graph_link->input_schema_json, graph_link->result_schema_json, graph_error);
-    assert(graph_error.empty() && graph_description.find("authored") != std::string::npos);
+    assert(graph_error.empty() && graph_description.find("depends_on") != std::string::npos);
+    assert(graph_description.find("son_of") == std::string::npos);
+    const auto graph_search_description = common_render_compact_tool_description(graph_search->name, graph_search->description,
+        graph_search->input_schema_json, graph_search->result_schema_json, graph_error);
+    assert(graph_error.empty() && graph_search_description.find("Exact relationship name") != std::string::npos);
+    assert(graph_search_description.find("Any name is allowed") != std::string::npos);
     const auto * memory_remember = catalog.find_definition("memory.remember");
     if (!memory_remember) {
         std::fprintf(stderr, "missing memory_remember tool definition\n");
