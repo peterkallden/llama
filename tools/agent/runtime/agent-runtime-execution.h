@@ -159,6 +159,7 @@ struct common_agent_runtime_driver_execution {
     std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
     common_agent_cognitive_state cognitive_state;
     bool workflow_preference_applied = false;
+    std::string project_graph_context;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

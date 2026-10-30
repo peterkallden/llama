@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/dataset-contracts.h"
+#include "agent/context-graph/context-graph.h"
 #include "agent/investigation-contracts.h"
 #include "agent/thinking/research/research-contract.h"
 
@@ -37,6 +38,15 @@ public:
 class common_agent_data_store {
 public:
     virtual ~common_agent_data_store() = default;
+
+    // Graph methods use a host-resolved project scope and optimistic revision.
+    virtual bool get_context_graph(const common_agent_scope &, common_context_graph_state &, std::string & error) {
+        error = "context graph is unavailable"; return false;
+    }
+    virtual common_agent_publication_status publish_context_graph(const common_agent_scope &,
+            uint64_t, const common_context_graph_state &, common_context_graph_state &, std::string & error) {
+        error = "context graph is unavailable"; return common_agent_publication_status::storage_error;
+    }
 
     // Optional host-owned ingestion seam. Implementations may stream bounded
     // rows into their existing backend without returning the row set through

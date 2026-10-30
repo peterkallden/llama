@@ -19,6 +19,9 @@ public:
 
     bool open(const std::string & path, std::string & error);
     void close();
+    bool get_context_graph(const common_agent_scope &, common_context_graph_state &, std::string &) override;
+    common_agent_publication_status publish_context_graph(const common_agent_scope &, uint64_t,
+        const common_context_graph_state &, common_context_graph_state &, std::string &) override;
     bool put_row(const std::string & dataset, const std::string & row_id, const std::string & row_json, std::string & error) override;
     bool put_rows(const std::string & dataset, const std::vector<std::pair<std::string, std::string>> & rows, std::string & error) override;
     bool put_dataset_descriptor(const common_agent_dataset_descriptor & descriptor, std::string & error) override;
@@ -63,6 +66,8 @@ private:
         common_investigation_case_revision &, std::string &);
     int32_t db_id_ = -1;
     mutable std::mutex investigation_mutex_;
+    mutable std::mutex graph_mutex_;
+    bool load_context_graph(const common_agent_scope &, common_context_graph_state &, std::string &);
     common_agent_virtual_dataset_source * virtual_dataset_source_ = nullptr;
     bool run(const std::string & script, const std::string & params_json, std::string & result_json, std::string & error) const;
 };

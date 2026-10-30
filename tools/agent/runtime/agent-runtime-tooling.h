@@ -43,6 +43,8 @@ struct common_agent_runtime_tooling {
     std::vector<std::string> blocked_constraint_ids;
     bool profile_tools_active = false;
     agent_tool_view * tool_view = nullptr;
+    // Host-owned graph read, separately authorized from model tool calls.
+    std::function<std::string(const common_agent_scope &, const std::string &, size_t, bool)> project_graph_context;
     std::vector<std::shared_ptr<void>> owned_resources;
     // Host-owned resource store used by controller-side bounded chunk planning.
     // Tool execution remains bound through the resolved tool view.

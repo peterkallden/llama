@@ -134,6 +134,8 @@ struct common_agent_request {
     common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
     common_agent_deliberation_policy deliberation_policy;
     std::string prompt;
+    // Host-scoped graph data, never instructions or proof of a relationship.
+    std::string project_graph_context;
     std::vector<common_agent_input_resource> input_resources;
     std::optional<common_agent_resource_read_binding> resource_read_binding;
     // Reference-only case context; the host resolves it under current scope.

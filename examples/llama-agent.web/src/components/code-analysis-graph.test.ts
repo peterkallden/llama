@@ -29,6 +29,11 @@ describe("code analysis graph projection", () => {
     expect(codeCallVisualization("code.impact", { visualization: graph })?.edges).toHaveLength(1);
   });
 
+  it("routes project graph expansions through the shared renderer", () => {
+    expect(codeCallVisualization("graph.expand", { visualization: graph })?.nodes).toHaveLength(2);
+    expect(codeCallVisualization("graph.source", { visualization: graph })?.nodes).toHaveLength(2);
+  });
+
   it("does not render another tool family or malformed visualization data", () => {
     expect(codeCallVisualization("repository.search", { visualization: graph })).toBeUndefined();
     expect(codeCallVisualization("code.calls", { visualization: { ...graph, edges: [{ id: "bad" }] } })).toBeUndefined();

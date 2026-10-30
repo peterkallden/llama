@@ -27,6 +27,7 @@ std::string family_id_for_tool(const std::string & name) {
 
 std::string family_description_for_id(const std::string & id) {
     static const std::unordered_map<std::string, std::string> descriptions = {
+        {"graph",      "Find, explore and propose scoped project context relationships"},
         {"data",       "Query and transform datasets"},
         {"dataset",    "Choose and inspect datasets for analysis"},
         {"code",       "Inspect source-code structure and semantic relationships in an authorized repository"},
@@ -164,6 +165,15 @@ std::vector<common_chat_tool> common_expand_tool_family_prerequisites(
         if (found != tools.end() && std::none_of(result.begin(), result.end(),
                 [&](const common_chat_tool & tool) { return tool.name == name; })) {
             result.push_back(*found);
+        }
+    }
+
+    if (selected.count("code") || selected.count("research") || selected.count("investigate")) {
+        for (const auto * name : {"graph.find", "graph.expand", "graph.source", "graph.link.propose"}) {
+            const auto found = std::find_if(tools.begin(), tools.end(),
+                [&](const common_chat_tool & tool) { return tool.name == name; });
+            if (found != tools.end() && std::none_of(result.begin(), result.end(),
+                    [&](const common_chat_tool & tool) { return tool.name == name; })) result.push_back(*found);
         }
     }
 

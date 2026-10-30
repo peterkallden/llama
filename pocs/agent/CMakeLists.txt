@@ -65,6 +65,13 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# Functional graph smoke: without a model it exercises the native tool path;
+# --model enables the same scenario with a model-produced tool call.
+set(TARGET llama-agent-context-graph-smoke)
+add_executable(${TARGET} smoke/cli/agent-cli-context-graph-smoke.cpp)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Smoke-only model-format probe. It uses the resident server-context path and
 # renders the existing OpenAPI-derived model-facing contract, but deliberately
 # leaves the native production tool parser disabled. This target never changes

@@ -897,7 +897,7 @@ test-agent-flydelta-alpha-response-search.cpp
     set_property(TEST test-agent-visualization-contract PROPERTY LABELS "agent;visualization;model-free")
 
     add_executable(test-agent-visualization-tool test-agent-visualization-tool.cpp)
-    target_link_libraries(test-agent-visualization-tool PRIVATE llama-agent-core)
+    target_link_libraries(test-agent-visualization-tool PRIVATE llama-agent-core llama-agent-tool-provider)
     add_test(NAME test-agent-visualization-tool COMMAND test-agent-visualization-tool)
     set_property(TEST test-agent-visualization-tool PROPERTY LABELS "agent;visualization;model-free")
 

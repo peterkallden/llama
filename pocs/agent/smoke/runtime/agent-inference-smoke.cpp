@@ -457,7 +457,8 @@ static void test_runtime_generation_metadata() {
     };
 
     const args options = make_test_args();
-    const common_agent_request request = make_request();
+    common_agent_request request = make_request();
+    request.project_graph_context = R"({"nodes":[{"name":"planning"}],"edges":[{"status":"proposed"}]})";
 
     auto planner = make_llama_cli_planner(inference, make_agent_generation_config(options), {});
     std::string error;
@@ -467,6 +468,8 @@ static void test_runtime_generation_metadata() {
     assert(proposal.generation);
     assert(proposal.generation->status == common_agent_generation_status::completed);
     assert(inference.seen[0].messages.size() == 3);
+    assert(inference.seen[0].messages[2].content.find("proposals and old observations are not verified facts") != std::string::npos);
+    assert(inference.seen[0].messages[2].content.find("planning") != std::string::npos);
     // The planner prompt is a model-facing projection, not the persisted
     // proposal schema. Keep the assertion on the stable contract shape while
     // allowing the renderer to describe the step union precisely.
@@ -1464,9 +1467,11 @@ static void test_runtime_request_builder() {
         tooling,
     };
     execution.flydelta_activation = activation;
+    execution.project_graph_context = R"({"nodes":[{"name":"planning"}],"edges":[]})";
 
     const auto request = make_agent_runtime_driver_request(execution);
     assert(request.prompt == "Check status");
+    assert(request.project_graph_context == execution.project_graph_context);
     assert(request.plan_id && *request.plan_id == "plan-1");
     assert(request.enable_memory);
     assert(request.enable_planning);

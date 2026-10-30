@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -62,6 +63,38 @@ int main() {
         std::fprintf(stderr, "Cozo open failed: %s\n", error.c_str());
         return 1;
     }
+    common_agent_scope graph_scope;
+    graph_scope.namespace_id = "tenant-a"; graph_scope.project_id = "graph-project"; graph_scope.session_id = "session-one";
+    common_context_graph_state graph;
+    TEST_ASSERT(store.get_context_graph(graph_scope, graph, error) && graph.revision == 0);
+    graph.revision = 1;
+    graph.nodes.push_back({"node:a", "component", "planning", "", 0, "", ""});
+    graph.nodes.push_back({"node:b", "file", "selection", "src/selection.cpp", 0, "rev1", ""});
+    common_context_graph_edge graph_edge;
+    graph_edge.id = "edge:a"; graph_edge.from = "node:a"; graph_edge.to = "node:b";
+    graph_edge.relation = "depends_on"; graph_edge.rationale = "inspect this seam";
+    graph.edges.push_back(graph_edge);
+    common_context_graph_state published_graph;
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 0, graph, published_graph, error) == common_agent_publication_status::published);
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 0, graph, published_graph, error) == common_agent_publication_status::conflict);
+    auto other_graph_scope = graph_scope; other_graph_scope.project_id = "other-project";
+    TEST_ASSERT(store.get_context_graph(other_graph_scope, published_graph, error) && published_graph.nodes.empty());
+    auto session_graph_scope = graph_scope; session_graph_scope.session_id = "session-two";
+    TEST_ASSERT(store.get_context_graph(session_graph_scope, published_graph, error) && published_graph.nodes.size() == 2 && published_graph.edges.size() == 1);
+    auto illegal_graph = published_graph; illegal_graph.revision = 2; illegal_graph.edges.clear();
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 1, illegal_graph, graph, error) == common_agent_publication_status::invalid);
+    auto updated_graph = published_graph; updated_graph.revision = 2;
+    updated_graph.edges[0].status = "retraction_proposed"; updated_graph.edges[0].rationale = "recheck"; updated_graph.edges[0].version = 2;
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 1, updated_graph, graph, error) == common_agent_publication_status::published);
+    auto domain_graph = graph; domain_graph.revision = 3;
+    domain_graph.nodes.push_back({"node:actor", "actor", "Alice", "", 0, "", "case:a/entity:alice"});
+    common_context_graph_edge domain_edge;
+    domain_edge.id = "edge:actor"; domain_edge.from = "node:actor"; domain_edge.to = "node:a";
+    domain_edge.relation = "associated_with"; domain_edge.rationale = "inspect case";
+    domain_graph.edges.push_back(domain_edge);
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 2, domain_graph, graph, error) == common_agent_publication_status::published);
+    auto missing_graph_scope = graph_scope; missing_graph_scope.project_id.clear();
+    TEST_ASSERT(!store.get_context_graph(missing_graph_scope, published_graph, error));
     virtual_dataset_fixture virtual_source;
     TEST_ASSERT(store.set_virtual_dataset_source(&virtual_source));
     common_investigation_case_revision investigation;
@@ -428,6 +461,11 @@ int main() {
 
     store.close();
     TEST_ASSERT(store.open((root / "data.cozo").string(), error));
+    TEST_ASSERT(store.get_context_graph(graph_scope, published_graph, error) && published_graph.revision == 3 &&
+        published_graph.edges.size() == 2 && published_graph.edges[0].status == "retraction_proposed" && published_graph.edges[0].version == 2);
+    TEST_ASSERT(std::any_of(published_graph.nodes.begin(), published_graph.nodes.end(), [](const auto & node) {
+        return node.kind == "actor" && node.source_ref == "case:a/entity:alice";
+    }));
     TEST_ASSERT(store.get_research_revision("research-shared", 0, investigation.scope,
         reloaded_research, error));
     TEST_ASSERT(reloaded_research.revision == 2 &&

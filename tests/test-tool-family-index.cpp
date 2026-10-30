@@ -254,5 +254,14 @@ int main() {
     assert(slots[5].fixed_arguments.at("left") == "$left.dataset");
     assert(slots[6].tool_name == "data.aggregate");
     assert(slots[6].fixed_arguments.at("dataset") == "$joined.dataset");
+    const std::vector<common_chat_tool> graph_tools = {
+        {"code.calls", "calls", "{}", "{}"}, {"graph.find", "find", "{}", "{}"},
+        {"graph.expand", "expand", "{}", "{}"}, {"graph.source", "source", "{}", "{}"},
+        {"graph.link.propose", "propose", "{}", "{}"}};
+    const auto expanded_graph = common_expand_tool_family_prerequisites(graph_tools, {"code"});
+    assert(expanded_graph.size() == 5);
+    assert(std::any_of(expanded_graph.begin(), expanded_graph.end(), [](const auto & t) { return t.name == "graph.source"; }));
+    assert(std::any_of(expanded_graph.begin(), expanded_graph.end(), [](const auto & t) { return t.name == "graph.link.propose"; }));
+    assert(common_expand_tool_family_prerequisites({graph_tools[0]}, {"code"}).size() == 1);
     return 0;
 }

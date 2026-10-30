@@ -15,7 +15,8 @@ import ResourceBrowser from "./components/ResourceBrowser.vue";
 import { codeCallGraphsByTurn } from "./components/code-analysis-graph";
 import { reportReferences, type InspectionTarget } from "./components/report-view";
 
-const RelationshipGraph = defineAsyncComponent(() => import("./components/RelationshipGraph.vue"));
+const ContextGraph = defineAsyncComponent(() => import("./components/ContextGraph.vue"));
+const ProjectGraphBrowser = defineAsyncComponent(() => import("./components/ProjectGraphBrowser.vue"));
 
 const session = useAgentSession();
 const prompt = ref("");
@@ -505,6 +506,10 @@ function isArtifactEvent(event: Record<string, unknown>) {
       <div class="primary">
         <section class="card chat chat-panel">
           <div class="card-title chat-heading"><div><h2>Chat</h2><span class="active-chat-context"><strong>{{ session.projects.find((item) => item.id === session.projectId)?.name ?? 'Personal' }}</strong><span>/</span><span>{{ session.chatTitle }}</span></span></div><div v-if="documentMode" class="document-chat-status" :class="{ dirty: documentStatus.dirty, 'status-error': documentStatus.error }" :title="documentStatus.message"><strong>{{ documentStatus.title }}</strong><span>revision {{ documentStatus.revision }}</span><span>{{ documentStatus.dirty ? 'unsaved changes' : 'saved' }}</span></div></div>
+          <details v-if="session.projectId && session.tools.some((tool) => tool.name === 'graph.find' && tool.read_only && !tool.policy_gated) && session.tools.some((tool) => tool.name === 'graph.expand' && tool.read_only && !tool.policy_gated)">
+            <summary>Browse project graph</summary>
+            <ProjectGraphBrowser :key="`${session.sessionId}:${session.projectId}`" :tools="session.tools" :call-tool="session.callReadOnlyTool" />
+          </details>
           <p v-if="!session.historyAvailable && !session.messages.length" class="muted history-unavailable">This chat has no saved message transcript in the resource store.</p>
           <button v-if="session.historyCursor" type="button" class="quiet history-more" :disabled="session.navigationLoading" @click="session.loadOlderMessages()">{{ session.navigationLoading ? 'Loading…' : 'Load older messages' }}</button>
           <div v-if="!session.messages.length" class="empty">Send a question to the connected agent.</div>
@@ -512,9 +517,8 @@ function isArtifactEvent(event: Record<string, unknown>) {
             <div class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
             <template v-if="message.role === 'assistant'">
               <section v-for="(graph, graphIndex) in codeGraphsForTurn(message.turnId)" :key="`${graph.event.sequence ?? graphIndex}-code-graph`" class="report-card code-analysis-graph">
-                <div class="report-heading"><strong>Static call relationships</strong><span>One hop · source analysis</span></div>
-                <RelationshipGraph :visualization="graph.visualization" />
-                <p v-if="graph.visualization.limitations?.length" class="muted">{{ graph.visualization.limitations.join(" ") }}</p>
+                <ContextGraph :visualization="graph.visualization" :tool-name="graph.event.tool_name ?? graph.event.detail ?? ''"
+                  :tools="session.tools" :call-tool="session.callReadOnlyTool" />
               </section>
               <ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" :call-tool="session.callReadOnlyTool" @edit="editReport" @inspect="inspection = $event" />
             </template>

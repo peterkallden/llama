@@ -1,5 +1,6 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/adapters/families/code-adapters.h"
+#include "agent/tooling/adapters/families/graph-adapters.h"
 #include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
 #include "agent/tooling/contracts/tool-result-contracts.h"
@@ -285,6 +286,17 @@ private:
 
 class test_data_store final : public common_agent_data_store {
 public:
+    std::map<std::string, common_context_graph_state> graphs;
+    bool get_context_graph(const common_agent_scope & scope, common_context_graph_state & out, std::string & error) override {
+        if (scope.namespace_id.empty() || scope.project_id.empty()) { error = "project required"; return false; }
+        out = graphs[scope.namespace_id + ":" + scope.project_id]; error.clear(); return true;
+    }
+    common_agent_publication_status publish_context_graph(const common_agent_scope & scope, uint64_t expected,
+            const common_context_graph_state & input, common_context_graph_state & out, std::string & error) override {
+        auto & graph = graphs[scope.namespace_id + ":" + scope.project_id];
+        if (graph.revision != expected) { error = "revision conflict"; return common_agent_publication_status::conflict; }
+        graph = input; out = graph; error.clear(); return common_agent_publication_status::published;
+    }
     bool get_dataset_descriptor(const std::string & dataset_uri,
             common_agent_dataset_descriptor & descriptor, std::string & error) override {
         if (dataset_uri == "dataset://analysis/csv-sales") {
@@ -670,6 +682,62 @@ int main() {
     foundation_resources.available_uris.insert("resource://session/long-text");
     test_data_store foundation_data;
     foundation_bindings.data_store = &foundation_data;
+    {
+        common_tool_catalog graph_catalog; common_tool_bootstrap_result graph_bootstrap;
+        assert(graph_catalog.bootstrap("graph-project", graph_bootstrap, error));
+        common_native_tool_bindings graph_bindings = repository_bindings;
+        graph_bindings.data_store = &foundation_data;
+        graph_bindings.tool_scope.namespace_id = "test"; graph_bindings.tool_scope.project_id = "project";
+        common_tool_registry graph_registry; common_tool_adapter_result graph_adapters;
+        assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, graph_registry, graph_adapters, error));
+        auto created = graph_registry.execute({"graph.link.propose", R"({"from":{"kind":"component","name":"planning"},"to":{"kind":"file","name":"selection","path":"src/selection.cpp"},"relation":"depends_on","rationale":"inspect runtime linkage"})"});
+        assert(created.ok);
+        auto item = nlohmann::json::parse(created.output);
+        assert(item["edge"]["status"] == "proposed" && item["revision"] == 1);
+        const auto edge_id = item["edge"]["id"].get<std::string>();
+        const auto from = item["edge"]["from"].get<std::string>();
+        const auto graph_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
+            "change planning selection", 1800, true);
+        assert(!graph_context.empty());
+        const auto projected_graph = nlohmann::json::parse(graph_context);
+        assert(projected_graph["nodes"].size() == 2 && projected_graph["edges"].size() == 1 &&
+            projected_graph["edges"][0]["status"] == "proposed");
+        assert(common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
+            "change planning selection", 0, true).empty());
+        auto found = graph_registry.execute({"graph.find", R"({"query":"planning"})"});
+        assert(found.ok && nlohmann::json::parse(found.output)["nodes"].size() == 1);
+        auto contextual = graph_registry.execute({"graph.find", R"({"query":"Change the planning selection code"})"});
+        assert(contextual.ok && nlohmann::json::parse(contextual.output)["nodes"].size() == 2);
+        auto expanded = graph_registry.execute({"graph.expand", nlohmann::json{{"id",from},{"depth",1}}.dump()});
+        assert(expanded.ok && nlohmann::json::parse(expanded.output)["edges"].size() == 1);
+        auto withdrawn = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",1},{"rationale","recheck"}}.dump()});
+        assert(withdrawn.ok && nlohmann::json::parse(withdrawn.output)["edge"]["status"] == "retraction_proposed");
+        auto conflict = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",1},{"rationale","stale"}}.dump()});
+        assert(!conflict.ok && conflict.failure_class == common_tool_failure_class::conflict);
+        auto missing_ref = graph_registry.execute({"graph.link.propose", R"({"from":{"kind":"actor","name":"Alice"},"to":{"id":"unused"},"relation":"associated_with","rationale":"check"})"});
+        assert(!missing_ref.ok);
+        const auto domain_link = [&](const std::string & ref) {
+            return graph_registry.execute({"graph.link.propose", nlohmann::json{
+                {"from", {{"kind","actor"},{"name","Alice"},{"source_ref",ref}}},
+                {"to", {{"id",from}}}, {"relation","associated_with"}, {"rationale","investigate this link"}}.dump()});
+        };
+        const auto actor_a = domain_link("case:a/entity:alice");
+        const auto actor_b = domain_link("case:b/entity:alice");
+        assert(actor_a.ok && actor_b.ok);
+        const auto id_a = nlohmann::json::parse(actor_a.output)["edge"]["from"].get<std::string>();
+        const auto id_b = nlohmann::json::parse(actor_b.output)["edge"]["from"].get<std::string>();
+        assert(id_a != id_b);
+        const auto actor = graph_registry.execute({"graph.get", nlohmann::json{{"id",id_a}}.dump()});
+        assert(actor.ok && nlohmann::json::parse(actor.output)["node"]["source_ref"] == "case:a/entity:alice");
+        graph_bindings.tool_scope.project_id = "other-project";
+        common_tool_registry other_graph; common_tool_adapter_result other_graph_adapters;
+        assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, other_graph, other_graph_adapters, error));
+        assert(!other_graph.execute({"graph.get", nlohmann::json{{"id",from}}.dump()}).ok);
+        graph_bindings.tool_scope.project_id.clear(); common_tool_registry no_project; common_tool_adapter_result no_project_adapters;
+        assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, no_project, no_project_adapters, error));
+        assert(!no_project.execute({"graph.find", R"({"query":"planning"})"}).ok);
+    }
+
     foundation_bindings.dataset_from_resource = [](const std::string & resource, const std::string & operation) {
         if (resource != "resource://uploads/sales.csv" || operation != "inspect") {
             return common_tool_execution_result::failure(

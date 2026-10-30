@@ -31,6 +31,16 @@ namespace {
 
 using json = nlohmann::ordered_json;
 
+std::string prepare_project_graph_context(common_agent_runtime_driver_execution & execution) {
+    auto * view = execution.tooling.tool_view;
+    if (execution.scope.project_id.empty() || !view || !view->exposes_tool("graph.find") ||
+            !view->is_read_only("graph.find") || !execution.tooling.project_graph_context ||
+            execution.orchestration_config.prompt.empty()) return {};
+    const bool include_edges = view->exposes_tool("graph.expand") && view->is_read_only("graph.expand");
+    const auto budget = execution.runtime_config.generation_config.context_budgets.tool_observation_chars;
+    return execution.tooling.project_graph_context(execution.scope, execution.orchestration_config.prompt, budget, include_edges);
+}
+
 bool load_route_procedure_memories(
         common_agent_runtime_driver_execution & execution,
         const std::vector<std::string> & procedure_refs,
@@ -1034,6 +1044,7 @@ common_agent_request make_agent_runtime_driver_request(
     request.memory_scope = execution.memory_scope;
     request.plan_scope = execution.scope.plan_scope;
     request.prompt = execution.orchestration_config.prompt;
+    request.project_graph_context = execution.project_graph_context;
     request.input_resources = execution.input_resources;
     request.resource_read_binding = execution.resource_read_binding;
     request.available_resources = execution.available_resources;
@@ -1867,6 +1878,8 @@ bool run_agent_runtime_driver(
             return true;
         }
     }
+
+    execution.project_graph_context = prepare_project_graph_context(execution);
 
     if (!prepare_resource_chunk_observations(execution, error)) {
         return fail_with_partial_result(error);

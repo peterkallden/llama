@@ -6,6 +6,7 @@
 #include "agent/visualization/visualization-contract.h"
 #include "base64.hpp"
 #include "hash/hash.h"
+#include "tools/agent/tooling/agent-tool-provider.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -238,7 +239,27 @@ int main() {
     assert(std::any_of(projected_research.edges.begin(), projected_research.edges.end(), [](const auto & edge) {
         return edge.relation == "supports" && edge.provenance_refs == std::vector<std::string>{"evidence-test"};
     }));
+    native_agent_tool_provider source_provider(catalog, [&](const agent_tool_context &, common_native_tool_bindings & out, std::string &) {
+        out = bindings; return true;
+    });
+    agent_tool_context source_context; source_context.profile_id = "investigation"; source_context.scope = scope;
+    source_context.max_calls = 4; source_context.allowed_exposed_tool_names = {"graph.source", "visualize.research_graph"};
+    auto source_view = source_provider.resolve_tools(source_context, error);
+    assert(source_view);
+    const auto source_graph = source_view->call({"research", "graph.source",
+        R"({"source":"research","arguments":{"source_uri":"resource://session/research-workspace"}})"}, error);
+    assert(source_graph.ok);
+    const auto source_payload = nlohmann::json::parse(source_graph.content_json);
+    assert(source_payload.at("result").at("source_tool") == "visualize.research_graph");
+    common_agent_visualization_relationship delegated_research;
+    assert(common_agent_visualization_relationship_from_json(source_payload.at("result").at("visualization"), delegated_research, error));
+    assert(std::any_of(delegated_research.edges.begin(), delegated_research.edges.end(), [](const auto & edge) {
+        return edge.relation == "supports" && edge.provenance_refs == std::vector<std::string>{"evidence-test"};
+    }));
     resources.resources[active_descriptor.uri].sha256 = "tampered";
+    const auto tampered_source_graph = source_view->call({"research-tampered", "graph.source",
+        R"({"source":"research","arguments":{"source_uri":"resource://session/research-workspace"}})"}, error);
+    assert(!tampered_source_graph.ok);
     const auto invalid_research_graph = registry.execute({"visualize.research_graph",
         R"({"source_uri":"resource://session/research-workspace"})"});
     assert(!invalid_research_graph.ok && invalid_research_graph.failure_code ==

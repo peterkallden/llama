@@ -8,6 +8,7 @@
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent/tooling/routing/tool-navigation.h"
+#include "agent/visualization/visualization-contract.h"
 
 #include <algorithm>
 #include <atomic>
@@ -685,6 +686,78 @@ private:
                 false,
                 "The requested tool is not available in this runtime view.",
                 error);
+        }
+
+        if (call.name == "graph.source") {
+            const auto request = json::parse(call.arguments_json, nullptr, false);
+            const std::string source = request.is_object() ? request.value("source", std::string{}) : std::string{};
+            const std::string source_tool = source == "code" ? "code.calls" :
+                source == "research" ? "visualize.research_graph" :
+                source == "investigation" ? "investigate.graph.expand" : std::string{};
+            // The source must be visible to the model in the same resolved view;
+            // graph access never adds the source tool or app-only authority.
+            const bool exposed = std::any_of(model_tool_list.begin(), model_tool_list.end(), [&](const auto & tool) {
+                return tool.name == source_tool;
+            });
+            if (source_tool.empty() || !exposed || !is_read_only(source_tool) || registry.is_policy_gated(source_tool)) {
+                error = "source graph tool is not authorized in this runtime view";
+                return make_failure_result(call, "tool.graph.source_unavailable", common_tool_failure_class::policy,
+                    false, "The requested source graph is unavailable in this tool profile.", error);
+            }
+            if (!request.contains("arguments") || !request["arguments"].is_object()) {
+                error = "source arguments must be an object";
+                return make_failure_result(call, "tool.graph.invalid_arguments", common_tool_failure_class::validation,
+                    false, "Source graph arguments are invalid.", error);
+            }
+            agent_tool_call delegated{call.id, source_tool, request["arguments"].dump()};
+            if (!reserve_call_slot(delegated, error)) {
+                const bool limited = error == "tool call limit reached";
+                return make_failure_result(call, limited ? "tool_call_limit_reached" : "tool.graph.source_rejected",
+                    limited ? common_tool_failure_class::limit : common_tool_failure_class::validation,
+                    false, "The source graph call could not be admitted.", error);
+            }
+            auto result = execute_validated_call(delegated, execution_context, error);
+            if (!result.ok) { result.tool_name = call.name; return result; }
+            const auto envelope = json::parse(result.content_json, nullptr, false);
+            if (!envelope.is_object() || !envelope.contains("result") || !envelope["result"].is_object()) {
+                error = "source graph returned an invalid result";
+                return make_failure_result(call, "tool.graph.source_invalid", common_tool_failure_class::execution,
+                    false, "The source graph returned invalid data.", error);
+            }
+            const auto & data = envelope["result"];
+            json projection = {{"source", source}, {"source_tool", source_tool}, {"data", data},
+                {"epistemic_status", "source_reported"}, {"persisted", false},
+                {"limitations", json::array({"Source data is not merged into the saved project graph."})}};
+            if (data.contains("visualization")) projection["visualization"] = data["visualization"];
+            if (source == "investigation" && data.contains("nodes") && data["nodes"].is_array() &&
+                    data.contains("edges") && data["edges"].is_array()) {
+                common_agent_visualization_relationship graph;
+                graph.title = "Investigation relationships";
+                graph.data_revision = std::to_string(data.value("case_revision", uint64_t(0)));
+                graph.truncated = data.value("truncated", false); graph.complete = false;
+                graph.limitations.push_back("A bounded case graph does not establish complete coverage of the underlying activity.");
+                if (data.contains("limitations") && data["limitations"].is_array())
+                    for (const auto & limitation : data["limitations"]) if (limitation.is_string()) graph.limitations.push_back(limitation.get<std::string>());
+                for (const auto & node : data["nodes"]) graph.nodes.push_back({node.value("id", std::string{}), node.value("label", std::string{}), "investigation_entity"});
+                for (const auto & edge : data["edges"]) graph.edges.push_back({edge.value("id", std::string{}), edge.value("source", std::string{}),
+                    edge.value("target", std::string{}), edge.value("classification", std::string{}), true, "investigation_relation",
+                    edge.value("evidence_refs", std::vector<std::string>{})});
+                std::string graph_error;
+                if (!common_agent_visualization_relationship_validate(graph, graph_error)) {
+                    error = graph_error;
+                    return make_failure_result(call, "tool.graph.source_invalid", common_tool_failure_class::execution,
+                        false, "The investigation graph projection is invalid.", error);
+                }
+                projection["visualization"] = common_agent_visualization_relationship_to_json(graph);
+            }
+            if (projection.dump().size() > effective_result_limit(execution_context, definition_it->second)) {
+                error = "source graph projection exceeded the result limit";
+                return make_failure_result(call, "tool.graph.source_limit", common_tool_failure_class::limit,
+                    false, "The source graph projection is too large.", error);
+            }
+            error.clear();
+            return make_agent_tool_json_success_result(call, projection.dump(), "Authorized source graph observation.",
+                std::move(result.resource_refs), std::move(result.dataset_refs));
         }
 
         const auto started_at = std::chrono::steady_clock::now();

@@ -493,6 +493,9 @@ int main() {
                 definition.name == "document.propose_patch" || definition.name == "document.apply_patch" ||
                 definition.name == "visualize.create") {
             assert(definition.requires_confirmation);
+        } else if (definition.name == "graph.link.propose" || definition.name == "graph.retract.propose") {
+            assert(definition.risk_class == common_tool_risk_class::memory_proposal);
+            assert(definition.requires_confirmation);
         } else {
             assert(!definition.requires_confirmation);
         }

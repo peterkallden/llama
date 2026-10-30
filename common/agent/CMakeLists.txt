@@ -297,6 +297,7 @@ set(AGENT_TOOLING_SOURCES
     tooling/adapters/families/memory-adapters.cpp
     tooling/adapters/families/oracle-adapters.cpp
     tooling/adapters/families/data-adapters.cpp
+    tooling/adapters/families/graph-adapters.cpp
     tooling/adapters/families/investigation-adapters.cpp
     tooling/adapters/families/investigation-adapters.h
     tooling/adapters/families/document-adapters.cpp
@@ -355,7 +356,7 @@ target_compile_features(llama-agent-tooling PUBLIC cxx_std_17)
 target_link_libraries(llama-agent-tooling
     PUBLIC llama-common llama-agent-artifact llama-agent-dataset-contracts llama-agent-visualization-contracts
         llama-agent-research-contracts llama-agent-plan llama-agent-memory
-    PRIVATE cpp-httplib
+    PRIVATE cpp-httplib vendor::hash
 )
 if (LLAMA_AGENT_SANDBOX)
     target_link_libraries(llama-agent-tooling PUBLIC llama-agent-sandbox)

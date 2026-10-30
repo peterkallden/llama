@@ -1,4 +1,5 @@
 #include "agent/tooling/contracts/tool-budget.h"
+#include "agent/tooling/adapters/families/graph-adapters.h"
 #include "agent-cli-host-adapter.h"
 #include "../openapi/agent-openapi-http.h"
 #include "../openapi/agent-openapi-catalog.h"
@@ -507,6 +508,13 @@ bool resolve_agent_host_tool_selection(
         bindings.data_store = request.data_store != nullptr
             ? request.data_store
             : selection.owned_data_store.get();
+        if (bindings.data_store != nullptr) {
+            selection.tooling.project_graph_context = [store = bindings.data_store, scope = resolved_tool_context.scope](
+                    const common_agent_scope & requested_scope, const std::string & query, size_t budget, bool include_edges) {
+                if (scope.namespace_id != requested_scope.namespace_id || scope.project_id != requested_scope.project_id) return std::string{};
+                return common_context_graph_prompt_projection(*store, scope, query, budget, include_edges);
+            };
+        }
         if (bindings.data_store != nullptr && resource_store != nullptr) {
             const auto runtime = bindings.resource_runtime;
             bindings.dataset_from_resource = [resource_store, runtime, data_store = bindings.data_store](

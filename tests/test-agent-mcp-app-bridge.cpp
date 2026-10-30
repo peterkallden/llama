@@ -2,9 +2,11 @@
 #include "tools/agent/runtime/agent-runtime-tooling.h"
 #include "tools/agent/mcp/agent-mcp-protocol.h"
 #include "tools/agent/mcp/agent-mcp-server-tool-registry.h"
+#include "agent/tooling/schema/tool-output-codec.h"
 
 #include <cassert>
 #include <algorithm>
+#include <cstdio>
 
 namespace {
 
@@ -36,6 +38,23 @@ public:
     std::vector<mcp_agent_tool_definition> definitions;
     std::string called;
     std::string read_uri;
+};
+
+class graph_fixture_store final : public common_agent_data_store {
+public:
+    common_investigation_case_revision investigation;
+    bool execute(const std::string &, const std::string &, std::string &, std::string &) override { return false; }
+    bool get_investigation_case(const std::string & id, const common_agent_scope & scope,
+            common_investigation_case_revision & out, std::string & error) override {
+        if (id != investigation.case_id || scope.namespace_id != investigation.scope.namespace_id ||
+                scope.project_id != investigation.scope.project_id) { error = "case is unavailable"; return false; }
+        out = investigation; error.clear(); return true;
+    }
+    bool authorize_investigation_source(const std::string & source, const common_agent_scope &,
+            std::string & error) const override {
+        if (source != "logs") { error = "source denied"; return false; }
+        error.clear(); return true;
+    }
 };
 
 mcp_agent_tool_definition tool(std::string name, bool app_visible) {
@@ -239,5 +258,78 @@ int main() {
         // The app route reached its host executor; this fixture intentionally
         // has no data store, so it cannot publish a decision.
     }
+    // A graph source is a delegated read, never an additional authority.
+    graph_fixture_store graph_store;
+    int code_calls = 0;
+    common_tool_catalog graph_catalog;
+    common_tool_bootstrap_result graph_bootstrap;
+    if (!graph_catalog.bootstrap("code-analysis", graph_bootstrap, error)) return 40;
+    native_agent_tool_provider graph_provider(graph_catalog, [&](const agent_tool_context & tool_context,
+            common_native_tool_bindings & bindings, std::string &) {
+        bindings.data_store = &graph_store; bindings.tool_scope = tool_context.scope;
+        bindings.resource_runtime.namespace_id = tool_context.scope.namespace_id;
+        bindings.resource_runtime.project_id = tool_context.scope.project_id;
+        bindings.resource_runtime.session_id = tool_context.scope.session_id;
+        bindings.code_calls = [&](const std::string &) {
+            ++code_calls;
+            return common_tool_execution_result::success(
+                R"({"backend":"clangd","callers":[],"callees":[],"count":0,"truncated":false})");
+        };
+        return true;
+    });
+    agent_tool_context graph_context;
+    graph_context.profile_id = "code-analysis"; graph_context.scope.namespace_id = "tenant-a";
+    graph_context.scope.project_id = "project-a"; graph_context.max_calls = 10;
+    graph_context.allowed_exposed_tool_names = {"graph.source"};
+    auto graph_view = graph_provider.resolve_tools(graph_context, error);
+    if (!graph_view) return 41;
+    const agent_tool_call graph_call{"source", "graph.source", R"({"source":"code","arguments":{"symbol":"f","path_hint":"a.cpp","line":1}})"};
+    auto unavailable = graph_view->call(graph_call, error);
+    if (unavailable.ok || unavailable.failure_class != common_tool_failure_class::policy || code_calls != 0) return 42;
+    graph_context.allowed_exposed_tool_names.push_back("code.calls");
+    graph_view = graph_provider.resolve_tools(graph_context, error);
+    if (!graph_view) return 43;
+    const auto source_definition = std::find_if(graph_view->chat_tools().begin(), graph_view->chat_tools().end(),
+        [](const auto & tool) { return tool.name == "graph.source"; });
+    if (source_definition == graph_view->chat_tools().end() ||
+            !common_compact_dsl_schema_supported(source_definition->parameters, error)) return 53;
+    common_agent_tool_call source_dsl;
+    if (!common_parse_model_tool_call(common_agent_tool_output_format::compact_dsl,
+            "open! graph.source\nsource: code\narguments.symbol: f\narguments.path_hint: a.cpp\narguments.line: 1",
+            graph_view->chat_tools(), source_dsl, error)) return 54;
+    if (!graph_view->validate({"dsl", source_dsl.name, source_dsl.arguments_json}, error)) return 55;
+    const auto observation = graph_view->call(graph_call, error);
+    if (!observation.ok || code_calls != 1) return 44;
+    const auto payload = nlohmann::json::parse(observation.content_json, nullptr, false);
+    if (payload.is_discarded() || payload["result"]["source_tool"] != "code.calls" ||
+            payload["result"]["persisted"] != false || !payload["result"].contains("visualization")) return 45;
+    const auto invalid = graph_view->call({"invalid", "graph.source", R"({"source":"code","arguments":{"symbol":"f"}})"}, error);
+    if (invalid.ok || code_calls != 1) return 46;
+    const auto no_investigation = graph_view->call({"case", "graph.source", R"({"source":"investigation","arguments":{}})"}, error);
+    if (no_investigation.ok || no_investigation.failure_class != common_tool_failure_class::policy) return 47;
+    auto & case_value = graph_store.investigation;
+    case_value.case_id = "case-a"; case_value.title = "Case"; case_value.question = "Who accessed the host?";
+    case_value.source_id = "logs"; case_value.window_start_ms = 100; case_value.window_end_ms = 1000;
+    case_value.scope.namespace_id = "tenant-a"; case_value.scope.project_id = "project-a"; case_value.scope.session_id = "session-a";
+    case_value.entities = {{"alice", "logs", common_investigation_entity_kind::user, "alice", "Alice", "", 0, 0},
+        {"host", "logs", common_investigation_entity_kind::host, "host", "Host", "", 0, 0}};
+    case_value.events = {{"event:1", "logs", "doc-1", "authentication", {200, 210, 0, true},
+        {"alice", "host"}, "resource://raw/doc-1", "resource://normalized/doc-1", {}, {}}};
+    case_value.relations = {{"rel:1", "logs", "alice", "host", common_investigation_relation_kind::authenticated_to,
+        200, 200, true, 1, "auth-v1", "1", "observed", {"event:1"}}};
+    if (!graph_catalog.bootstrap("investigation", graph_bootstrap, error)) return 48;
+    graph_context.profile_id = "investigation"; graph_context.scope.session_id = "session-a";
+    graph_context.allowed_exposed_tool_names = {"graph.source", "investigate.graph.expand"};
+    graph_view = graph_provider.resolve_tools(graph_context, error);
+    if (!graph_view) return 49;
+    const agent_tool_call case_call{"case", "graph.source", R"({"source":"investigation","arguments":{"case_id":"case-a","case_revision":1,"center_entity_id":"alice"}})"};
+    const auto case_graph = graph_view->call(case_call, error);
+    if (!case_graph.ok) { std::fprintf(stderr, "case graph failed: %s\n", error.c_str()); return 50; }
+    const auto case_payload = nlohmann::json::parse(case_graph.content_json, nullptr, false);
+    if (case_payload.is_discarded() || case_payload["result"]["visualization"]["edges"].size() != 1 ||
+            case_payload["result"]["visualization"]["edges"][0]["provenance_refs"][0] != "event:1") return 51;
+    graph_context.scope.project_id = "other-project";
+    graph_view = graph_provider.resolve_tools(graph_context, error);
+    if (!graph_view || graph_view->call(case_call, error).ok) return 52;
     return 0;
 }
