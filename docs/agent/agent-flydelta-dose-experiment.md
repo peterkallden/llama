@@ -2,8 +2,9 @@
 
 Status: host configuration defaults to `direction_dose`; `raw_coefficients` remains
 available as an explicit alternative. Model experiments must be evaluated separately
-from deployment and learning decisions. This document does not assert that the
-latest working-tree changes have been compiled or tested.
+from deployment and learning decisions. The 2026-10-28 snapshot was built and
+tested with mixed results; see the [verification record](agent-flydelta-verification-2026-10-28.md).
+Later revisions require their own verification.
 
 ## Quantities and provenance
 
@@ -112,7 +113,8 @@ metric updates, checked proposal/metadata alignment before baseline execution, a
 excluded unexecuted/unapplied arms from refinement. Signed mixed directions now
 include both polarities. Offline Python summary contracts are registered with CTest
 for partial failures, damaged/missing records, calibration overlap and comparison
-identity. These contracts and the revised C++ contracts remain unrun.
+identity. The dose-summary and coefficient-search contracts passed in the 2026-10-28
+snapshot; the record does not establish all individual cases for later revisions.
 
 This remains an experimental implementation of normalized dosing and bounded
 joint exploration, not evidence that either strategy improves steering. In
@@ -123,12 +125,13 @@ requested/applied measurements, rather than the configured grid alone, define
 what was evaluated. Independent direction-learning/evaluation separation and
 production-adoption criteria remain prerequisites for a later production decision.
 
-### 2026-10-27 verification boundary
+### Verification boundary
 
-The shared runner, strict response pairing and new contract cases have not been
-compiled or executed. The interrupted experiment predates this refactor and is not
-validation of these changes. Do not launch a build, CTest or smoke until the user
-explicitly authorizes verification.
+The 2026-10-28 build and selected CTests covered the then-current runner and
+contracts. No raw-versus-normalized-versus-direction-dose model comparison
+completed in that run. The interrupted dataset-question repair run yielded no
+final arm assessment. See the [verification record](agent-flydelta-verification-2026-10-28.md)
+for the exact outcomes and the boundary for later revisions.
 
 ## Execution evidence and comparison identity
 

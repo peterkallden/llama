@@ -2,13 +2,14 @@
 
 ## Current verification boundary
 
-The ownership and reporting refactor dated 2026-10-27 is implemented but has not
-been compiled or tested. The interrupted model experiment is retained separately
-and supplies no validation of this refactor. Verification awaits explicit user
-authorization. The ownership refactor preserves search and lifecycle policy.
-The subsequent partial-progress guidance change below intentionally extends
-search prediction and qualification utility, while preserving promotion and
-activation authority. That change is also uncompiled and untested.
+The ownership and reporting refactor and the partial-progress guidance changes
+were included in a full build and agent CTest run at commit `bcf47549e` on
+2026-10-28. The run had mixed outcomes and does not establish improved model
+behavior. Later FlyDelta changes, including layer-specific concept localization,
+are not covered by that historical run. See the
+[verification record](agent-flydelta-verification-2026-10-28.md) for the exact
+scope, failures, skips and model evidence. Current HEAD requires its own
+verification; a historical pass is not a current test result.
 
 ## Follow one bounded slice
 
@@ -135,19 +136,18 @@ before/with-arm table, detailed dose/progress information and trace line referen
 A complete trace with an UNKNOWN verifier is possible; it proves coverage, not
 improved steering. Daemon crash recovery requires a separate verification scenario.
 
-## Verification prepared, not run
+## Verification and outstanding work
 
-The planned checks include the existing orchestration, coefficient, evaluator,
-worker, collection, dose and server-binding CTests, plus the new pure state-codec
-contract and offline runner/summary contracts. These cover legacy decoding,
-neutral/successful pairs, absent observations, actual zero dose, response pairing,
-wrong experiment flags and interruption. All new C++ checks use explicit CHECK
-branches that remain active with NDEBUG.
+The 2026-10-28 snapshot passed the selected orchestration, coefficient,
+evaluator, worker, collection, server-binding, outcome-guidance, qualification
+and dose-summary CTests. That snapshot also had two unrelated agent CTest
+failures and skipped model tests; see the
+[verification record](agent-flydelta-verification-2026-10-28.md).
 
-After authorization: build in the existing Vulkan/Cozo tree with ccache, execute
-focused checks serially, then model-free recovery and finally the explicitly
-selected traced model experiment. Record those results before claiming behavioral
-preservation or model improvement.
+For a later revision, run the relevant contracts and functional checks against
+that revision. Daemon restart/retry behavior and matched model comparisons need
+separate evidence. A passing contract or completed model process does not by
+itself establish behavioral preservation or model improvement.
 
 ## Partial-progress outcome guidance
 
@@ -242,11 +242,10 @@ observations to training history.
 Added source contracts cover paired evidence round trips, parent-goal loss,
 missing control coverage, legacy history, separate progress/full outcomes, signed
 directions, duplicate/conflicting observations, isolated local history and
-partial-progress qualification. They have not been executed. Required next work,
-after explicit authorization, is compilation, the focused outcome/Deep/lifecycle/
-qualification CTests, restart/retry coverage through daemon paths, and traced
-model comparisons at equal inference budgets. No quality or compute improvement
-is claimed by the source implementation alone.
+partial-progress qualification. Outcome-guidance, Deep and qualification CTests
+passed in the 2026-10-28 snapshot; this does not verify later code or establish
+model quality. Restart/retry coverage and matched model comparisons at equal
+inference budgets remain separate evidence requirements.
 
 ### Guidance experiments and Whirlpool proposal policy
 
@@ -265,5 +264,6 @@ New search jobs freeze `whirlpool_global_probes_per_round` in their existing
 job envelope. The default is one previously unvisited allowed layer outside the
 local radius, reserved from the same round budget. Missing fields in legacy
 envelopes preserve the original local-only policy and serialized identity.
-The trace records the proposal-policy revision and global layers. This source
-change and its new checks have not yet been compiled or executed.
+The trace records the proposal-policy revision and global layers. Whirlpool
+search CTests passed in the 2026-10-28 snapshot; later changes require their own
+verification.

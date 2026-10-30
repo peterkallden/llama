@@ -6,8 +6,10 @@ FlyDelta has implemented capture, search, overlay and lifecycle paths; its
 behavioral benefit remains experimental and must be established per model and
 task. The [historical guidance section](#historical-outcome-guidance-for-whirlpool-deep-and-tfo-lite)
 describes current Whirlpool/Deep/TFO integration, configuration and trace
-contracts. The [2026-10-19 verification record](#verification-status-after-the-2026-10-19-corrections)
-states which checks passed and which model comparisons remain outstanding.
+contracts. The [2026-10-28 verification snapshot](agent-flydelta-verification-2026-10-28.md)
+records the build, selected CTests and model observations at its pinned commit;
+later changes require separate verification. Older dated sections retain their
+historical evidence rather than describing the current HEAD.
 
 Resident model traces record resolved visible GPU descriptions. For a
 hardware-specific smoke, set `LLAMA_AGENT_EXPECTED_GPU` to a description
@@ -387,9 +389,8 @@ source/behavior identity when they become activation material.
 
 See [FlyDelta architecture and result interpretation](agent-flydelta-architecture.md)
 for the current module map, ownership of durable state, interpretation of arm
-results and the two supported dose-comparison profiles. The 2026-10-27 ownership
-and reporting changes have received static review only; compilation, CTests and
-model-backed verification are explicitly pending user authorization.
+results and the two supported dose-comparison profiles. The 2026-10-28 [verification record](agent-flydelta-verification-2026-10-28.md)
+distinguishes build, contract and model results at that revision from later changes.
 
 ## Production daemon phase boundary
 
@@ -4081,26 +4082,20 @@ persist state, train a model or give the model authority over the capture.
 This is an experiment and bounded data handoff, not automatic FlyDelta
 learning.
 
-### Dynamic same-pass hidden-state capture/injection is a later seam
+### Dynamic intervention boundary
 
-The public API has output embeddings and an evaluation callback; internal
-graphs label layer outputs such as `l_out`. The scheduler callback is an
-observation/debug facility, may transfer backend tensors to host memory, and
-is not a safe public dynamic-intervention API.
+The bounded V1 two-pass path remains available. A separate internal,
+request-scoped `layer_input_residual` add/replace patch is implemented for
+causal experiments; see [Internal causal residual-patch seam](#internal-causal-residual-patch-seam).
+It changes a selected row during model execution, but does not derive its
+patch dynamically from an observed state in that same pass, train a model,
+or grant FlyDelta activation authority. It is serialized in V0, rejects
+unsupported inputs and is not a stable public llama.cpp intervention API.
 
-The full loop needs an explicitly staged route:
-
-1. **V1 two-pass experiment:** bounded capture/prefill, derive a code,
-   discard that context, compose cvec and run a second fresh generation. This
-   avoids mixed KV state but doubles prompt work.
-2. **V2 optional llama.cpp hook:** a versioned, device-aware activation
-   observer/intervention contract at documented residual slots. Begin CPU-only;
-   unsupported backends must no-op. GPU support needs kernels and scheduling,
-   not per-layer host copies.
-
-The CLI V1 capture is CPU/internal-staging scoped and is not a stable public
-llama.cpp API. Neither same-pass route belongs in generic inference until
-static V0 and the two-pass experiment show useful, bounded results.
+A general device-aware observer/intervention contract with documented tensor
+lifetime, threading and backend semantics remains a separate future seam. The
+existing evaluation callback is an observation/debug facility and is not such
+an API.
 
 ## Recommended implementation sweeps
 
@@ -6128,6 +6123,7 @@ FlyDelta capture or training pipeline.
 ## Experimental residual-normalized dosing
 
 See [Residual-normalized coefficient experiments](agent-flydelta-dose-experiment.md)
-for opt-in calibration, direction/dose search, prepared contracts and traced model
-comparisons. This path is uncompiled and untested as of its introduction; production
-defaults are unchanged.
+for calibration, direction/dose search, contracts and traced model comparisons.
+The host default is `direction_dose`; the lower-level coefficient-search contract
+defaults to `raw_coefficients`. The [verification record](agent-flydelta-verification-2026-10-28.md)
+describes what was tested and what remains unproven.
