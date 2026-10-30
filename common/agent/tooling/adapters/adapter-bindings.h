@@ -49,6 +49,7 @@ struct common_native_tool_bindings {
     std::function<common_tool_execution_result(const std::string &)> code_references;
     std::function<common_tool_execution_result(const std::string &)> code_calls;
     std::string code_compile_commands;
+    std::function<common_tool_execution_result()> code_status;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_symbol;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_references;
     std::function<common_tool_execution_result(const std::string &)> diagnostics_call_hierarchy;

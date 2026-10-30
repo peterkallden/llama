@@ -654,6 +654,8 @@ bool common_try_register_code_tool_adapter(
                 return common_adapter_validation_failure("tool.code.invalid_arguments", std::move(parse_error));
             std::string database_status = "unknown";
             json source_in_database = nullptr;
+            json database_source_count = nullptr;
+            bool database_entries_invalid = false;
             if (!bindings.code_compile_commands.empty() && bindings.code_compile_commands != "auto") {
                 std::error_code db_error;
                 auto db = std::filesystem::absolute(bindings.code_compile_commands, db_error);
@@ -670,21 +672,30 @@ bool common_try_register_code_tool_adapter(
                     if (!entries.is_array()) database_status = "unavailable";
                     else {
                         database_status = "available";
-                        if (!requested.empty()) {
-                            bool found = false, invalid = false;
-                            for (const auto & entry : entries) {
-                                if (!entry.is_object() || !entry.contains("directory") || !entry["directory"].is_string() ||
-                                        !entry.contains("file") || !entry["file"].is_string()) { invalid = true; continue; }
-                                std::error_code entry_error;
-                                const auto candidate = std::filesystem::weakly_canonical(
-                                    std::filesystem::path(entry["directory"].get<std::string>()) /
-                                    std::filesystem::path(entry["file"].get<std::string>()), entry_error);
-                                if (entry_error) { invalid = true; continue; }
-                                if (candidate == requested) { found = true; break; }
-                            }
-                            if (found || !invalid) source_in_database = found;
+                        bool found = false;
+                        std::set<std::filesystem::path> sources;
+                        for (const auto & entry : entries) {
+                            if (!entry.is_object() || !entry.contains("directory") || !entry["directory"].is_string() ||
+                                    !entry.contains("file") || !entry["file"].is_string()) { database_entries_invalid = true; continue; }
+                            std::error_code entry_error;
+                            const auto candidate = std::filesystem::weakly_canonical(
+                                std::filesystem::path(entry["directory"].get<std::string>()) /
+                                std::filesystem::path(entry["file"].get<std::string>()), entry_error);
+                            if (entry_error) { database_entries_invalid = true; continue; }
+                            sources.insert(candidate);
+                            if (!requested.empty() && candidate == requested) found = true;
                         }
+                        database_source_count = sources.size();
+                        if (!requested.empty() && (found || !database_entries_invalid)) source_in_database = found;
                     }
+                }
+            }
+            json provider_status = nullptr;
+            if (bindings.code_status) {
+                const auto status = bindings.code_status();
+                if (status.ok) {
+                    auto parsed = json::parse(status.output, nullptr, false);
+                    if (parsed.is_object()) provider_status = std::move(parsed);
                 }
             }
             return common_adapter_success_json({{"schema", "code-capabilities.v1"},
@@ -692,6 +703,8 @@ bool common_try_register_code_tool_adapter(
                 {"backend", semantic_provider ? "semantic_provider" : "bounded_text"},
                 {"compile_commands", bindings.code_compile_commands.empty() ? json(nullptr) : json(bindings.code_compile_commands)},
                 {"compilation_database_status", database_status}, {"source_in_database", source_in_database},
+                {"compilation_database_unique_sources", database_source_count}, {"compilation_database_invalid_entries", database_entries_invalid},
+                {"provider_status", provider_status},
                 {"index_coverage", semantic_provider ? "unknown" : "unavailable"},
                 {"capabilities", {{"symbols", repository_available ? (symbols_semantic ? "semantic" : "text_fallback") : "unavailable"},
                     {"references", repository_available ? (references_semantic ? "semantic" : "text_fallback") : "unavailable"},

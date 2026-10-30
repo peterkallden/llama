@@ -3,6 +3,9 @@
 #include <sheredom/subprocess.h>
 
 #include <cstdio>
+#include <chrono>
+#include <algorithm>
+#include <cctype>
 #include <exception>
 #include <future>
 #include <map>
@@ -34,12 +37,24 @@ struct agent_clangd_session::impl {
     agent_clangd_message_decoder decoder;
     struct document { int64_t version; std::string text; };
     std::map<std::string, document> open_documents;
+    std::map<std::string, bool> progress_tokens;
 };
 
 agent_clangd_session::agent_clangd_session(agent_clangd_session_config config)
     : config_(std::move(config)), state_(std::make_unique<impl>()) {}
 
 agent_clangd_session::~agent_clangd_session() { shutdown(); }
+
+agent_clangd_json agent_clangd_session::status_snapshot() const {
+    const int session = session_status_.load();
+    const int progress = index_status_.load();
+    const auto observed = index_observed_ms_.load();
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    return {{"session", session == 2 ? "initialized" : session == 1 ? "starting" : "not_running"},
+        {"index_activity", progress == 1 ? "started" : progress == 2 ? "active" : progress == 3 ? "ended" : "unknown"},
+        {"observation_age_ms", observed ? agent_clangd_json(now - observed) : agent_clangd_json(nullptr)},
+        {"observation_may_be_stale", true}};
+}
 
 bool agent_clangd_session::initialized() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -62,6 +77,7 @@ bool agent_clangd_session::ensure_started(std::string & error) {
             return false;
         }
         state_->running = true;
+        session_status_ = 1;
         state_->joined = false;
         state_->input = subprocess_stdin(&state_->process);
         state_->output = subprocess_stdout(&state_->process);
@@ -73,11 +89,12 @@ bool agent_clangd_session::ensure_started(std::string & error) {
     }
     agent_clangd_json response;
     const auto root_uri = config_.repository_root.empty() ? agent_clangd_json(nullptr) : agent_clangd_json(agent_clangd_file_uri(std::filesystem::absolute(config_.repository_root)));
-    const auto params = agent_clangd_json{{"processId", nullptr}, {"rootUri", root_uri}, {"capabilities", agent_clangd_json::object()}, {"workspaceFolders", agent_clangd_json::array()}};
+    const auto params = agent_clangd_json{{"processId", nullptr}, {"rootUri", root_uri}, {"capabilities", {{"window", {{"workDoneProgress", true}}}}}, {"workspaceFolders", agent_clangd_json::array()}};
     if (!send_request("initialize", params, response, error)) return false;
     if (!response.contains("result")) { error = "clangd initialize response did not contain result"; return false; }
     if (!send_notification("initialized", agent_clangd_json::object(), error)) return false;
     state_->initialized = true;
+    session_status_ = 2;
     return true;
 }
 
@@ -109,6 +126,33 @@ bool agent_clangd_session::send_request(const std::string & method, const agent_
         for (;;) {
             agent_clangd_json message;
             if (!read_message(message, error)) return false;
+            if (message.value("method", std::string{}) == "window/workDoneProgress/create" && message.contains("id")) {
+                const auto reply = agent_clangd_encode_message({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", nullptr}});
+                if (!state_->input || std::fwrite(reply.data(), 1, reply.size(), state_->input) != reply.size() || std::fflush(state_->input) != 0) {
+                    error = "failed to acknowledge clangd progress"; return false;
+                }
+                continue;
+            }
+            if (message.value("method", std::string{}) == "$/progress" && message.contains("params") && message["params"].is_object()) {
+                const auto & params = message["params"];
+                if (params.contains("token") && params.contains("value") && params["value"].is_object()) {
+                    const auto token = params["token"].dump();
+                    const auto & value = params["value"];
+                    const auto kind = value.value("kind", std::string{});
+                    if (kind == "begin") {
+                        auto title = value.value("title", std::string{});
+                        std::transform(title.begin(), title.end(), title.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                        state_->progress_tokens[token] = title.find("index") != std::string::npos;
+                    }
+                    const auto found = state_->progress_tokens.find(token);
+                    if (found != state_->progress_tokens.end() && found->second && (kind == "begin" || kind == "report" || kind == "end")) {
+                        index_status_ = kind == "begin" ? 1 : kind == "report" ? 2 : 3;
+                        index_observed_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                    }
+                    if (kind == "end") state_->progress_tokens.erase(token);
+                }
+                continue;
+            }
             if (!message.contains("id") || message["id"] != id) continue;
             if (message.contains("error")) { error = "clangd returned JSON-RPC error: " + message["error"].dump(); return false; }
             response = std::move(message);
@@ -137,6 +181,9 @@ bool agent_clangd_session::request(const std::string & method, const agent_clang
     std::lock_guard<std::mutex> lock(mutex_);
     if (ensure_started(error) && send_request(method, params, response, error)) return true;
     state_->initialized = false;
+    session_status_ = 0;
+    index_status_ = 0;
+    index_observed_ms_ = 0;
     shutdown_locked();
     return false;
 }
@@ -182,6 +229,9 @@ void agent_clangd_session::shutdown() {
 }
 
 void agent_clangd_session::shutdown_locked() {
+    session_status_ = 0;
+    index_status_ = 0;
+    index_observed_ms_ = 0;
     if (!state_ || !state_->running) return;
     if (state_->initialized) {
         agent_clangd_json ignored;
@@ -205,5 +255,6 @@ void agent_clangd_session::shutdown_locked() {
     state_->running = false;
     state_->initialized = false;
     state_->open_documents.clear();
+    state_->progress_tokens.clear();
     state_->decoder = agent_clangd_message_decoder();
 }

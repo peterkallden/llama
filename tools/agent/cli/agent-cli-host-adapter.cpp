@@ -775,6 +775,7 @@ bool resolve_agent_host_tool_selection(
                 1000,
             });
             bindings.code_compile_commands = request.diagnostics.compile_commands;
+            bindings.code_status = [clangd_provider]() { return common_tool_execution_result::success(clangd_provider->status_snapshot().dump()); };
             bindings.code_symbols = [clangd_provider](const std::string & input) { return clangd_provider->symbol(input); };
             bindings.code_references = [clangd_provider](const std::string & input) { return clangd_provider->references(input); };
             bindings.code_calls = [clangd_provider](const std::string & input) { return clangd_provider->call_hierarchy(input); };

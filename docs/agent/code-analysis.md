@@ -59,7 +59,12 @@ and searches without a hint remain subject to asynchronous index availability.
 project index coverage as unknown; the setting `auto` is not a resolved path.
 With an explicitly configured compilation database it reports whether that
 database can be read, and an optional repository-relative `path` reports
-whether the source is present, or null when this cannot be determined.
+whether the source is present, or null when this cannot be determined. It also
+reports the number of unique source paths and whether invalid entries were
+encountered; that count is not an index coverage measurement. `provider_status`
+is a non-blocking snapshot of the session and last observed clangd index
+activity. Progress notifications are read during requests, so the observation
+may be stale even when an activity reports that it ended.
 Clangd's background index persists under the compilation database directory's
 `.cache/clangd/index` when writable and is reused across process restarts.
 `diagnostics.semantic_request_timeout_ms` bounds an individual clangd request
@@ -192,3 +197,8 @@ focused contracts with CTest (`test-tool-adapters`, `test-agent-bootstrap`,
 `test-agent-code-projection`) and the web graph tests with
 `npm test -- --run src/components/code-analysis-graph.test.ts` from the web client.
 These contracts do not establish model or browser smoke coverage.
+
+`repository.diff` compares tracked changes with HEAD. An optional repository-relative
+`path` limits the result, and `include_untracked: true` adds bounded previews of
+new files. `truncated` and `omitted_files` report incomplete output; binary and
+non-UTF-8 untracked files are identified without exposing their bytes.

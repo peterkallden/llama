@@ -563,6 +563,30 @@ int main() {
     common_tool_registry developer_registry;
     common_tool_adapter_result developer_adapters;
     assert(common_register_native_tool_adapters(developer_catalog, "developer-read", repository_bindings, developer_registry, developer_adapters, error));
+    {
+        { std::ofstream file(repository / "src" / "sample.txt", std::ios::app); file << "changed\n"; }
+        { std::ofstream file(repository / "src" / "new name.txt"); file << "new text\n"; }
+        { std::ofstream file(repository / "src" / "binary.dat", std::ios::binary); const char binary[] = {'a', 0, 'b'}; file.write(binary, sizeof(binary)); }
+        auto diff = developer_registry.execute({"repository.diff", "{}"});
+        assert(diff.ok);
+        auto data = nlohmann::json::parse(diff.output);
+        assert(data["base"] == "HEAD" && !data["include_untracked"].get<bool>() &&
+            data["summary"].get<std::string>().find("changed") != std::string::npos &&
+            data["summary"].get<std::string>().find("new text") == std::string::npos);
+        diff = developer_registry.execute({"repository.diff", R"({"path":"src/new name.txt","include_untracked":true})"});
+        assert(diff.ok); data = nlohmann::json::parse(diff.output);
+        assert(data["summary"].get<std::string>().find("+new text") != std::string::npos && !data["truncated"].get<bool>());
+        diff = developer_registry.execute({"repository.diff", R"({"path":"src","include_untracked":true})"});
+        assert(diff.ok); data = nlohmann::json::parse(diff.output);
+        assert(data["summary"].get<std::string>().find("Binary or non-UTF-8") != std::string::npos && data["omitted_files"] == 1);
+        diff = developer_registry.execute({"repository.diff", R"({"path":"src","include_untracked":true,"max_bytes":16})"});
+        assert(diff.ok && nlohmann::json::parse(diff.output)["truncated"].get<bool>());
+        diff = developer_registry.execute({"repository.diff", R"({"path":"../outside"})"});
+        assert(!diff.ok && diff.failure_class == common_tool_failure_class::validation);
+        { std::ofstream file(repository / "src" / "sample.txt"); file << "alpha\nneedle in a haystack\n"; }
+        std::filesystem::remove(repository / "src" / "new name.txt");
+        std::filesystem::remove(repository / "src" / "binary.dat");
+    }
     result = developer_registry.execute({"workspace.list", R"({"path":"src","depth":1})"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
     result = developer_registry.execute({"workspace.search", R"({"query":"needle","path":"src"})"});
@@ -1345,6 +1369,30 @@ int main() {
         };
         common_tool_registry code_registry;
         bool installed = false;
+        const auto compile_db = repository / "compile_commands.json";
+        { std::ofstream file(compile_db); file << nlohmann::json::array({
+            {{"directory", repository.string()}, {"file", "src/sample.txt"}},
+            {{"directory", repository.string()}, {"file", "src/sample.txt"}},
+            {{"bad", true}}}).dump(); }
+        code_bindings.code_compile_commands = compile_db.string();
+        code_bindings.code_status = []() { return common_tool_execution_result::success(R"({"session":"initialized","index_activity":"active","observation_may_be_stale":true})"); };
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.inspect"),
+            code_bindings, code_registry, installed, error) && installed);
+        const auto inspection = code_registry.execute({"code.inspect", R"({"path":"src/sample.txt"})"});
+        assert(inspection.ok);
+        const auto info = nlohmann::json::parse(inspection.output);
+        assert(info["compilation_database_unique_sources"] == 1 && info["compilation_database_invalid_entries"] == true &&
+            info["source_in_database"] == true && info["provider_status"]["index_activity"] == "active" && info["index_coverage"] == "unknown");
+        std::filesystem::remove(compile_db);
+        common_tool_registry missing_db_registry;
+        code_bindings.code_status = {};
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.inspect"),
+            code_bindings, missing_db_registry, installed, error) && installed);
+        const auto missing_db = missing_db_registry.execute({"code.inspect", R"({"path":"src/sample.txt"})"});
+        assert(missing_db.ok);
+        const auto missing_info = nlohmann::json::parse(missing_db.output);
+        assert(missing_info["compilation_database_status"] == "unavailable" &&
+            missing_info["compilation_database_unique_sources"].is_null() && missing_info["provider_status"].is_null());
         assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.symbols"),
             code_bindings, code_registry, installed, error) && installed);
         assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.calls"),

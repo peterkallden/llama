@@ -19,6 +19,9 @@ with tempfile.TemporaryDirectory(prefix="agent-clangd-workspace-") as temporary:
                  "arguments": ["c++", "-std=c++17", "-I", str(root), "-c", str(root / name)]}
                 for name in ("target.cpp", "caller.cpp")]
     (root / "compile_commands.json").write_text(json.dumps(commands))
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "target.cpp"], check=True)
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=Agent Test", "-c", "user.email=agent@example.invalid", "commit", "-qm", "fixture"], check=True)
     config = {"schema_version": 1, "model": {"backend": "server-context"},
               "tools": {"profile": "developer-read", "repository_root": str(root)},
               "diagnostics": {"semantic_backend": "clangd", "compile_commands": str(root),
@@ -54,8 +57,14 @@ with tempfile.TemporaryDirectory(prefix="agent-clangd-workspace-") as temporary:
         rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                "clientInfo": {"name": "workspace-test", "version": "1"}})
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        advertised = rpc(40, "tools/list", {})
+        diff_tool = next(tool for tool in advertised["tools"] if tool["name"] == "repository.diff")
+        assert "path" in diff_tool["inputSchema"]["properties"] and "include_untracked" in diff_tool["inputSchema"]["properties"]
+        diff = call(41, "repository.diff", {"path": "caller.cpp", "include_untracked": True})
+        assert diff["include_untracked"] and "+int fixture_caller" in diff["summary"]
         inspect = call(2, "code.inspect", {})
         assert inspect["compile_commands"] == str(root) and inspect["index_coverage"] == "unknown"
+        assert inspect["compilation_database_unique_sources"] == 2 and inspect["provider_status"]["session"] == "not_running"
         inspected_file = call(19, "code.inspect", {"path": "caller.cpp"})
         assert inspected_file["compilation_database_status"] == "available" and inspected_file["source_in_database"] is True
         inspected_header = call(20, "code.inspect", {"path": "api.h"})
@@ -68,6 +77,9 @@ with tempfile.TemporaryDirectory(prefix="agent-clangd-workspace-") as temporary:
             if any(item["path"] == "caller.cpp" for item in cold["items"]): break
             if time.monotonic() >= deadline: raise AssertionError(f"project index did not find caller: {cold}")
             time.sleep(0.2)
+        started = call(42, "code.inspect", {})
+        assert started["provider_status"]["session"] == "initialized" and started["provider_status"]["project_index_requested"]
+        assert started["provider_status"]["observation_may_be_stale"] is True
         caller = call(3, "code.symbols", {"symbol": "fixture_caller", "path_hint": "caller.cpp"})
         assert caller["items"] and caller["complete"] is False
         target = call(4, "code.symbols", {"symbol": "fixture_target", "path_hint": "target.cpp"})

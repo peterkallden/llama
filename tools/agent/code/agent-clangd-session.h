@@ -2,6 +2,7 @@
 
 #include "agent-clangd-protocol.h"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -33,6 +34,7 @@ public:
             std::string & error);
 
     bool initialized() const;
+    agent_clangd_json status_snapshot() const;
 
 private:
     struct impl;
@@ -46,4 +48,7 @@ private:
     agent_clangd_session_config config_;
     std::unique_ptr<impl> state_;
     mutable std::mutex mutex_;
+    std::atomic<int> session_status_{0};
+    std::atomic<int> index_status_{0};
+    std::atomic<int64_t> index_observed_ms_{0};
 };

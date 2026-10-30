@@ -76,6 +76,12 @@ agent_clangd_code_provider::agent_clangd_code_provider(agent_clangd_session_conf
     : session_(std::make_unique<agent_clangd_session>(config)), repository_root_(std::move(config.repository_root)),
       compile_commands_dir_(std::move(config.compile_commands_dir)) {}
 
+agent_clangd_json agent_clangd_code_provider::status_snapshot() const {
+    auto status = session_->status_snapshot();
+    status["project_index_requested"] = project_index_started_.load() && status.value("session", std::string{}) == "initialized";
+    return status;
+}
+
 void agent_clangd_code_provider::start_project_index() {
     if (repository_root_.empty()) return;
     if (project_index_started_ && session_->initialized()) return;

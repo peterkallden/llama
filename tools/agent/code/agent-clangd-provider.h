@@ -14,6 +14,7 @@ public:
     common_tool_execution_result symbol(const std::string & arguments_json);
     common_tool_execution_result references(const std::string & arguments_json);
     common_tool_execution_result call_hierarchy(const std::string & arguments_json);
+    agent_clangd_json status_snapshot() const;
 
 private:
     struct source_location {
@@ -34,5 +35,5 @@ private:
     std::unique_ptr<agent_clangd_session> session_;
     std::string repository_root_;
     std::string compile_commands_dir_;
-    bool project_index_started_ = false;
+    std::atomic<bool> project_index_started_{false};
 };

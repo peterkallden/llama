@@ -585,13 +585,95 @@ bool common_try_register_repository_tool_adapter(
     } else if (definition.executor_id == "builtin.repository.diff" && !bindings.repository_root.empty()) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
             std::string error; json arguments;
-            if (!common_adapter_parse_object(input, arguments, error) || arguments.size() > 1 || (arguments.contains("max_bytes") && !arguments["max_bytes"].is_number_integer())) { if (error.empty()) error = "repository.diff accepts only max_bytes"; return common_adapter_validation_failure("tool.repository.diff.invalid_arguments", std::move(error), "Repository diff arguments are invalid."); }
+            if (!common_adapter_parse_object(input, arguments, error) ||
+                    arguments.size() > 3 ||
+                    (arguments.contains("max_bytes") && !arguments["max_bytes"].is_number_integer()) ||
+                    (arguments.contains("path") && (!arguments["path"].is_string() || arguments["path"].get_ref<const std::string &>().empty() || arguments["path"].get_ref<const std::string &>().size() > 512 || arguments["path"].get_ref<const std::string &>().find('\0') != std::string::npos)) ||
+                    (arguments.contains("include_untracked") && !arguments["include_untracked"].is_boolean()))
+                return common_adapter_validation_failure("tool.repository.diff.invalid_arguments", "repository.diff accepts path, include_untracked and max_bytes");
+            for (auto it = arguments.begin(); it != arguments.end(); ++it)
+                if (it.key() != "path" && it.key() != "max_bytes" && it.key() != "include_untracked")
+                    return common_adapter_validation_failure("tool.repository.diff.invalid_arguments", "repository.diff contains an unknown argument");
             const int max_bytes = arguments.value("max_bytes", 32768);
             if (max_bytes < 1 || max_bytes > 65536) return common_adapter_validation_failure("tool.repository.diff.invalid_limit", "repository.diff max_bytes is out of bounds");
+            const std::string path = arguments.value("path", std::string{});
+            std::filesystem::path resolved;
+            if ((!path.empty() && std::filesystem::path(path).is_absolute()) || !repository_path(bindings.repository_root, path, resolved, error))
+                return common_adapter_validation_failure("tool.repository.diff.invalid_path", error.empty() ? "path must be repository-relative" : error);
+            const bool include_untracked = arguments.value("include_untracked", false);
+            std::vector<std::string> command = {"diff", "HEAD", "--no-ext-diff", "--no-color", "--unified=3", "--"};
+            if (!path.empty()) command.push_back(":(literal)" + path);
             std::string diff; bool truncated = false;
-            if (!git_read(bindings.repository_root, {"diff", "HEAD", "--no-ext-diff", "--no-color", "--unified=3", "--"}, diff, error, &truncated)) return common_adapter_execution_failure("tool.repository.diff.git_failed", std::move(error), "Git diff could not be read.");
+            if (!git_read(bindings.repository_root, command, diff, error, &truncated)) return common_adapter_execution_failure("tool.repository.diff.git_failed", std::move(error), "Git diff could not be read.");
+            size_t omitted = 0;
+            if (include_untracked) {
+                std::vector<std::string> list = {"ls-files", "--others", "--exclude-standard", "-z", "--"};
+                if (!path.empty()) list.push_back(":(literal)" + path);
+                std::string names; bool names_truncated = false;
+                if (!git_read(bindings.repository_root, list, names, error, &names_truncated)) return common_adapter_execution_failure("tool.repository.diff.git_failed", std::move(error), "Untracked files could not be listed.");
+                truncated = truncated || names_truncated;
+                for (size_t pos = 0; pos < names.size();) {
+                    const auto end = names.find('\0', pos);
+                    if (end == std::string::npos) { truncated = true; break; }
+                    const auto name = names.substr(pos, end - pos); pos = end + 1;
+                    std::filesystem::path file_path;
+                    std::error_code ec;
+                    if (!repository_path(bindings.repository_root, name, file_path, error) ||
+                            !std::filesystem::is_regular_file(std::filesystem::symlink_status(std::filesystem::path(bindings.repository_root) / name, ec)) || ec) { ++omitted; continue; }
+                    if (diff.size() >= static_cast<size_t>(max_bytes)) { truncated = true; break; }
+                    std::ifstream file(file_path, std::ios::binary);
+                    std::string content(static_cast<size_t>(max_bytes) + 1, '\0');
+                    if (!file) { ++omitted; continue; }
+                    file.read(&content[0], content.size()); content.resize(static_cast<size_t>(file.gcount()));
+                    if (file.bad()) { ++omitted; continue; }
+                    const bool partial_file = content.size() > static_cast<size_t>(max_bytes);
+                    bool binary = content.find('\0') != std::string::npos;
+                    if (partial_file && !binary) {
+                        for (int tail = 0; tail < 4; ++tail) {
+                            try { (void) json(content).dump(); break; }
+                            catch (const json::exception &) { if (!content.empty()) content.pop_back(); }
+                        }
+                    }
+                    try { (void) json(content).dump(); (void) json(name).dump(); } catch (const json::exception &) { binary = true; }
+                    const std::string safe_name = json(name).dump(-1, ' ', false, json::error_handler_t::replace);
+                    diff += "\n--- untracked " + safe_name + " ---\n";
+                    if (binary) { diff += "Binary or non-UTF-8 file omitted\n"; ++omitted; continue; }
+                    if (partial_file) { diff += "Untracked file preview (incomplete):\n"; truncated = true; }
+                    else {
+                        const auto lines = std::count(content.begin(), content.end(), '\n') +
+                            (!content.empty() && content.back() != '\n' ? 1 : 0);
+                        diff += "--- /dev/null\n+++ " + safe_name + "\n@@ -0,0 +1," + std::to_string(lines) + " @@\n";
+                    }
+                    for (size_t offset = 0; offset < content.size() && diff.size() <= static_cast<size_t>(max_bytes);) {
+                        const auto newline = content.find('\n', offset);
+                        const auto end = newline == std::string::npos ? content.size() : newline + 1;
+                        diff += "+" + content.substr(offset, end - offset);
+                        if (newline == std::string::npos) diff += "\n\\ No newline at end of file\n";
+                        offset = end;
+                    }
+                }
+            }
             if (diff.size() > static_cast<size_t>(max_bytes)) { diff.resize(max_bytes); truncated = true; }
-            return common_adapter_success_json({{"summary", diff}, {"truncated", truncated}});
+            // A byte limit may split a UTF-8 sequence. Keep the response valid JSON.
+            while (!diff.empty()) { try { (void) json(diff).dump(); break; } catch (const json::exception &) { diff.pop_back(); truncated = true; } }
+            json result = {{"summary", diff}, {"truncated", truncated}, {"base", "HEAD"},
+                {"path", path.empty() ? json(nullptr) : json(path)}, {"include_untracked", include_untracked}, {"omitted_files", omitted}};
+            constexpr size_t output_limit = 65536;
+            if (result.dump().size() > output_limit) {
+                size_t low = 0, high = diff.size();
+                result["truncated"] = true;
+                while (low < high) {
+                    const size_t mid = low + (high - low + 1) / 2;
+                    auto prefix = diff.substr(0, mid);
+                    while (!prefix.empty()) { try { (void) json(prefix).dump(); break; } catch (const json::exception &) { prefix.pop_back(); } }
+                    result["summary"] = prefix;
+                    if (result.dump().size() <= output_limit) low = mid; else high = mid - 1;
+                }
+                auto prefix = diff.substr(0, low);
+                while (!prefix.empty()) { try { (void) json(prefix).dump(); break; } catch (const json::exception &) { prefix.pop_back(); } }
+                result["summary"] = prefix;
+            }
+            return common_adapter_success_json(result);
         }, error);
     } else if (definition.executor_id == "builtin.repository.log" && !bindings.repository_root.empty()) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
