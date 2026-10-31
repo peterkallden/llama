@@ -803,10 +803,13 @@ json context_graph_node_json(const common_context_graph_node & node) {
         {"symbol_key", node.symbol_key}, {"observations", observations}};
 }
 json context_graph_edge_json(const common_context_graph_edge & edge) {
+    json assertions = json::array();
+    for (const auto & a : edge.assertions) assertions.push_back({{"source", a.source}, {"rationale", a.rationale},
+        {"evidence_refs", a.evidence_refs}, {"source_revision", a.source_revision}});
     return {{"id", edge.id}, {"from", edge.from}, {"to", edge.to}, {"relation", edge.relation},
         {"status", edge.status}, {"source", edge.source}, {"rationale", edge.rationale},
         {"evidence_refs", edge.evidence_refs}, {"source_revision", edge.source_revision}, {"version", edge.version},
-        {"retraction_rationale", edge.retraction_rationale}};
+        {"retraction_rationale", edge.retraction_rationale}, {"assertions", assertions}};
 }
 }
 
@@ -851,6 +854,9 @@ bool common_agent_cozo_data_store::load_context_graph(const common_agent_scope &
                     edge.rationale = item.value("rationale", std::string{}); edge.evidence_refs = item.value("evidence_refs", std::vector<std::string>{});
                     edge.source_revision = item.value("source_revision", std::string{}); edge.version = item.value("version", uint64_t(1));
                     edge.retraction_rationale = item.value("retraction_rationale", std::string{});
+                    if (item.contains("assertions")) for (const auto & a : item.at("assertions"))
+                        edge.assertions.push_back({a.at("source").get<std::string>(), a.at("rationale").get<std::string>(),
+                            a.at("evidence_refs").get<std::vector<std::string>>(), a.at("source_revision").get<std::string>()});
                     out.edges.push_back(std::move(edge));
                 }
             }
@@ -947,11 +953,17 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
                 edge.source != "model" || (edge.status != "proposed" && edge.status != "retraction_proposed") ||
                 edge.relation.empty() || edge.relation.size() > 64 || edge.relation.find('\0') != std::string::npos ||
                 edge.evidence_refs.size() > 16 || edge.source_revision.size() > 256 || edge.retraction_rationale.size() > 512 ||
-                (edge.status == "proposed" && !edge.retraction_rationale.empty()) || edge.version == 0) {
+                (edge.status == "proposed" && !edge.retraction_rationale.empty()) || edge.assertions.size() > 64 || edge.version == 0) {
             error = "context graph edge is invalid"; return common_agent_publication_status::invalid;
         }
         for (const auto & ref : edge.evidence_refs) if (ref.empty() || ref.size() > 512) {
             error = "context graph evidence reference is invalid"; return common_agent_publication_status::invalid;
+        }
+        for (const auto & a : edge.assertions) {
+            if (a.source != "model" || a.rationale.empty() || a.rationale.size() > 512 || a.source_revision.size() > 256 || a.evidence_refs.size() > 16 ||
+                    std::any_of(a.evidence_refs.begin(), a.evidence_refs.end(), [](const auto & ref) { return ref.empty() || ref.size() > 512; })) {
+                error = "context graph assertion is invalid"; return common_agent_publication_status::invalid;
+            }
         }
         const auto previous = std::find_if(current.edges.begin(), current.edges.end(), [&](const auto & e) { return e.id == edge.id; });
         if (previous == current.edges.end() && (edge.version != 1 || edge.status != "proposed")) {
@@ -962,8 +974,12 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
         const auto found = std::find_if(input.edges.begin(), input.edges.end(), [&](const auto & e) { return e.id == previous.id; });
         if (found == input.edges.end()) { error = "graph history cannot be deleted"; return common_agent_publication_status::invalid; }
         if (context_graph_edge_json(*found) != context_graph_edge_json(previous)) {
-            auto allowed = previous; allowed.status = "retraction_proposed"; allowed.retraction_rationale = found->retraction_rationale; ++allowed.version;
-            if (previous.status != "proposed" || found->retraction_rationale.empty() || context_graph_edge_json(*found) != context_graph_edge_json(allowed)) {
+            auto allowed = previous;
+            const bool append = previous.status == "proposed" && found->status == "proposed" && found->assertions.size() == previous.assertions.size() + 1;
+            if (append) allowed.assertions.push_back(found->assertions.back());
+            else { allowed.status = "retraction_proposed"; allowed.retraction_rationale = found->retraction_rationale; }
+            ++allowed.version;
+            if (previous.status != "proposed" || (!append && found->retraction_rationale.empty()) || context_graph_edge_json(*found) != context_graph_edge_json(allowed)) {
                 error = "unsupported graph edge update"; return common_agent_publication_status::invalid;
             }
         }

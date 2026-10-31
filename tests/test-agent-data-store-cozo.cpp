@@ -108,6 +108,25 @@ int main() {
     TEST_ASSERT(!store.find_context_graph_edges(graph_scope, 2, "", "associated_with", "", graph_ids, error));
     auto missing_graph_scope = graph_scope; missing_graph_scope.project_id.clear();
     TEST_ASSERT(!store.get_context_graph(missing_graph_scope, published_graph, error));
+    auto assertion_scope = graph_scope; assertion_scope.project_id = "assertion-contract-test";
+    common_context_graph_state assertion_graph;
+    TEST_ASSERT(store.get_context_graph(assertion_scope, assertion_graph, error));
+    assertion_graph.revision = 1;
+    assertion_graph.nodes = {{"node:a", "component", "a", "", 0, "", "", "", {}},
+                             {"node:b", "component", "b", "", 0, "", "", "", {}}};
+    common_context_graph_edge assertion_edge;
+    assertion_edge.id = "edge:test"; assertion_edge.from = "node:a"; assertion_edge.to = "node:b";
+    assertion_edge.relation = "depends_on"; assertion_edge.rationale = "first";
+    assertion_edge.assertions.push_back({"model", "first", {"source:one"}, "r1"});
+    assertion_graph.edges.push_back(assertion_edge);
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 0, assertion_graph, published_graph, error) == common_agent_publication_status::published);
+    assertion_graph.revision = 2; assertion_graph.edges[0].version = 2;
+    assertion_graph.edges[0].assertions.push_back({"model", "second", {"source:two"}, "r2"});
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 1, assertion_graph, published_graph, error) == common_agent_publication_status::published);
+    auto altered_assertion = assertion_graph; altered_assertion.revision = 3; altered_assertion.edges[0].version = 3;
+    altered_assertion.edges[0].assertions[0].rationale = "tampered";
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 2, altered_assertion, published_graph, error) == common_agent_publication_status::invalid);
+    TEST_ASSERT(store.get_context_graph(assertion_scope, published_graph, error) && published_graph.edges[0].assertions.size() == 2);
     common_agent_scope symbol_scope = graph_scope;
     symbol_scope.project_id = "symbol-observation-test";
     common_context_graph_state symbols;
@@ -512,6 +531,10 @@ int main() {
     TEST_ASSERT(store.get_context_graph(symbol_scope, reloaded_symbols, error) && reloaded_symbols.revision == 2 &&
         reloaded_symbols.nodes.size() == 1 && reloaded_symbols.nodes[0].symbol_key == "clang:usr:f-int" &&
         reloaded_symbols.nodes[0].observations.size() == 2 && reloaded_symbols.nodes[0].observations[1].line == 20);
+    common_context_graph_state reloaded_assertions;
+    TEST_ASSERT(store.get_context_graph(assertion_scope, reloaded_assertions, error) && reloaded_assertions.revision == 2 &&
+        reloaded_assertions.edges.size() == 1 && reloaded_assertions.edges[0].assertions.size() == 2 &&
+        reloaded_assertions.edges[0].assertions[1].evidence_refs == std::vector<std::string>{"source:two"});
     TEST_ASSERT(std::any_of(published_graph.nodes.begin(), published_graph.nodes.end(), [](const auto & node) {
         return node.kind == "actor" && node.source_ref == "case:a/entity:alice";
     }));

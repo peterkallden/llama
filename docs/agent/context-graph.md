@@ -39,6 +39,18 @@ Relation names are strings, up to 64 bytes. Suggested names include `calls`,
 are accepted. Names are compared exactly: `authored` and `authored_by` are not
 automatically treated as synonyms or inverses.
 
+New relations use a stable identity derived from the project scope, endpoints
+and exact relation name. Repeating a proposal with different evidence or a
+different rationale adds an unverified model assertion to that relation;
+repeating identical evidence reuses the existing assertion. A pending
+retraction prevents adding further assertions until it has been resolved.
+Each relation retains up to 64 assertions; the host reports an error if the
+limit is reached.
+The response includes a bounded assertion list and an explicit truncation flag.
+Use `graph.get` with `assertion_offset: 0` and follow `assertion_page.next_offset`
+to inspect all saved assertions for a relation.
+Older test graphs are not migrated to the new relation identity.
+
 Use `graph.find` to resolve names to project graph IDs. Then `graph.search`
 accepts any combination of `from`, `to`, `relation`, `from_kind`, `to_kind`
 and `status` (at least one filter is required); `limit` defaults to 32 and is

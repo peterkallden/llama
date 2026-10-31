@@ -697,6 +697,12 @@ int main() {
         const auto edge_id = item["edge"]["id"].get<std::string>();
         const auto from = item["edge"]["from"].get<std::string>();
         const auto to = item["edge"]["to"].get<std::string>();
+        const auto additional = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",from}}}, {"to", {{"id",to}}}, {"relation","depends_on"},
+            {"rationale","another source"}, {"evidence_refs", {"source:two"}}, {"source_revision","r2"}}.dump()});
+        assert(additional.ok && nlohmann::json::parse(additional.output)["edge"]["id"] == edge_id &&
+            nlohmann::json::parse(additional.output)["edge"]["assertions"].size() == 2 &&
+            nlohmann::json::parse(additional.output)["edge"]["version"] == 2);
         const auto graph_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
             "change planning selection", 1800, true);
         assert(!graph_context.empty());
@@ -711,7 +717,7 @@ int main() {
         assert(contextual.ok && nlohmann::json::parse(contextual.output)["nodes"].size() == 2);
         auto expanded = graph_registry.execute({"graph.expand", nlohmann::json{{"id",from},{"depth",1}}.dump()});
         assert(expanded.ok && nlohmann::json::parse(expanded.output)["edges"].size() == 1);
-        auto withdrawn = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",1},{"rationale","recheck"}}.dump()});
+        auto withdrawn = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",2},{"rationale","recheck"}}.dump()});
         assert(withdrawn.ok && nlohmann::json::parse(withdrawn.output)["edge"]["status"] == "retraction_proposed" &&
             nlohmann::json::parse(withdrawn.output)["edge"]["rationale"] == "inspect runtime linkage" &&
             nlohmann::json::parse(withdrawn.output)["edge"]["retraction_rationale"] == "recheck");

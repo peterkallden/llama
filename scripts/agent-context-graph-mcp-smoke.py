@@ -66,6 +66,14 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
             "relation": "depends_on", "rationale": "check the runtime boundary"})
         edge = created["edge"]
         assert edge["status"] == "proposed" and edge["source"] == "model"
+        extra = call(33, "graph.link.propose", {"from": {"id": edge["from"]}, "to": {"id": edge["to"]},
+                     "relation": "depends_on", "rationale": "another source", "evidence_refs": ["source:two"]})["edge"]
+        assert extra["id"] == edge["id"] and extra["version"] == 2 and len(extra["assertions"]) == 2
+        duplicate = call(34, "graph.link.propose", {"from": {"id": edge["from"]}, "to": {"id": edge["to"]},
+                         "relation": "depends_on", "rationale": "another source", "evidence_refs": ["source:two"]})["edge"]
+        assert duplicate["version"] == 2 and len(duplicate["assertions"]) == 2
+        relations = call(35, "graph.search", {"from": edge["from"], "relation": "depends_on"})["edges"]
+        assert len(relations) == 1 and relations[0]["id"] == edge["id"] and len(relations[0]["assertions"]) == 2
         expanded = call(4, "graph.expand", {"id": edge["from"]})
         assert len(expanded["edges"]) == 1 and expanded["visualization"]["kind"] == "relationship"
         actor = call(21, "graph.link.propose", {"from": {"kind": "actor", "name": "Alice", "source_ref": "case:a/entity:alice"},
@@ -102,10 +110,14 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
         assert first_page["total"] == 10 and first_page["items"][0]["line"] == 10 and first_page["next_offset"] == 8
         last_page = call(32, "graph.get", {"id": symbol_edge["from"], "observation_offset": 8})["observation_page"]
         assert len(last_page["items"]) == 2 and last_page["items"][-1]["line"] == 28 and last_page["next_offset"] is None
-        retracted = call(6, "graph.retract.propose", {"id": edge["id"], "expected_version": 1, "rationale": "recheck"})
+        retracted = call(6, "graph.retract.propose", {"id": edge["id"], "expected_version": 2, "rationale": "recheck"})
         assert retracted["edge"]["status"] == "retraction_proposed"
         assert retracted["edge"]["rationale"] == "check the runtime boundary"
         assert retracted["edge"]["retraction_rationale"] == "recheck"
+        blocked = rpc(36, "tools/call", {"name": "graph.link.propose", "arguments": {
+            "from": {"id": edge["from"]}, "to": {"id": edge["to"]},
+            "relation": "depends_on", "rationale": "new assertion during retraction"}})
+        assert blocked.get("isError") or not blocked.get("structuredContent", {}).get("ok"), blocked
     finally:
         stop(p)
     p, rpc, call = start("project-b")
@@ -121,7 +133,12 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
         assert len(call(9, "graph.find", {"query": "planning"})["nodes"]) == 1
         saved_edge = call(10, "graph.get", {"id": edge["id"]})["edge"]
         assert saved_edge["status"] == "retraction_proposed" and saved_edge["rationale"] == "check the runtime boundary"
+        assert len(saved_edge["assertions"]) == 2 and saved_edge["assertions"][1]["evidence_refs"] == ["source:two"]
         assert saved_edge["retraction_rationale"] == "recheck"
+        first_assertion = call(11, "graph.get", {"id": edge["id"], "assertion_offset": 0})["assertion_page"]
+        assert first_assertion["total"] == 2 and first_assertion["next_offset"] == 1
+        second_assertion = call(12, "graph.get", {"id": edge["id"], "assertion_offset": 1})["assertion_page"]
+        assert second_assertion["items"][0]["evidence_refs"] == ["source:two"] and second_assertion["next_offset"] is None
     finally:
         stop(p)
     if repository:

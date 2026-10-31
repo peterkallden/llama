@@ -35,11 +35,26 @@ json node_prompt_json(const common_context_graph_node & node) {
     return value;
 }
 json edge_json(const common_context_graph_edge & e) {
+    json assertions = json::array();
+    size_t bytes = 0;
+    for (const auto & a : e.assertions) {
+        json item = {{"source", a.source}, {"rationale", a.rationale}, {"evidence_refs", a.evidence_refs}, {"source_revision", a.source_revision}};
+        const auto size = item.dump().size();
+        if (assertions.size() >= 8 || bytes + size > 12000) break;
+        bytes += size; assertions.push_back(std::move(item));
+    }
     return {{"id", e.id}, {"from", e.from}, {"to", e.to}, {"relation", e.relation},
         {"status", e.status}, {"source", e.source}, {"rationale", e.rationale},
         {"evidence_refs", e.evidence_refs}, {"source_revision", e.source_revision}, {"version", e.version},
-        {"retraction_rationale", e.retraction_rationale},
+        {"retraction_rationale", e.retraction_rationale}, {"assertions", assertions}, {"assertions_truncated", assertions.size() < e.assertions.size()},
         {"freshness", "unverified"}};
+}
+json edge_prompt_json(const common_context_graph_edge & edge) {
+    auto value = edge_json(edge);
+    value.erase("assertions");
+    value.erase("assertions_truncated");
+    value["assertion_count"] = edge.assertions.size();
+    return value;
 }
 bool text_value(const json & v, const char * key, size_t maximum, bool required = true) {
     if (!v.contains(key)) return !required;
@@ -169,7 +184,7 @@ std::string common_context_graph_prompt_projection(common_agent_data_store & sto
             if (result["nodes"].size() >= 8) { result["truncated"] = true; break; }
             ids.insert(node->id); result["nodes"].push_back(node_prompt_json(*node));
         }
-        if (ids.count(edge.from) && ids.count(edge.to)) result["edges"].push_back(edge_json(edge));
+        if (ids.count(edge.from) && ids.count(edge.to)) result["edges"].push_back(edge_prompt_json(edge));
     }
     budget = std::min<size_t>(budget, 1800);
     while (result.dump().size() > budget && !result["edges"].empty()) { result["edges"].erase(result["edges"].end() - 1); result["truncated"] = true; }
@@ -223,9 +238,12 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             if (!text_value(args, "id", 256)) return common_adapter_validation_failure("tool.graph.invalid_arguments", "id is required");
             if (args.contains("observation_offset") && (!args["observation_offset"].is_number_unsigned() || args["observation_offset"] > 256))
                 return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid observation offset");
+            if (args.contains("assertion_offset") && (!args["assertion_offset"].is_number_unsigned() || args["assertion_offset"] > 64))
+                return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid assertion offset");
             const auto id = args["id"].get<std::string>();
             const auto * node = find_node(graph, id);
             if (node) {
+                if (args.contains("assertion_offset")) return common_adapter_validation_failure("tool.graph.invalid_arguments", "assertion pagination requires an edge");
                 json result = {{"revision", graph.revision}, {"node", node_json(*node)}};
                 if (args.contains("observation_offset")) {
                     const auto offset = args["observation_offset"].get<size_t>();
@@ -242,7 +260,23 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             }
             if (args.contains("observation_offset")) return common_adapter_validation_failure("tool.graph.invalid_arguments", "observation pagination requires a node");
             const auto edge = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto & item) { return item.id == id; });
-            if (edge != graph.edges.end()) return common_adapter_success_json({{"revision", graph.revision}, {"edge", edge_json(*edge)}});
+            if (edge != graph.edges.end()) {
+                json result = {{"revision", graph.revision}, {"edge", edge_json(*edge)}};
+                if (args.contains("assertion_offset")) {
+                    result["edge"] = {{"id", edge->id}, {"from", edge->from}, {"to", edge->to},
+                        {"relation", edge->relation}, {"status", edge->status}, {"version", edge->version}};
+                    const auto offset = args["assertion_offset"].get<size_t>();
+                    json page = json::array();
+                    if (offset < edge->assertions.size()) {
+                        const auto & a = edge->assertions[offset];
+                        page.push_back({{"source", a.source}, {"rationale", a.rationale}, {"evidence_refs", a.evidence_refs}, {"source_revision", a.source_revision}});
+                    }
+                    const auto end = std::min(edge->assertions.size(), offset + page.size());
+                    result["assertion_page"] = {{"offset", offset}, {"items", page}, {"total", edge->assertions.size()},
+                        {"next_offset", end < edge->assertions.size() ? json(end) : json(nullptr)}};
+                }
+                return common_adapter_success_json(result);
+            }
             return common_adapter_not_found_failure("tool.graph.not_found", "graph item is unavailable", "Graph item is unavailable.");
         }
         if (operation == "graph.search") {
@@ -351,13 +385,27 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             common_context_graph_edge edge;
             edge.from = from; edge.to = to; edge.relation = relation; edge.rationale = args["rationale"].get<std::string>();
             edge.evidence_refs = refs; edge.source_revision = args.value("source_revision", std::string{});
-            edge.id = identity("edge:", json::array({bindings.tool_scope.namespace_id, bindings.tool_scope.project_id, from, relation, to, edge.rationale, refs, edge.source_revision}));
-            const auto prior = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto & item) { return item.id == edge.id; });
+            edge.id = identity("edge:", json::array({bindings.tool_scope.namespace_id, bindings.tool_scope.project_id, from, relation, to}));
+            edge.assertions.push_back({"model", edge.rationale, refs, edge.source_revision});
+            auto prior = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto & item) { return item.id == edge.id; });
             if (prior != graph.edges.end()) {
+                const auto & assertion = edge.assertions.front();
+                const bool known = std::any_of(prior->assertions.begin(), prior->assertions.end(), [&](const auto & a) {
+                    return a.source == assertion.source && a.rationale == assertion.rationale &&
+                        a.evidence_refs == assertion.evidence_refs && a.source_revision == assertion.source_revision;
+                });
+                if (!known && prior->status != "proposed")
+                    return common_adapter_failure("tool.graph.conflict", common_tool_failure_class::conflict, true,
+                        "The relation has a pending retraction.", "cannot append an assertion during retraction");
+                if (!known) {
+                    if (prior->assertions.size() >= 64) return common_adapter_validation_failure("tool.graph.limit", "assertion limit reached");
+                    prior->assertions.push_back(assertion);
+                    ++prior->version;
+                }
                 const auto existing = edge_json(*prior);
                 json new_nodes = json::array();
                 for (const auto & node : graph.nodes) new_nodes.push_back(node_json(node));
-                if (new_nodes == old_nodes) return common_adapter_success_json({{"revision", graph.revision}, {"edge", existing}, {"reused", true}});
+                if (new_nodes == old_nodes && known) return common_adapter_success_json({{"revision", graph.revision}, {"edge", existing}, {"reused", true}});
                 const auto expected = graph.revision; graph.revision++;
                 common_context_graph_state published;
                 const auto result = bindings.data_store->publish_context_graph(bindings.tool_scope, expected, graph, published, error);
