@@ -1744,6 +1744,7 @@ int main(int argc, char ** argv) {
             surface_state.extra_model_trials = zoom_trials.size();
             surface_state.next_candidate_index = zoom_trials.size();
             surface_state.evidence_rank = evidence_depth.effective_rank;
+            surface_state.evidence_rank_available = true;
             surface_state.local_layers = surface_layers;
             surface_state.completed_trials = zoom_trials;
             surface_state.selection = zoom_selection;
@@ -2005,6 +2006,7 @@ int main(int argc, char ** argv) {
                 surface_state.parent_surface_revision = 1;
                 surface_state.search_rank = 2;
                 surface_state.evidence_rank = evidence_depth.effective_rank;
+                surface_state.evidence_rank_available = true;
                 surface_state.surface_origin = "orthogonal_search";
                 surface_state.parent_surface_ref = "flydelta://state/model-repair/bootstrap-zoom";
                 surface_state.local_layers = surface_layers;
@@ -2495,6 +2497,7 @@ int main(int argc, char ** argv) {
                 next_state.parent_surface_revision = surface_state.parent_surface_revision;
                 next_state.search_rank = surface_state.search_rank;
                 next_state.evidence_rank = surface_state.evidence_rank;
+                next_state.evidence_rank_available = surface_state.evidence_rank_available;
                 next_state.surface_origin = surface_state.surface_origin;
                 next_state.parent_surface_ref = surface_state.parent_surface_ref;
                 next_state.local_layers = surface_state.local_layers;

@@ -84,6 +84,7 @@ bool common_flydelta_decide_subspace_utility(
         return false;
     }
     bool qualified = false;
+    bool has_safe_observation = false;
     for (const auto & observation : observations) {
         if (!common_flydelta_subspace_utility_observation_validate(observation, error)) return false;
         if (observation.alpha_response_available &&
@@ -94,10 +95,12 @@ bool common_flydelta_decide_subspace_utility(
             return true;
         }
         if (!observation.safe_to_continue) {
+            if (observation.arm_local_safety && !observation.alpha_response_available) continue;
             decision.action = common_flydelta_utility_gate_action::stop;
             decision.history = {0, history.nonqualifying_streak + 1};
             return true;
         }
+        has_safe_observation = true;
         const bool geometry_ok = !observation.geometry_available || safe_geometry(observation.geometry, config);
         const bool alpha_can_continue = !observation.alpha_response_available ||
             observation.alpha_range_not_exhausted ||
@@ -106,6 +109,11 @@ bool common_flydelta_decide_subspace_utility(
                 observation.decision_margin_delta > required_margin(current_phase, config)) {
             qualified = true;
         }
+    }
+    if (!has_safe_observation) {
+        decision.action = common_flydelta_utility_gate_action::stop;
+        decision.history = {0, history.nonqualifying_streak + 1};
+        return true;
     }
     decision.utility_qualified = qualified;
     decision.history = qualified

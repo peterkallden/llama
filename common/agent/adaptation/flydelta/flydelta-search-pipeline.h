@@ -157,6 +157,7 @@ struct common_flydelta_search_pipeline_result {
     // evaluator uses it for UtilityGate navigation only.
     bool alpha_response_available = false;
     common_flydelta_alpha_response_selection alpha_response;
+    bool orthogonal_direction_available = false;
 };
 
 // Choose the bounded full-generation frontier. Global exploration is only

@@ -1960,9 +1960,9 @@ or synthesis without putting family policy in the generic runtime. Existing
 jobs with an explicit group reference are preserved.
 
 For resumable rank-one BootstrapZoom/AdaptiveAlpha work, the queue transports
-only `bootstrap_zoom_state_ref`. For later rank-one plateau, orthogonal-search or
-augmentation slices, it transports the separate opaque `search_state_ref`;
-augmentation may additionally use the explicit
+`bootstrap_zoom_state_ref` and, when the host persists the experiment plan,
+the separate opaque `search_state_ref`. Plateau and orthogonal-search slices
+use the same orchestration reference; augmentation may additionally use the explicit
 `representation_augmentation_state_ref`.
 The evaluator's state-aware callback resolves
 that opaque reference before the next bounded slice and persists a new,
@@ -1997,6 +1997,8 @@ comparable across worker slices without allowing a search-derived residual to
 pretend that host-certified evidence became rank two. A useful surface may be
 re-centered locally by Whirlpool, but it remains experimental until the normal
 host-verifier and lifecycle gates classify it.
+The availability flag distinguishes a measured evidence rank, including zero,
+from legacy state whose historical default did not establish a rank.
 
 For `run_orthogonal_search`, the common layer first converts the persisted
 BootstrapZoom state into a typed, reference-free orthogonal-search input. It
@@ -2007,6 +2009,17 @@ bounded fresh-context orthogonal probe slice and returns its typed result
 through the existing state-aware pipeline callback. The worker transports and
 persists that result; it does not resolve model state or execute the
 orthogonal probes itself.
+
+The production evaluator records bounded plateau rounds in the orchestration
+state from completed safe arm observations with comparable decision margins.
+It preserves the effective evidence rank independently of search rank. Older
+states without a recorded rank or rounds do not imply a plateau. A plateau can
+schedule orthogonal search only when the ordinary utility gate permits
+continuation, the saved profiles produce an experimental orthogonal direction,
+and the remaining model-call budget admits the eight-row control wave. The
+daemon reserves that wave in the existing execution journal before inference;
+an interrupted attempt remains visible as unresolved physical work. The new
+surface does not grant learning or promotion credit.
 
 #### Incremental aggregation and search depth
 

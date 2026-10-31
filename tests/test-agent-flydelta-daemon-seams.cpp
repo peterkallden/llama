@@ -254,6 +254,38 @@ int main() {
     common_flydelta_evaluator_config localization_config;
     common_flydelta_evaluator_callbacks localization_callbacks;
     CHECK(daemon_flydelta_register_evaluator(provider, localization_config, localization_callbacks, error));
+    common_flydelta_experiment_job scoped_job;
+    scoped_job.id = "job:scope-state";
+    scoped_job.seed.scope = job_scope;
+    common_flydelta_bootstrap_zoom_state scoped_state;
+    scoped_state.behavior_key = "behavior:scope-state";
+    scoped_state.model_profile_fingerprint = "model:seams";
+    scoped_state.capture_layout_revision = "layer-input:v1";
+    scoped_state.anchor_layer = 2;
+    scoped_state.local_layers = {2};
+    scoped_state.selected_scale = 0.1f;
+    std::string bootstrap_ref;
+    CHECK(localization_callbacks.persist_bootstrap_zoom_state_for_job(
+        scoped_job, scoped_state, bootstrap_ref, error));
+    common_flydelta_experiment_plan scoped_plan;
+    scoped_plan.continuation.region.layer_indices = {2};
+    scoped_plan.continuation.region.anchor_layer_index = 2;
+    scoped_plan.continuation.region.total_scale = 0.1f;
+    scoped_plan.continuation.region.per_layer_scale = 0.1f;
+    std::string orchestration_ref;
+    CHECK(localization_callbacks.persist_search_orchestration_state_for_job(
+        scoped_job, scoped_plan, {}, orchestration_ref, error));
+    provider->bootstrap_state_by_continuation.clear();
+    provider->bootstrap_state_by_orchestration_ref.clear();
+    common_flydelta_experiment_plan reloaded_plan;
+    common_flydelta_utility_history reloaded_history;
+    CHECK(localization_callbacks.resolve_search_orchestration_state_for_job(
+        scoped_job, orchestration_ref, reloaded_plan, reloaded_history, error));
+    CHECK(provider->bootstrap_state_by_orchestration_ref.at(orchestration_ref) == bootstrap_ref);
+    auto other_job = scoped_job;
+    other_job.seed.scope.session_id = "other";
+    CHECK(!localization_callbacks.resolve_search_orchestration_state_for_job(
+        other_job, orchestration_ref, reloaded_plan, reloaded_history, error));
     provider->resolve_bootstrap_zoom_state_for_job = [](const auto &, const std::string & ref,
             common_flydelta_bootstrap_zoom_state & state, std::string & callback_error) {
         callback_error.clear();

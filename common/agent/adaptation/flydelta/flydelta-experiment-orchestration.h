@@ -42,6 +42,13 @@ const char * common_flydelta_bootstrap_refinement_kind_name(
 const char * common_flydelta_experiment_phase_name(
         common_flydelta_experiment_phase phase);
 
+struct common_flydelta_rank1_plateau_round {
+    bool safe_to_continue = false;
+    size_t evaluated_arms = 0;
+    uint32_t anchor_layer = 0;
+    float best_margin_delta = 0.0f;
+};
+
 // The host resolves compatible deltas for continuation.region's layer, then
 // runs this bounded plan. This carries no learning or promotion authority.
 struct common_flydelta_experiment_plan {
@@ -71,6 +78,10 @@ struct common_flydelta_experiment_plan {
     // Set for the bounded experimental escape from a rank-one plateau. This
     // does not change evidence depth and does not imply a Shallow transition.
     bool run_orthogonal_search = false;
+    bool plateau_evidence_rank_available = false;
+    size_t plateau_evidence_rank = 0;
+    std::vector<common_flydelta_rank1_plateau_round> plateau_rounds;
+    bool plateau_escape_completed = false;
 };
 
 // Evidence controls search capacity; this policy controls whether observed
@@ -92,6 +103,7 @@ struct common_flydelta_utility_gate_config {
 
 struct common_flydelta_subspace_utility_observation {
     bool safe_to_continue = false;
+    bool arm_local_safety = false;
     bool decision_margin_available = false;
     float decision_margin_delta = 0.0f;
     bool geometry_available = false;
@@ -170,13 +182,6 @@ struct common_flydelta_rank1_plateau_config {
     float maximum_recent_gain_ratio = 0.075f;
     uint32_t maximum_region_span = 3;
     float shallow_rank_threshold = 1.5f;
-};
-
-struct common_flydelta_rank1_plateau_round {
-    bool safe_to_continue = false;
-    size_t evaluated_arms = 0;
-    uint32_t anchor_layer = 0;
-    float best_margin_delta = 0.0f;
 };
 
 enum class common_flydelta_rank1_plateau_action {
@@ -333,8 +338,9 @@ struct common_flydelta_bootstrap_zoom_config {
     float min_margin_improvement = 0.0001f;
 };
 
-// Coefficients are profile weights, one per layer, and must have unit L2
-// energy. The caller uses each layer's own compatible rank-one direction d_L:
+// Coefficients are signed profile weights, one per layer, and must have unit L2
+// energy. opposite_sign_control labels the control; it does not invert them.
+// The caller uses each layer's own compatible rank-one direction d_L:
 //   delta_h_L = total_scale * layer_weights[L] * d_L.
 struct common_flydelta_bootstrap_zoom_candidate {
     int schema_version = 1;
@@ -396,6 +402,7 @@ struct common_flydelta_bootstrap_zoom_state {
     uint32_t surface_revision = 1;
     uint32_t parent_surface_revision = 0;
     size_t search_rank = 1;
+    bool evidence_rank_available = false;
     float evidence_rank = 1.0f;
     std::string surface_origin = "bootstrap_rank1";
     std::string parent_surface_ref;

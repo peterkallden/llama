@@ -66,6 +66,7 @@ int main() {
     common_flydelta_utility_gate_config utility_config;
     common_flydelta_subspace_utility_observation utility;
     utility.safe_to_continue = true;
+
     utility.decision_margin_available = true;
     utility.decision_margin_delta = 0.2f;
     utility.geometry_available = true;
@@ -157,6 +158,22 @@ int main() {
     CHECK(!slice.plan_advanced && slice.next_action == common_flydelta_next_action::stop);
     utility.safe_to_continue = true;
 
+    auto unsafe_arm = utility;
+    unsafe_arm.safe_to_continue = false;
+    unsafe_arm.arm_local_safety = true;
+    CHECK(common_flydelta_orchestrate_search_slice(
+        plan, utility_config, {unsafe_arm, utility}, {}, slice, error));
+    CHECK(slice.next_action == common_flydelta_next_action::run_shallow_controls);
+    CHECK(common_flydelta_orchestrate_search_slice(
+        plan, utility_config, {utility, unsafe_arm}, {}, slice, error));
+    CHECK(slice.next_action == common_flydelta_next_action::run_shallow_controls);
+    CHECK(common_flydelta_orchestrate_search_slice(
+        plan, utility_config, {unsafe_arm}, {}, slice, error));
+    CHECK(slice.next_action == common_flydelta_next_action::stop);
+    unsafe_arm.arm_local_safety = false;
+    CHECK(common_flydelta_orchestrate_search_slice(
+        plan, utility_config, {utility, unsafe_arm}, {}, slice, error));
+    CHECK(slice.next_action == common_flydelta_next_action::stop);
     common_flydelta_rank1_plateau_config plateau_config;
     std::vector<common_flydelta_rank1_plateau_round> plateau_rounds = {
         {true, 2, 24, 0.100f},
@@ -287,7 +304,7 @@ int main() {
     CHECK(zoom[1].layer_indices == std::vector<uint32_t>({23, 24}));
     CHECK(zoom[2].layer_indices == std::vector<uint32_t>({24, 25}));
     CHECK(zoom[3].layer_indices == std::vector<uint32_t>({23, 24, 25}));
-    CHECK(zoom[4].opposite_sign_control);
+    CHECK(zoom[4].opposite_sign_control && zoom[4].layer_weights.front() < 0.0f);
 
     common_flydelta_bootstrap_zoom_trial first_trial;
     first_trial.candidate = zoom[0];
@@ -352,6 +369,7 @@ int main() {
             !prepared_arm.decision_margin_available);
     }
     CHECK(std::fabs(orthogonal_input.arms.front().geometric_response - 0.065f) < 1.0e-6f);
+    CHECK(orthogonal_input.arms.back().intervention[1] < 0.0f);
 
     common_flydelta_bootstrap_zoom_state surface_state;
     surface_state.behavior_key = "tool_choice/data_query";

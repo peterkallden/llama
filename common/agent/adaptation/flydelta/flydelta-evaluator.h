@@ -24,6 +24,8 @@
 struct common_flydelta_evaluator_config {
     common_flydelta_basis_config basis;
     common_flydelta_direction_search_config direction;
+    bool direction_identity_from_job = false;
+    size_t initial_search_model_call_limit = 0;
     common_flydelta_search_pipeline_config pipeline;
     common_flydelta_memory_config memory;
     common_flydelta_evidence_depth_config evidence_depth;

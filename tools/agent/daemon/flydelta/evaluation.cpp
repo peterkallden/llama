@@ -609,11 +609,10 @@ bool daemon_flydelta_register_evaluator(
     config.pipeline.whirlpool_max_trials = 4;
     config.pipeline.region_max_trials = 4;
     config.direction.dimension = provider->model_n_embd;
-    config.direction.layer_index = 1;
-    config.direction.behavior_key = "runtime/resource";
     config.direction.model_profile_fingerprint = provider->model_profile_fingerprint;
-    config.direction.execution_context_fingerprint = "runtime-resource-v0";
     config.direction.capture_layout_revision = provider->capture_layout_revision;
+    config.direction_identity_from_job = true;
+    config.initial_search_model_call_limit = provider->search_model_call_budget;
     callbacks = {};
     callbacks.run_evaluation = [provider](
             const common_flydelta_experiment_job & job,
@@ -921,12 +920,13 @@ bool daemon_flydelta_register_evaluator(
             state_error = "FlyDelta daemon received an unsupported post-Bootstrap phase";
             return false;
         }
-        std::string bootstrap_ref = job.bootstrap_zoom_state_ref;
-        if (bootstrap_ref.empty()) {
+        std::string bootstrap_ref;
+        {
             std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
             const auto it = provider->bootstrap_state_by_orchestration_ref.find(state_ref);
             if (it != provider->bootstrap_state_by_orchestration_ref.end()) bootstrap_ref = it->second;
         }
+        if (bootstrap_ref.empty()) bootstrap_ref = job.bootstrap_zoom_state_ref;
         if (bootstrap_ref.empty()) {
             state_error = "FlyDelta Bootstrap continuation requires a BootstrapZoom state ref";
             return false;
@@ -935,15 +935,65 @@ bool daemon_flydelta_register_evaluator(
         if (!resolve_bootstrap_state_for_job ||
                 !resolve_bootstrap_state_for_job(
                     job, bootstrap_ref, bootstrap, state_error)) return false;
+        if (plan.plateau_evidence_rank_available) {
+            bootstrap.evidence_rank_available = true;
+            bootstrap.evidence_rank = static_cast<float>(plan.plateau_evidence_rank);
+        }
+        common_flydelta_bootstrap_zoom_state next_bootstrap;
         if (plan.run_orthogonal_search) {
-            if (!daemon_flydelta_run_orthogonal_slice(
-                    provider, job, bootstrap, result, bootstrap, state_error)) return false;
+            constexpr size_t rows = common_flydelta_orthogonal_control_rows;
+            const size_t limit = plan.search_model_calls_used == 0 && plan.search_anchor_ref.empty()
+                ? provider->search_model_call_budget : plan.search_model_call_limit;
+            if (!provider->lifecycle_store || plan.search_model_calls_used > limit ||
+                    limit - plan.search_model_calls_used < rows) {
+                state_error = "FlyDelta orthogonal search exceeds its remaining execution budget";
+                return false;
+            }
+            std::vector<std::string> logical_ids;
+            const auto identity = hash_sha256_hex(job.id.data(), job.id.size()).substr(0, 32);
+            for (size_t index = 0; index < rows; ++index) {
+                logical_ids.push_back("orthogonal:" + identity + ":" + std::to_string(index));
+            }
+            common_flydelta_search_consumption consumption;
+            std::string attempt;
+            if (!common_flydelta_begin_search_execution(*provider->lifecycle_store, job,
+                    plan.search_model_calls_used, limit, logical_ids, "orthogonal-controls", 3,
+                    attempt, consumption, state_error)) return false;
+            const bool ran = daemon_flydelta_run_orthogonal_slice(
+                provider, job, bootstrap, result, next_bootstrap, state_error);
+            std::string finish_error;
+            if (!common_flydelta_finish_search_execution(*provider->lifecycle_store, job, attempt,
+                    ran ? rows : 0, ran, finish_error)) {
+                state_error = finish_error;
+                return false;
+            }
+            if (!ran) return false;
+            if (!common_flydelta_load_search_consumption(*provider->lifecycle_store, job,
+                    plan.search_model_calls_used, limit, consumption, state_error)) return false;
+            result.search_model_call_limit = limit;
+            result.search_model_calls_used = consumption.logical_used;
+            result.physical_rows_started = consumption.physical_rows_started;
+            result.physical_rows_completed = consumption.physical_rows_completed;
+            result.physical_rows_unresolved = consumption.physical_rows_unresolved;
         } else if (bootstrap.phase == common_flydelta_bootstrap_zoom_phase::adaptive_alpha) {
             if (!daemon_flydelta_run_adaptive_alpha_slice(
-                    provider, job, bootstrap, result, bootstrap, state_error)) return false;
+                    provider, job, bootstrap, result, next_bootstrap, state_error)) return false;
         } else if (!daemon_flydelta_run_bootstrap_zoom_slice(
-                provider, job, bootstrap, result, bootstrap, state_error)) {
+                provider, job, bootstrap, result, next_bootstrap, state_error)) {
             return false;
+        }
+        bootstrap = std::move(next_bootstrap);
+        if (!plan.run_orthogonal_search && !bootstrap.completed_trials.empty()) {
+            common_flydelta_orthogonal_search_config orthogonal_config;
+            common_flydelta_orthogonal_search_input input;
+            common_flydelta_orthogonal_search_result orthogonal;
+            std::string orthogonal_error;
+            if (common_flydelta_prepare_orthogonal_search_input(
+                    orthogonal_config, bootstrap, input, orthogonal_error) &&
+                    common_flydelta_build_orthogonal_search_direction(
+                        orthogonal_config, input.rank1_intervention, input.arms, orthogonal, orthogonal_error)) {
+                result.orthogonal_direction_available = orthogonal.available;
+            }
         }
         std::string persisted_bootstrap_ref;
         if (!persist_bootstrap_state_for_job || !persist_bootstrap_state_for_job(
@@ -951,6 +1001,7 @@ bool daemon_flydelta_register_evaluator(
         {
             std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
             provider->bootstrap_state_by_continuation[
+                daemon_flydelta_scope_fingerprint(job.seed.scope) + "\n" +
                 daemon_flydelta_continuation_key(plan)] = persisted_bootstrap_ref;
         }
         // The typed Bootstrap state is persisted by the evaluator's

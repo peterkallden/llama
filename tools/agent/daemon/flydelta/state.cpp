@@ -56,6 +56,7 @@ bool daemon_flydelta_bind_state_callbacks(
                     job, state, state_ref, state_error)) return false;
         std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
         provider->bootstrap_state_by_continuation[
+            daemon_flydelta_scope_fingerprint(job.seed.scope) + "\n" +
             daemon_flydelta_bootstrap_key(state)] = state_ref;
         return true;
     };
@@ -200,8 +201,21 @@ bool daemon_flydelta_bind_state_callbacks(
                         *it, job.seed.scope)) continue;
             if (!daemon_flydelta_orchestration_state_from_json(
                     it->payload_json, plan, history, state_error)) return false;
+            std::string bootstrap_ref;
+            try {
+                bootstrap_ref = json::parse(it->payload_json).value("bootstrap_state_ref", "");
+            } catch (...) {
+                state_error = "FlyDelta orchestration bootstrap reference is invalid";
+                return false;
+            }
             std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
             provider->orchestration_states[state_ref] = {plan, history};
+            if (!bootstrap_ref.empty()) {
+                provider->bootstrap_state_by_orchestration_ref[state_ref] = bootstrap_ref;
+                provider->bootstrap_state_by_continuation[
+                    daemon_flydelta_scope_fingerprint(job.seed.scope) + "\n" +
+                    daemon_flydelta_continuation_key(plan)] = bootstrap_ref;
+            }
             return true;
         }
         state_error = "FlyDelta orchestration state was not found in job scope";
@@ -223,6 +237,7 @@ bool daemon_flydelta_bind_state_callbacks(
         {
             std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
             const auto it = provider->bootstrap_state_by_continuation.find(
+                daemon_flydelta_scope_fingerprint(job.seed.scope) + "\n" +
                 daemon_flydelta_continuation_key(plan));
             if (it != provider->bootstrap_state_by_continuation.end()) bootstrap_ref = it->second;
         }

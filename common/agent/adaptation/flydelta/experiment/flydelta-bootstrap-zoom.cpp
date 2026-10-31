@@ -186,7 +186,7 @@ bool common_flydelta_bootstrap_zoom_state_validate(
             state.next_candidate_index > state.extra_model_trials || state.surface_revision == 0 ||
             state.parent_surface_revision >= state.surface_revision || state.search_rank == 0 ||
             state.search_rank > 4 || !finite_value(state.evidence_rank) ||
-            state.evidence_rank <= 0.0f || state.evidence_rank > 1024.0f ||
+            state.evidence_rank < 0.0f || state.evidence_rank > 1024.0f ||
             state.surface_origin.empty() || state.surface_origin.size() > 128 ||
             state.where_origin_ref.size() > 512 ||
             (!state.where_status.empty() && state.where_status != "inherited" &&

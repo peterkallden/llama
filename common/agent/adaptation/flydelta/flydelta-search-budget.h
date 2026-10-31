@@ -5,6 +5,11 @@
 
 #include <set>
 
+constexpr size_t common_flydelta_orthogonal_control_count = 4;
+constexpr size_t common_flydelta_orthogonal_full_generation_top_k = 2;
+constexpr size_t common_flydelta_orthogonal_control_rows =
+    2 + common_flydelta_orthogonal_control_count + common_flydelta_orthogonal_full_generation_top_k;
+
 struct common_flydelta_search_consumption {
     size_t logical_used = 0;
     size_t physical_rows_started = 0;

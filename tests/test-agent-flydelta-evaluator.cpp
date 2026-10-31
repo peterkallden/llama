@@ -5,9 +5,10 @@
 #include "agent/adaptation/flydelta/flydelta-trace-internal.h"
 
 #include <cmath>
+#include <iostream>
 #include <utility>
 
-#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
+#define CHECK(condition) do { if (!(condition)) { std::cerr << "check failed at line " << __LINE__ << '\n'; return __LINE__; } } while (false)
 
 static common_flydelta_experiment_job base_job(
         common_flydelta_experiment_job_kind kind, const std::string & id) {
@@ -302,6 +303,24 @@ int main() {
     CHECK(!result.search_budget.build_aggregate_directions &&
         !result.search_budget.allow_tfo_lite);
 
+    config.direction_identity_from_job = true;
+    config.direction.layer_index = 1;
+    config.direction.behavior_key = "placeholder";
+    config.direction.execution_context_fingerprint = "placeholder";
+    CHECK(common_flydelta_evaluate_job(direction, config, callbacks, result, error));
+    CHECK(result.aggregation.retained_samples.size() == 1);
+    CHECK(result.direction_candidates.front().layer_index == 4);
+    auto mismatched_direction = direction;
+    mismatched_direction.seed.behavior_key = "different";
+    CHECK(!common_flydelta_evaluate_job(mismatched_direction, config, callbacks, result, error));
+    mismatched_direction = direction;
+    mismatched_direction.seed.model_profile_fingerprint = "other-model";
+    CHECK(!common_flydelta_evaluate_job(mismatched_direction, config, callbacks, result, error));
+    config.direction_identity_from_job = false;
+    config.direction.layer_index = 4;
+    config.direction.behavior_key = direction.seed.behavior_key;
+    config.direction.execution_context_fingerprint = direction.seed.execution_context_fingerprint;
+
     // Queue execution can explicitly opt into experimental direction search
     // without weakening the strict learning-mode job above.
     auto experimental_direction = direction;
@@ -467,7 +486,10 @@ int main() {
         value = search_pipeline_result();
         return true;
     };
-    CHECK(common_flydelta_evaluate_job(pipeline, config, callbacks, result, error));
+    if (!common_flydelta_evaluate_job(pipeline, config, callbacks, result, error)) {
+        std::cerr << error << '\n';
+        return __LINE__;
+    }
     CHECK(result.processed_references == 1 && result.search_pipeline_results.size() == 1);
     CHECK(result.search_continuations.size() == 1);
     CHECK(result.search_continuations.front().region.anchor_layer_index == 24);
@@ -490,6 +512,56 @@ int main() {
         result.selected_candidate.estimator == common_flydelta_synthesis_estimator::direct &&
         result.selected_candidate.outcome == common_flydelta_counterfactual_outcome::unknown &&
         result.selected_candidate.verifier_known);
+
+    config.direction_identity_from_job = true;
+    callbacks.resolve_behavior_delta = [](const auto &, auto & delta, auto & credit, std::string &) {
+        delta = behavior_delta();
+        delta.layer_index = 24;
+        credit.experiment_id = "flydelta://experiment/search";
+        credit.candidate_id = "flydelta://candidate/search";
+        credit.fixture_id = "flydelta://fixture/search";
+        credit.outcome = common_flydelta_counterfactual_outcome::unknown;
+        credit.eligible_for_learning = false;
+        return true;
+    };
+    bool initial_plan_persisted = false;
+    callbacks.resolve_search_orchestration_state = [](const auto &, auto &, auto &, std::string &) {
+        return false;
+    };
+    callbacks.persist_search_orchestration_state = [&](const auto & saved_plan, const auto &, auto & ref, std::string &) {
+        initial_plan_persisted = saved_plan.continuation.region.anchor_layer_index == 24;
+        ref = "flydelta://state/orchestration/test";
+        return true;
+    };
+    if (!common_flydelta_evaluate_job(pipeline, config, callbacks, result, error)) {
+        std::cerr << error << '\n';
+        return __LINE__;
+    }
+    CHECK(initial_plan_persisted && result.search_state_ref == "flydelta://state/orchestration/test" &&
+        result.evidence_depth.experimental_samples == 1);
+    size_t bootstrap_persist_count = 0;
+    callbacks.run_search_pipeline_with_state = [&](const auto &, const auto *, auto & value,
+            auto & state, std::string &) {
+        value = search_pipeline_result();
+        state.behavior_key = pipeline.seed.behavior_key;
+        state.model_profile_fingerprint = pipeline.seed.model_profile_fingerprint;
+        state.capture_layout_revision = "layout:v1";
+        state.anchor_layer = 24;
+        state.local_layers = {24};
+        state.selected_scale = 0.1f;
+        return true;
+    };
+    callbacks.persist_bootstrap_zoom_state = [&](const auto & state, auto & ref, std::string &) {
+        ++bootstrap_persist_count;
+        if (bootstrap_persist_count == 2 && (!state.evidence_rank_available || state.evidence_rank != 0.0f)) return false;
+        ref = "flydelta://state/bootstrap-rank-" + std::to_string(bootstrap_persist_count);
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(pipeline, config, callbacks, result, error));
+    CHECK(bootstrap_persist_count == 2 && result.has_bootstrap_zoom_state &&
+        result.bootstrap_zoom_state.evidence_rank_available && result.bootstrap_zoom_state.evidence_rank == 0.0f &&
+        result.bootstrap_zoom_state_ref == "flydelta://state/bootstrap-rank-2");
+    config.direction_identity_from_job = false;
 
     auto resumable_pipeline = pipeline;
     resumable_pipeline.id = "flydelta://job/search-pipeline-resume";
@@ -621,6 +693,76 @@ int main() {
         result.next_action == common_flydelta_next_action::run_shallow_controls &&
         result.search_pipeline_results.size() == 1);
 
+    common_flydelta_experiment_plan plateau_plan;
+    plateau_plan.continuation.region.layer_indices = {24};
+    plateau_plan.continuation.region.anchor_layer_index = 24;
+    plateau_plan.depth = common_flydelta_search_depth::bootstrap;
+    plateau_plan.budget = common_flydelta_search_budget_for_depth(plateau_plan.depth);
+    plateau_plan.plateau_evidence_rank_available = true;
+    plateau_plan.plateau_evidence_rank = 1;
+    plateau_plan.plateau_rounds = {{true, 2, 24, 0.4f}, {true, 2, 24, 0.4f}};
+    callbacks.run_search_pipeline_with_search_state = [](const auto &, const auto &, auto & value,
+            auto & ref, std::string &) {
+        value = search_pipeline_result();
+        value.directions.front().region_trials.push_back(value.directions.front().region_trials.front());
+        auto unrelated = value.directions.front().region_trials.front();
+        unrelated.candidate.layer_indices = {25};
+        unrelated.candidate.anchor_layer_index = 25;
+        unrelated.promising = false;
+        unrelated.margin_comparison.baseline.positive_total_logprob = -100.0f;
+        value.directions.front().region_trials.push_back(std::move(unrelated));
+        value.orthogonal_direction_available = true;
+        ref = "flydelta://state/search-2";
+        return true;
+    };
+    callbacks.resolve_search_orchestration_state = [&](const auto &, auto & plan, auto & history, std::string &) {
+        plan = plateau_plan;
+        history = {};
+        return true;
+    };
+    callbacks.persist_search_orchestration_state = [&](const auto & plan, const auto &, auto & ref, std::string &) {
+        plateau_plan = plan;
+        ref = "flydelta://state/search-3";
+        return true;
+    };
+    plateau_plan.search_model_calls_used = 249;
+    CHECK(common_flydelta_evaluate_job(generic_resumable_pipeline, config, callbacks, result, error));
+    CHECK(result.next_action != common_flydelta_next_action::run_orthogonal_search &&
+        !plateau_plan.run_orthogonal_search);
+    CHECK(plateau_plan.plateau_rounds.back().evaluated_arms == 2 &&
+        plateau_plan.plateau_rounds.back().best_margin_delta < 1.0f);
+    plateau_plan.search_model_calls_used = 0;
+    plateau_plan.plateau_rounds.resize(2);
+    config.utility_gate.shallow_enter_observations = 2;
+    CHECK(common_flydelta_evaluate_job(generic_resumable_pipeline, config, callbacks, result, error));
+    CHECK(result.next_action == common_flydelta_next_action::retain && !plateau_plan.run_orthogonal_search);
+    config.utility_gate.shallow_enter_observations = 1;
+    plateau_plan.plateau_rounds.resize(2);
+    callbacks.run_search_pipeline_with_search_state = [](const auto &, const auto &, auto & value,
+            auto & ref, std::string &) {
+        value = search_pipeline_result();
+        value.directions.front().region_trials.push_back(value.directions.front().region_trials.front());
+        ref = "flydelta://state/search-2";
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(generic_resumable_pipeline, config, callbacks, result, error));
+    CHECK(result.next_action != common_flydelta_next_action::run_orthogonal_search);
+    plateau_plan.plateau_rounds.resize(2);
+    callbacks.run_search_pipeline_with_search_state = [](const auto &, const auto &, auto & value,
+            auto & ref, std::string &) {
+        value = search_pipeline_result();
+        value.directions.front().region_trials.push_back(value.directions.front().region_trials.front());
+        value.orthogonal_direction_available = true;
+        ref = "flydelta://state/search-2";
+        return true;
+    };
+    CHECK(common_flydelta_evaluate_job(generic_resumable_pipeline, config, callbacks, result, error));
+    CHECK(result.next_action == common_flydelta_next_action::run_orthogonal_search &&
+        plateau_plan.run_orthogonal_search && plateau_plan.plateau_rounds.size() == 3 &&
+        plateau_plan.depth == common_flydelta_search_depth::bootstrap);
+    CHECK(common_flydelta_evaluate_job(generic_resumable_pipeline, config, callbacks, result, error));
+    CHECK(!plateau_plan.run_orthogonal_search && plateau_plan.plateau_escape_completed);
+
     // The production-facing adapter persists only immutable state metadata in
     // the host lifecycle store. It can be attached without replacing the
     // host's model runner callback.
@@ -678,6 +820,7 @@ int main() {
         lifecycle_ref, resolved_state, error));
     CHECK(resolved_state.state_ref == lifecycle_ref);
     CHECK(resolved_state.anchor_layer == 24);
+    CHECK(!resolved_state.evidence_rank_available);
     CHECK(resolved_state.where_origin_ref == "state:inherited-origin" &&
         resolved_state.where_status == "challenged_unverified");
     CHECK(resolved_state.local_layers == std::vector<uint32_t>({23, 24, 25}));
@@ -690,6 +833,11 @@ int main() {
             selected_arm.layer_weights &&
         resolved_state.completed_trials[resolved_state.best_progress_trial_index].candidate.total_scale ==
             selected_arm.total_scale);
+    persisted_state.evidence_rank_available = true;
+    persisted_state.evidence_rank = 0.0f;
+    CHECK(lifecycle_callbacks.persist_bootstrap_zoom_state(persisted_state, lifecycle_ref, error));
+    CHECK(lifecycle_callbacks.resolve_bootstrap_zoom_state(lifecycle_ref, resolved_state, error));
+    CHECK(resolved_state.evidence_rank_available && resolved_state.evidence_rank == 0.0f);
     auto inconsistent_progress = persisted_state;
     inconsistent_progress.best_progress_trial_index = 1;
     CHECK(!common_flydelta_bootstrap_zoom_state_validate(inconsistent_progress, error));

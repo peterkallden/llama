@@ -148,6 +148,8 @@ bool common_flydelta_plan_search_continuation(
         return false;
     }
     plan.continuation = continuation;
+    plan.plateau_evidence_rank_available = true;
+    plan.plateau_evidence_rank = evidence_depth.effective_rank;
     // Start every retained region at Bootstrap. Depth expresses capacity, not
     // permission to skip the rank-one/rank-two evidence chain.
     plan.depth = evidence_depth.depth;

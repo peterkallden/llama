@@ -661,6 +661,16 @@ bool daemon_flydelta_run_search_pipeline(
                 {"relative_layer", candidate.relative_layer}, {"relative_dose", candidate.relative_dose},
                 {"basis_identity", candidate.basis_identity},
             });
+            trace["execution_frontier"] = nlohmann::ordered_json::array();
+            for (size_t rank = 0; rank < decision.selected_order.size(); ++rank) {
+                const size_t index = decision.selected_order[rank];
+                if (index >= request.candidates.size()) continue;
+                trace["execution_frontier"].push_back({
+                    {"arm_id", request.candidates[index].arm_id},
+                    {"selected", rank < request.selection_limit},
+                    {"reason", rank < request.selection_limit ? "within_selection_limit" : "outside_selection_limit"},
+                });
+            }
             for (const auto & prediction : decision.predictions) trace["predictions"].push_back({
                 {"arm_id", prediction.arm_id}, {"level", prediction.level},
                 {"p_known", prediction.p_known}, {"p_helped", prediction.p_helped_given_known},
@@ -1554,6 +1564,16 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             trace["posterior_ranked_arm_ids"] = arm_ids(decision.shadow_order, pool.size());
             trace["hypothetical_selected_arm_ids"] = arm_ids(decision.mixed_policy_order, limit);
             trace["selected_arm_ids"] = arm_ids(decision.selected_order, limit);
+            trace["execution_frontier"] = nlohmann::ordered_json::array();
+            for (size_t rank = 0; rank < decision.selected_order.size(); ++rank) {
+                const size_t index = decision.selected_order[rank];
+                if (index >= pool.size()) continue;
+                trace["execution_frontier"].push_back({
+                    {"arm_id", pool[index].arm_id},
+                    {"selected", rank < limit},
+                    {"reason", rank < limit ? "within_selection_limit" : "outside_selection_limit"},
+                });
+            }
             trace["execution_order_changed"] =
                 trace["selected_arm_ids"] != arm_ids(decision.original_order, limit);
             for (const auto & prediction : decision.predictions) trace["predictions"].push_back({

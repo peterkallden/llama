@@ -227,6 +227,7 @@ std::string state_to_json(const common_flydelta_bootstrap_zoom_state & state) {
         {"surface_revision", state.surface_revision},
         {"parent_surface_revision", state.parent_surface_revision},
         {"search_rank", state.search_rank},
+        {"evidence_rank_available", state.evidence_rank_available},
         {"evidence_rank", state.evidence_rank},
         {"surface_origin", state.surface_origin},
         {"parent_surface_ref", state.parent_surface_ref},
@@ -307,6 +308,7 @@ bool state_from_json(const std::string & text,
         state.surface_revision = value.value("surface_revision", 1U);
         state.parent_surface_revision = value.value("parent_surface_revision", 0U);
         state.search_rank = value.value("search_rank", size_t{1});
+        state.evidence_rank_available = value.value("evidence_rank_available", false);
         state.evidence_rank = value.value("evidence_rank", 1.0f);
         state.surface_origin = value.value("surface_origin", "bootstrap_rank1");
         state.parent_surface_ref = value.value("parent_surface_ref", "");

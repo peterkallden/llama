@@ -192,6 +192,12 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-flydelta-plateau-queue-smoke)
+add_executable(${TARGET} smoke/adaptation/execution/plateau-queue.cpp)
+target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR})
+target_link_libraries(${TARGET} PRIVATE llama-agent-daemon-library)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Model-free smoke for donor qualification, surface residualization and the
 # bounded four-arm augmentation control set. Real-model work remains opt-in.
 set(TARGET llama-agent-flydelta-representation-augmentation-smoke)
@@ -1362,6 +1368,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-adaptation-e2e-smoke
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
+    llama-agent-flydelta-plateau-queue-smoke
     llama-agent-flydelta-representation-augmentation-smoke
     llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-concept-capture-smoke
@@ -1447,6 +1454,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-adaptation-e2e-smoke
     llama-agent-model-adaptation-smoke
     llama-agent-flydelta-tool-repair-smoke
+    llama-agent-flydelta-plateau-queue-smoke
     llama-agent-flydelta-procedure-teaching-smoke
     llama-agent-flydelta-concept-synthesis-model-smoke
     llama-agent-flydelta-model-ab-smoke
@@ -1559,6 +1567,10 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-flydelta-tool-repair-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-tool-repair-smoke>)
     set_property(TEST llama-agent-flydelta-tool-repair-ctest PROPERTY LABELS agent-adaptation)
+
+    add_test(NAME llama-agent-flydelta-plateau-queue-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-plateau-queue-smoke>)
+    set_property(TEST llama-agent-flydelta-plateau-queue-ctest PROPERTY LABELS agent-adaptation)
 
     add_test(NAME llama-agent-flydelta-representation-augmentation-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-representation-augmentation-smoke>)

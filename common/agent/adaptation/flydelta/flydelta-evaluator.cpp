@@ -1,4 +1,5 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-search-budget.h"
 
 #include <algorithm>
 #include <map>
@@ -300,6 +301,7 @@ bool utility_observations_from_pipeline(
             if (!trial.executed) continue;
             common_flydelta_subspace_utility_observation observation;
             observation.safe_to_continue = trial.safe_to_continue;
+            observation.arm_local_safety = true;
             observation.decision_margin_available = trial.margin_comparison.available;
             if (observation.decision_margin_available) {
                 observation.decision_margin_delta =
@@ -337,6 +339,41 @@ bool utility_observations_from_pipeline(
     return true;
 }
 
+void record_plateau_round(
+        const common_flydelta_search_pipeline_result & pipeline,
+        const common_flydelta_search_continuation & continuation,
+        const common_flydelta_utility_gate_config & config,
+        common_flydelta_experiment_plan & plan) {
+    if (!plan.plateau_evidence_rank_available) return;
+    common_flydelta_rank1_plateau_round round;
+    round.anchor_layer = continuation.region.anchor_layer_index;
+    for (const auto & direction : pipeline.directions) {
+        for (const auto & trial : direction.region_trials) {
+            if (!trial.executed || !trial.safe_to_continue ||
+                    trial.candidate.anchor_layer_index != round.anchor_layer ||
+                    trial.outcome == common_flydelta_counterfactual_outcome::harmed) continue;
+            if (trial.geometry_available &&
+                    (trial.geometry.cosine < config.min_cosine || trial.geometry.progress <= 0.0f ||
+                     trial.geometry.leakage > config.max_leakage || trial.geometry.shift_norm > config.max_shift_norm)) continue;
+            if (trial.margin_comparison.available) {
+                ++round.evaluated_arms;
+                round.best_margin_delta = std::max(round.best_margin_delta,
+                    trial.margin_comparison.normalized_delta());
+            }
+        }
+    }
+    if (round.evaluated_arms == 0 || round.anchor_layer == 0) {
+        plan.plateau_rounds.clear();
+        return;
+    }
+    if (!plan.plateau_rounds.empty()) {
+        round.best_margin_delta = std::max(round.best_margin_delta, plan.plateau_rounds.back().best_margin_delta);
+    }
+    round.safe_to_continue = true;
+    if (plan.plateau_rounds.size() == 32) plan.plateau_rounds.erase(plan.plateau_rounds.begin());
+    plan.plateau_rounds.push_back(round);
+}
+
 common_flydelta_next_action next_action_from_augmentation(
         const std::string & action) {
     if (action == "stop") return common_flydelta_next_action::stop;
@@ -359,10 +396,17 @@ bool common_flydelta_evaluate_job(
         std::string & error) {
     error.clear();
     result = {};
-    if (config.max_references == 0 || config.concept_frontier_max_candidates == 0 ||
+    if (config.max_references == 0 || config.initial_search_model_call_limit > 65536 || config.concept_frontier_max_candidates == 0 ||
             config.concept_frontier_max_candidates > 8 ||
             !common_flydelta_experiment_job_validate(
                 job, config.max_references, error)) return false;
+    if (config.direction_identity_from_job &&
+            (job.kind == common_flydelta_experiment_job_kind::direction ||
+             job.kind == common_flydelta_experiment_job_kind::search_pipeline) &&
+            job.seed.model_profile_fingerprint != config.direction.model_profile_fingerprint) {
+        error = "FlyDelta job model fingerprint does not match the host";
+        return false;
+    }
     if (has_orchestration_resolver(callbacks) != has_orchestration_persister(callbacks)) {
         error = "FlyDelta orchestration state callbacks must be supplied together";
         return false;
@@ -731,18 +775,47 @@ bool common_flydelta_evaluate_job(
             return true;
         }
         case common_flydelta_experiment_job_kind::direction: {
+            auto direction_config = config.direction;
+            if (config.direction_identity_from_job) {
+                direction_config.source = job.seed.source;
+                direction_config.behavior_key = job.seed.behavior_key;
+                direction_config.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+                direction_config.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+                if (job.behavior_delta_ids.empty() || !callbacks.resolve_behavior_delta) {
+                    error = "FlyDelta direction job requires a behavior delta identity";
+                    return false;
+                }
+                bool found_identity = false;
+                for (const auto & id : job.behavior_delta_ids) {
+                    common_flydelta_behavior_delta delta;
+                    common_flydelta_intervention_credit credit;
+                    if (!callbacks.resolve_behavior_delta(id, delta, credit, error)) return false;
+                    if (delta.source == direction_config.source && delta.behavior_key == direction_config.behavior_key &&
+                            delta.model_profile_fingerprint == direction_config.model_profile_fingerprint &&
+                            delta.execution_context_fingerprint == direction_config.execution_context_fingerprint &&
+                            delta.capture_layout_revision == direction_config.capture_layout_revision) {
+                        direction_config.layer_index = delta.layer_index;
+                        found_identity = true;
+                        break;
+                    }
+                }
+                if (!found_identity) {
+                    error = "FlyDelta direction job has no delta matching its seed and host identity";
+                    return false;
+                }
+            }
             if (!callbacks.resolve_behavior_delta ||
-                    !common_flydelta_direction_search_config_validate(config.direction, error)) {
+                    !common_flydelta_direction_search_config_validate(direction_config, error)) {
                 if (error.empty()) error = "FlyDelta direction evaluator requires a resolver and direction config";
                 return false;
             }
-            if (config.direction.execution_context_fingerprint !=
+            if (direction_config.execution_context_fingerprint !=
                     job.seed.execution_context_fingerprint) {
                 error = "FlyDelta direction evaluator context fingerprint does not match job";
                 return false;
             }
             common_flydelta_aggregation_config aggregation_config;
-            aggregation_config.identity = config.direction;
+            aggregation_config.identity = direction_config;
             aggregation_config.depth = config.evidence_depth;
             aggregation_config.max_retained_samples = config.aggregation_max_retained_samples;
             common_flydelta_incremental_aggregation aggregation(aggregation_config);
@@ -759,12 +832,12 @@ bool common_flydelta_evaluate_job(
             result.search_budget = common_flydelta_search_budget_for_depth(result.evidence_depth.depth);
             if (!common_flydelta_search_budget_validate(result.search_budget, error)) return false;
             const auto aggregation_snapshot = aggregation.snapshot();
-            const auto & direction_samples = config.direction.mode ==
+            const auto & direction_samples = direction_config.mode ==
                     common_flydelta_direction_search_mode::experimental
                 ? aggregation_snapshot.retained_samples
                 : aggregation_snapshot.evidence_retained_samples;
             if (!common_flydelta_build_direction_candidates(
-                    config.direction, direction_samples,
+                    direction_config, direction_samples,
                     result.direction_candidates, error)) return false;
             result.aggregation = aggregation_snapshot;
             result.processed_references = samples.size();
@@ -1021,6 +1094,38 @@ bool common_flydelta_evaluate_job(
                 if (!common_flydelta_orchestrate_search_slice(
                         current_plan, config.utility_gate, observations, history,
                         orchestration, error)) return false;
+                if (current_plan.run_orthogonal_search) {
+                    orchestration.plan.run_orthogonal_search = false;
+                    orchestration.plan.plateau_escape_completed = true;
+                } else if (current_plan.phase == common_flydelta_experiment_phase::bootstrap &&
+                        !current_plan.plateau_escape_completed && current_plan.plateau_evidence_rank_available) {
+                    record_plateau_round(completed_slice, result.search_continuations.back(),
+                        config.utility_gate, orchestration.plan);
+                    if (orchestration.utility.action != common_flydelta_utility_gate_action::stop &&
+                            orchestration.utility.action != common_flydelta_utility_gate_action::retain &&
+                            !orchestration.plan.plateau_rounds.empty()) {
+                        common_flydelta_rank1_plateau_result plateau;
+                        if (!common_flydelta_evaluate_rank1_plateau({},
+                                static_cast<float>(current_plan.plateau_evidence_rank),
+                                orchestration.plan.plateau_rounds, plateau, error)) return false;
+                        if (plateau.action == common_flydelta_rank1_plateau_action::orthogonal_search &&
+                                completed_slice.orthogonal_direction_available &&
+                                current_plan.search_model_calls_used <= current_plan.search_model_call_limit &&
+                                current_plan.search_model_call_limit - current_plan.search_model_calls_used >=
+                                    common_flydelta_orthogonal_control_rows) {
+                            common_flydelta_utility_gate_decision plateau_decision;
+                            if (!common_flydelta_decide_rank1_plateau_utility(plateau, plateau_decision, error)) return false;
+                            plateau_decision.history = orchestration.utility.history;
+                            auto source_plan = current_plan;
+                            source_plan.plateau_rounds = orchestration.plan.plateau_rounds;
+                            if (!common_flydelta_advance_experiment_plan(source_plan, plateau_decision,
+                                    orchestration.plan, orchestration.plan_advanced, error)) return false;
+                            orchestration.utility = plateau_decision;
+                            orchestration.next_action = common_flydelta_next_action::run_orthogonal_search;
+                            orchestration.reason = "Rank-one plateau; schedule bounded orthogonal search";
+                        }
+                    }
+                }
                 orchestration.plan.search_anchor_pending = false;
                 const auto & provisional_ref = result.search_pipeline_results.back().provisional_anchor_ref;
                 if (!provisional_ref.empty() && current_plan.search_anchor_round < 1024 &&
@@ -1097,9 +1202,20 @@ bool common_flydelta_evaluate_job(
             // phase in the host-owned opaque state; rebuilding a fresh
             // Bootstrap plan here would make the worker appear to restart
             // after plateau/orthogonal/Shallow/Deep work.
-            if (!has_post_bootstrap_state && callbacks.resolve_behavior_delta) {
+            if (!has_post_bootstrap_state && callbacks.resolve_behavior_delta &&
+                    (!config.direction_identity_from_job || !result.search_continuations.empty())) {
                 common_flydelta_aggregation_config aggregation_config;
                 aggregation_config.identity = config.direction;
+                if (config.direction_identity_from_job) {
+                    aggregation_config.identity.source = job.seed.source;
+                    aggregation_config.identity.behavior_key = job.seed.behavior_key;
+                    aggregation_config.identity.model_profile_fingerprint = job.seed.model_profile_fingerprint;
+                    aggregation_config.identity.execution_context_fingerprint = job.seed.execution_context_fingerprint;
+                    if (!result.search_continuations.empty()) {
+                        aggregation_config.identity.layer_index = static_cast<int32_t>(
+                            result.search_continuations.back().region.anchor_layer_index);
+                    }
+                }
                 aggregation_config.depth = config.evidence_depth;
                 aggregation_config.max_retained_samples = config.aggregation_max_retained_samples;
                 common_flydelta_incremental_aggregation aggregation(aggregation_config);
@@ -1131,6 +1247,31 @@ bool common_flydelta_evaluate_job(
                     if (!result.search_continuations.empty()) {
                         result.has_experiment_plan = true;
                         result.search_budget = result.experiment_plan.budget;
+                        if (config.initial_search_model_call_limit != 0) {
+                            result.experiment_plan.search_model_call_limit = config.initial_search_model_call_limit;
+                        }
+                        if (config.direction_identity_from_job && result.has_bootstrap_zoom_state) {
+                            result.bootstrap_zoom_state.evidence_rank_available = true;
+                            result.bootstrap_zoom_state.evidence_rank = static_cast<float>(result.evidence_depth.effective_rank);
+                            result.bootstrap_zoom_state.state_ref.clear();
+                            if (!persist_bootstrap_zoom_state_for_job(callbacks, job, result.bootstrap_zoom_state,
+                                    result.bootstrap_zoom_state_ref, error) || result.bootstrap_zoom_state_ref.empty() ||
+                                    result.bootstrap_zoom_state_ref.size() > 512) {
+                                if (error.empty()) error = "FlyDelta evidence rank state persistence failed";
+                                return false;
+                            }
+                            result.bootstrap_zoom_state.state_ref = result.bootstrap_zoom_state_ref;
+                        }
+                        record_plateau_round(result.search_pipeline_results.back(),
+                            result.search_continuations.back(), config.utility_gate, result.experiment_plan);
+                        if (config.direction_identity_from_job && has_orchestration_persister(callbacks)) {
+                            if (!persist_search_orchestration_state_for_job(
+                                    callbacks, job, result.experiment_plan, {}, result.search_state_ref, error) ||
+                                    result.search_state_ref.empty() || result.search_state_ref.size() > 512) {
+                                if (error.empty()) error = "FlyDelta initial orchestration state persistence failed";
+                                return false;
+                            }
+                        }
                         // Whirlpool is the current bounded slice. The next
                         // bounded slice is explicitly Bootstrap; the evaluator
                         // does not execute it recursively.

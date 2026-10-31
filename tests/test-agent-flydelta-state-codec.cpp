@@ -9,6 +9,9 @@ int main() {
     plan.continuation.region.anchor_layer_index = 2;
     plan.continuation.region.total_scale = 0.02f;
     plan.continuation.region.per_layer_scale = 0.02f;
+    plan.plateau_evidence_rank_available = true;
+    plan.plateau_evidence_rank = 1;
+    plan.plateau_rounds = {{true, 2, 2, 0.1f}, {true, 3, 2, 0.105f}};
     common_flydelta_utility_history history{2, 1};
     const auto original = daemon_flydelta_orchestration_state_json(plan, history, "resource://bootstrap");
     common_flydelta_experiment_plan restored;
@@ -20,15 +23,20 @@ int main() {
 
     auto legacy = original;
     for (const char * field : {"search_anchor_ref", "search_anchor_round", "search_anchor_pending",
-            "search_model_call_limit", "search_model_calls_used"}) legacy.erase(field);
+            "search_model_call_limit", "search_model_calls_used", "plateau_evidence_rank_available",
+            "plateau_evidence_rank", "plateau_rounds", "plateau_escape_completed"}) legacy.erase(field);
     CHECK(daemon_flydelta_orchestration_state_from_json(legacy.dump(), restored, restored_history, error));
     CHECK(restored.search_anchor_ref.empty() && !restored.search_anchor_pending);
     CHECK(restored.search_model_call_limit == 256 && restored.search_model_calls_used == 0);
+    CHECK(!restored.plateau_evidence_rank_available && restored.plateau_rounds.empty());
     auto invalid = original;
     invalid["phase"] = "invented_phase";
     CHECK(!daemon_flydelta_orchestration_state_from_json(invalid.dump(), restored, restored_history, error));
     invalid = original;
     invalid["search_model_calls_used"] = 257;
+    CHECK(!daemon_flydelta_orchestration_state_from_json(invalid.dump(), restored, restored_history, error));
+    invalid = original;
+    invalid["plateau_rounds"][0]["evaluated_arms"] = 0;
     CHECK(!daemon_flydelta_orchestration_state_from_json(invalid.dump(), restored, restored_history, error));
 
     common_agent_scope scope;

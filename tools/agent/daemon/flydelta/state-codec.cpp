@@ -1,5 +1,6 @@
 #include "state.h"
 #include "hash/hash.h"
+#include <cmath>
 #include <set>
 #include <stdexcept>
 
@@ -123,6 +124,12 @@ json daemon_flydelta_orchestration_state_json(
         const common_flydelta_utility_history & history,
         const std::string & bootstrap_state_ref) {
     const auto & region = plan.continuation.region;
+    json plateau_rounds = json::array();
+    for (const auto & round : plan.plateau_rounds) {
+        plateau_rounds.push_back({{"safe_to_continue", round.safe_to_continue},
+            {"evaluated_arms", round.evaluated_arms}, {"anchor_layer", round.anchor_layer},
+            {"best_margin_delta", round.best_margin_delta}});
+    }
     return {
         {"kind", "flydelta_daemon_orchestration_state"},
         {"search_anchor_ref", plan.search_anchor_ref},
@@ -164,6 +171,10 @@ json daemon_flydelta_orchestration_state_json(
         {"tfo_lite_requires_utility_gate", plan.tfo_lite_requires_utility_gate},
         {"run_tfo_lite", plan.run_tfo_lite},
         {"run_orthogonal_search", plan.run_orthogonal_search},
+        {"plateau_evidence_rank_available", plan.plateau_evidence_rank_available},
+        {"plateau_evidence_rank", plan.plateau_evidence_rank},
+        {"plateau_rounds", plateau_rounds},
+        {"plateau_escape_completed", plan.plateau_escape_completed},
         {"history", {
             {"qualifying_streak", history.qualifying_streak},
             {"nonqualifying_streak", history.nonqualifying_streak},
@@ -265,6 +276,27 @@ bool daemon_flydelta_orchestration_state_from_json(
         plan.tfo_lite_requires_utility_gate = value.value("tfo_lite_requires_utility_gate", false);
         plan.run_tfo_lite = value.value("run_tfo_lite", false);
         plan.run_orthogonal_search = value.value("run_orthogonal_search", false);
+        plan.plateau_evidence_rank_available = value.value("plateau_evidence_rank_available", false);
+        plan.plateau_evidence_rank = value.value("plateau_evidence_rank", size_t{0});
+        plan.plateau_escape_completed = value.value("plateau_escape_completed", false);
+        const auto rounds = value.value("plateau_rounds", json::array());
+        if (!rounds.is_array() || rounds.size() > 32 || plan.plateau_evidence_rank > 1024) {
+            error = "FlyDelta orchestration plateau state is invalid";
+            return false;
+        }
+        for (const auto & item : rounds) {
+            common_flydelta_rank1_plateau_round round;
+            round.safe_to_continue = item.at("safe_to_continue").get<bool>();
+            round.evaluated_arms = item.at("evaluated_arms").get<size_t>();
+            round.anchor_layer = item.at("anchor_layer").get<uint32_t>();
+            round.best_margin_delta = item.at("best_margin_delta").get<float>();
+            if (!round.safe_to_continue || round.evaluated_arms == 0 || round.evaluated_arms > 128 ||
+                    round.anchor_layer == 0 || !std::isfinite(round.best_margin_delta)) {
+                error = "FlyDelta orchestration plateau round is invalid";
+                return false;
+            }
+            plan.plateau_rounds.push_back(round);
+        }
         const auto state_history = value.at("history");
         history.qualifying_streak = state_history.value("qualifying_streak", size_t{0});
         history.nonqualifying_streak = state_history.value("nonqualifying_streak", size_t{0});
