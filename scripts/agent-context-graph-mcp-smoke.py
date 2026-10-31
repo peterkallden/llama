@@ -104,6 +104,8 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
         assert len(last_page["items"]) == 2 and last_page["items"][-1]["line"] == 28 and last_page["next_offset"] is None
         retracted = call(6, "graph.retract.propose", {"id": edge["id"], "expected_version": 1, "rationale": "recheck"})
         assert retracted["edge"]["status"] == "retraction_proposed"
+        assert retracted["edge"]["rationale"] == "check the runtime boundary"
+        assert retracted["edge"]["retraction_rationale"] == "recheck"
     finally:
         stop(p)
     p, rpc, call = start("project-b")
@@ -117,6 +119,9 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
         assert {"graph.find", "graph.get", "graph.expand"} <= names, names
         assert "graph.link.propose" not in names and "graph.retract.propose" not in names, names
         assert len(call(9, "graph.find", {"query": "planning"})["nodes"]) == 1
+        saved_edge = call(10, "graph.get", {"id": edge["id"]})["edge"]
+        assert saved_edge["status"] == "retraction_proposed" and saved_edge["rationale"] == "check the runtime boundary"
+        assert saved_edge["retraction_rationale"] == "recheck"
     finally:
         stop(p)
     if repository:

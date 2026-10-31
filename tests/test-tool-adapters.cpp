@@ -712,7 +712,9 @@ int main() {
         auto expanded = graph_registry.execute({"graph.expand", nlohmann::json{{"id",from},{"depth",1}}.dump()});
         assert(expanded.ok && nlohmann::json::parse(expanded.output)["edges"].size() == 1);
         auto withdrawn = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",1},{"rationale","recheck"}}.dump()});
-        assert(withdrawn.ok && nlohmann::json::parse(withdrawn.output)["edge"]["status"] == "retraction_proposed");
+        assert(withdrawn.ok && nlohmann::json::parse(withdrawn.output)["edge"]["status"] == "retraction_proposed" &&
+            nlohmann::json::parse(withdrawn.output)["edge"]["rationale"] == "inspect runtime linkage" &&
+            nlohmann::json::parse(withdrawn.output)["edge"]["retraction_rationale"] == "recheck");
         const auto contested_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
             "change planning selection", 1800, true);
         assert(nlohmann::json::parse(contested_context)["edges"][0]["status"] == "retraction_proposed");

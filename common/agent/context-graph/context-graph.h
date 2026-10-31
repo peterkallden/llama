@@ -38,6 +38,8 @@ struct common_context_graph_edge {
     std::vector<std::string> evidence_refs;
     std::string source_revision;
     uint64_t version = 1;
+    // A pending withdrawal is separate from the original assertion rationale.
+    std::string retraction_rationale;
 };
 
 struct common_context_graph_state {

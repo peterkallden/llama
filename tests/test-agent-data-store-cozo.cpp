@@ -86,8 +86,12 @@ int main() {
     TEST_ASSERT(store.get_context_graph(session_graph_scope, published_graph, error) && published_graph.nodes.size() == 2 && published_graph.edges.size() == 1);
     auto illegal_graph = published_graph; illegal_graph.revision = 2; illegal_graph.edges.clear();
     TEST_ASSERT(store.publish_context_graph(graph_scope, 1, illegal_graph, graph, error) == common_agent_publication_status::invalid);
+    auto altered_proposal = published_graph; altered_proposal.revision = 2;
+    altered_proposal.edges[0].status = "retraction_proposed"; altered_proposal.edges[0].version = 2;
+    altered_proposal.edges[0].rationale = "changed original"; altered_proposal.edges[0].retraction_rationale = "recheck";
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 1, altered_proposal, graph, error) == common_agent_publication_status::invalid);
     auto updated_graph = published_graph; updated_graph.revision = 2;
-    updated_graph.edges[0].status = "retraction_proposed"; updated_graph.edges[0].rationale = "recheck"; updated_graph.edges[0].version = 2;
+    updated_graph.edges[0].status = "retraction_proposed"; updated_graph.edges[0].retraction_rationale = "recheck"; updated_graph.edges[0].version = 2;
     TEST_ASSERT(store.publish_context_graph(graph_scope, 1, updated_graph, graph, error) == common_agent_publication_status::published);
     auto domain_graph = graph; domain_graph.revision = 3;
     domain_graph.nodes.push_back({"node:actor", "actor", "Alice", "", 0, "", "case:a/entity:alice", "", {}});
@@ -502,7 +506,8 @@ int main() {
     TEST_ASSERT(cozo_close_db(raw_db));
     TEST_ASSERT(store.open((root / "data.cozo").string(), error));
     TEST_ASSERT(store.get_context_graph(graph_scope, published_graph, error) && published_graph.revision == 3 &&
-        published_graph.edges.size() == 2 && published_graph.edges[0].status == "retraction_proposed" && published_graph.edges[0].version == 2);
+        published_graph.edges.size() == 2 && published_graph.edges[0].status == "retraction_proposed" && published_graph.edges[0].version == 2 &&
+        published_graph.edges[0].rationale == "inspect this seam" && published_graph.edges[0].retraction_rationale == "recheck");
     common_context_graph_state reloaded_symbols;
     TEST_ASSERT(store.get_context_graph(symbol_scope, reloaded_symbols, error) && reloaded_symbols.revision == 2 &&
         reloaded_symbols.nodes.size() == 1 && reloaded_symbols.nodes[0].symbol_key == "clang:usr:f-int" &&

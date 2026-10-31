@@ -38,6 +38,7 @@ json edge_json(const common_context_graph_edge & e) {
     return {{"id", e.id}, {"from", e.from}, {"to", e.to}, {"relation", e.relation},
         {"status", e.status}, {"source", e.source}, {"rationale", e.rationale},
         {"evidence_refs", e.evidence_refs}, {"source_revision", e.source_revision}, {"version", e.version},
+        {"retraction_rationale", e.retraction_rationale},
         {"freshness", "unverified"}};
 }
 bool text_value(const json & v, const char * key, size_t maximum, bool required = true) {
@@ -379,7 +380,7 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             auto edge = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto & item) { return item.id == args["id"].get<std::string>(); });
             if (edge == graph.edges.end()) return common_adapter_not_found_failure("tool.graph.not_found", "graph edge is unavailable", "Graph edge is unavailable.");
             if (edge->version != args["expected_version"].get<uint64_t>()) return common_adapter_failure("tool.graph.conflict", common_tool_failure_class::conflict, true, "Graph edge has changed.", "edge version conflict");
-            edge->status = "retraction_proposed"; edge->rationale = args["rationale"].get<std::string>(); ++edge->version;
+            edge->status = "retraction_proposed"; edge->retraction_rationale = args["rationale"].get<std::string>(); ++edge->version;
             const auto expected = graph.revision; graph.revision++;
             common_context_graph_state published;
             const auto result = bindings.data_store->publish_context_graph(bindings.tool_scope, expected, graph, published, error);

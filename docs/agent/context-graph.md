@@ -9,7 +9,10 @@ are recorded as submitted and require independent verification.
 The `graph` tool family offers `graph.find`, `graph.get`, `graph.expand`, `graph.search`, `graph.source`,
 `graph.link.propose` and `graph.retract.propose`. New relationships start as
 `proposed`; a withdrawal changes the current status to `retraction_proposed`
-while preserving previous versions. Cozo persistence is scoped by the
+while preserving previous versions. New retraction proposals keep their
+reason in `retraction_rationale`, separately from the original proposal's
+`rationale`. Older saved retractions may only have the earlier combined field;
+their previous versions remain in the storage history. Cozo persistence is scoped by the
 host-provided namespace and project, and graph operations fail if a project is
 not configured. File and symbol paths are repository-relative. A symbol may
 include a provider-qualified `symbol_key`: observations with the same key in
