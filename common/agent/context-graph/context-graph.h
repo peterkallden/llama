@@ -6,6 +6,13 @@
 
 // Project-owned identities and proposals. Source-specific evidence stays in
 // the originating provider; these records retain references to that evidence.
+struct common_context_graph_node_observation {
+    std::string path;
+    int64_t line = 0;
+    std::string source_revision;
+    std::string source_ref;
+};
+
 struct common_context_graph_node {
     std::string id;
     std::string kind;
@@ -15,6 +22,9 @@ struct common_context_graph_node {
     std::string source_revision;
     // Opaque source-owned identifier; it conveys no authority to read it.
     std::string source_ref;
+    // An opaque, provider-qualified symbol identifier, not a source location.
+    std::string symbol_key;
+    std::vector<common_context_graph_node_observation> observations;
 };
 
 struct common_context_graph_edge {

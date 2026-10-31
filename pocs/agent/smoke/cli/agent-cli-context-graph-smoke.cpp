@@ -79,8 +79,8 @@ int main(int argc, char ** argv) {
         request.trace_id = "context-graph-smoke"; request.options.n_predict = 96; request.options.n_threads = 4;
         request.grammar = common_build_tool_dsl_grammar({*it}, common_tool_dsl_grammar_form::action, error);
         if (request.grammar.empty() || !error.empty()) { std::cerr << "tool grammar unavailable: " << error << '\n'; return 1; }
-        request.messages = {{"system", instructions + "\nTool names are case sensitive. Use graph.search with its relation argument. Do not invent endpoint IDs. Return only the tool call."},
-            {"user", "Find all graph relationships with the exact relation name authored. No source or target node was provided, so omit from and to. Emit the tool call now."}};
+        request.messages = {{"system", instructions + "\nTool names are case sensitive. Use graph.search with only its relation argument. Do not add endpoint, kind, status, or limit filters. Return only the tool call."},
+            {"user", "Find all graph relationships with the exact relation name authored. No other filters were requested. Emit the tool call now."}};
         const auto generated = session.inference->generate_result(request);
         std::cout << "model_output=" << generated.content << '\n';
         if (!common_agent_generation_succeeded(generated) ||

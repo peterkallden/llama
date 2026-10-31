@@ -77,6 +77,18 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
         assert len(call(25, "graph.search", {"from": actor_id, "relation": "authored"})["edges"]) == 1
         assert len(call(26, "graph.search", {"to": authored["to"], "relation": "authored"})["edges"]) == 1
         assert len(call(27, "graph.expand", {"id": authored["to"]})["edges"]) == 1
+        symbol = {"kind": "symbol", "name": "ns::f(int)", "path": "src/f.cpp", "line": 10,
+                  "source_revision": "r1", "symbol_key": "clang:repo-a:usr:f-int"}
+        symbol_edge = call(29, "graph.link.propose", {"from": symbol, "to": {"id": edge["from"]},
+                           "relation": "references", "rationale": "inspect symbol"})["edge"]
+        symbol.update({"line": 20, "source_revision": "r2"})
+        symbol_edge_again = call(30, "graph.link.propose", {"from": symbol, "to": {"id": edge["from"]},
+                                 "relation": "references", "rationale": "inspect symbol"})["edge"]
+        assert symbol_edge_again["from"] == symbol_edge["from"]
+        for i in range(8):
+            symbol.update({"line": 21 + i, "source_revision": f"r{i + 3}"})
+            call(40 + i, "graph.link.propose", {"from": symbol, "to": {"id": edge["from"]},
+                 "relation": "references", "rationale": "inspect symbol"})
     finally:
         stop(p)
     p, rpc, call = start("project-a")
@@ -84,6 +96,12 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
         assert len(call(5, "graph.find", {"query": "planning"})["nodes"]) == 1
         assert call(22, "graph.get", {"id": actor_id})["node"]["source_ref"] == "case:a/entity:alice"
         assert len(call(28, "graph.search", {"to": authored["to"], "relation": "authored"})["edges"]) == 1
+        saved_symbol = call(31, "graph.get", {"id": symbol_edge["from"], "observation_offset": 0})
+        assert saved_symbol["node"]["observations_truncated"] and saved_symbol["node"]["line"] == 28
+        first_page = saved_symbol["observation_page"]
+        assert first_page["total"] == 10 and first_page["items"][0]["line"] == 10 and first_page["next_offset"] == 8
+        last_page = call(32, "graph.get", {"id": symbol_edge["from"], "observation_offset": 8})["observation_page"]
+        assert len(last_page["items"]) == 2 and last_page["items"][-1]["line"] == 28 and last_page["next_offset"] is None
         retracted = call(6, "graph.retract.propose", {"id": edge["id"], "expected_version": 1, "rationale": "recheck"})
         assert retracted["edge"]["status"] == "retraction_proposed"
     finally:

@@ -14,8 +14,25 @@ namespace {
 using json = common_adapter_json;
 
 json node_json(const common_context_graph_node & n) {
-    return {{"id", n.id}, {"kind", n.kind}, {"name", n.name}, {"path", n.path},
-        {"line", n.line}, {"source_revision", n.source_revision}, {"source_ref", n.source_ref}};
+    json observations = json::array();
+    const size_t offset = n.observations.size() > 8 ? n.observations.size() - 8 : 0;
+    for (size_t i = offset; i < n.observations.size(); ++i) {
+        const auto & o = n.observations[i];
+        observations.push_back({{"path", o.path}, {"line", o.line},
+            {"source_revision", o.source_revision}, {"source_ref", o.source_ref}});
+    }
+    const auto * latest = n.observations.empty() ? nullptr : &n.observations.back();
+    return {{"id", n.id}, {"kind", n.kind}, {"name", n.name}, {"path", latest ? latest->path : n.path},
+        {"line", latest ? latest->line : n.line}, {"source_revision", latest ? latest->source_revision : n.source_revision},
+        {"source_ref", latest ? latest->source_ref : n.source_ref},
+        {"symbol_key", n.symbol_key}, {"observations", observations}, {"observations_truncated", offset != 0}};
+}
+json node_prompt_json(const common_context_graph_node & node) {
+    auto value = node_json(node);
+    value.erase("observations");
+    value.erase("observations_truncated");
+    value["observation_count"] = node.observations.size();
+    return value;
 }
 json edge_json(const common_context_graph_edge & e) {
     return {{"id", e.id}, {"from", e.from}, {"to", e.to}, {"relation", e.relation},
@@ -32,6 +49,11 @@ bool text_value(const json & v, const char * key, size_t maximum, bool required 
 std::string lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
+}
+std::string node_search_text(const common_context_graph_node & node) {
+    std::string text = node.name + " " + node.path + " " + node.source_ref + " " + node.symbol_key;
+    for (const auto & observation : node.observations) text += " " + observation.path + " " + observation.source_ref;
+    return lower(std::move(text));
 }
 std::string identity(const std::string & prefix, const json & value) {
     const auto bytes = value.dump();
@@ -52,11 +74,12 @@ bool resolve_endpoint(const json & input, const common_agent_scope & scope, comm
     }
     if (!text_value(input, "kind", 32) || !text_value(input, "name", 512) ||
             !text_value(input, "path", 512, false) || !text_value(input, "source_revision", 256, false) || !text_value(input, "source_ref", 512, false) ||
+            !text_value(input, "symbol_key", 512, false) ||
             (input.contains("line") && (!input["line"].is_number_integer() || input["line"] < 1 || input["line"] > 10000000))) {
         error = "invalid graph endpoint"; return false;
     }
     for (auto it = input.begin(); it != input.end(); ++it)
-        if (it.key() != "kind" && it.key() != "name" && it.key() != "path" && it.key() != "line" && it.key() != "source_revision" && it.key() != "source_ref") {
+        if (it.key() != "kind" && it.key() != "name" && it.key() != "path" && it.key() != "line" && it.key() != "source_revision" && it.key() != "source_ref" && it.key() != "symbol_key") {
             error = "unknown graph endpoint field"; return false;
         }
     const auto kind = input["kind"].get<std::string>();
@@ -75,13 +98,29 @@ bool resolve_endpoint(const json & input, const common_agent_scope & scope, comm
     const auto line = input.value("line", int64_t(0));
     const auto revision = input.value("source_revision", std::string{});
     const auto ref = input.value("source_ref", std::string{});
+    const auto symbol_key = input.value("symbol_key", std::string{});
+    if (kind != "symbol" && !symbol_key.empty()) { error = "symbol_key requires a symbol node"; return false; }
     if ((kind == "actor" || kind == "claim" || kind == "event" || kind == "plan") && ref.empty()) {
         error = "domain nodes require an explicit source reference"; return false;
     }
     auto identity_parts = json::array({scope.namespace_id, scope.project_id, kind, name, path, line, kind == "symbol" ? revision : std::string{}});
     if (!ref.empty()) identity_parts.push_back(ref);
+    if (kind == "symbol" && !symbol_key.empty()) identity_parts = json::array({scope.namespace_id, scope.project_id, kind, "symbol_key", symbol_key});
     id = identity("node:", identity_parts);
-    if (!find_node(graph, id)) graph.nodes.push_back({id, kind, name, path, line, revision, ref});
+    auto found = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto & node) { return node.id == id; });
+    if (found == graph.nodes.end()) {
+        graph.nodes.push_back({id, kind, name, path, line, revision, ref, symbol_key, {}});
+        found = graph.nodes.end() - 1;
+    }
+    if (kind == "symbol" && !symbol_key.empty()) {
+        const auto seen = std::find_if(found->observations.begin(), found->observations.end(), [&](const auto & o) {
+            return o.path == path && o.line == line && o.source_revision == revision && o.source_ref == ref;
+        });
+        if (seen == found->observations.end()) {
+            if (found->observations.size() >= 256) { error = "symbol observation limit reached"; return false; }
+            found->observations.push_back({path, line, revision, ref});
+        }
+    }
     return true;
 }
 }
@@ -100,7 +139,7 @@ std::string common_context_graph_prompt_projection(common_agent_data_store & sto
     if (token.size() >= 4) terms.push_back(token);
     std::vector<std::pair<size_t, const common_context_graph_node *>> matches;
     for (const auto & node : graph.nodes) {
-        const auto haystack = lower(node.name + " " + node.path + " " + node.source_ref);
+        const auto haystack = node_search_text(node);
         size_t score = haystack.find(text) != std::string::npos ? 100 : 0;
         for (const auto & term : terms) if (haystack.find(term) != std::string::npos) ++score;
         if (score) matches.push_back({score, &node});
@@ -110,15 +149,24 @@ std::string common_context_graph_prompt_projection(common_agent_data_store & sto
     json result = {{"revision", graph.revision}, {"nodes", json::array()}, {"edges", json::array()}, {"truncated", matches.size() > 3}};
     std::set<std::string> ids;
     for (size_t i = 0; i < std::min<size_t>(3, matches.size()); ++i) {
-        ids.insert(matches[i].second->id); result["nodes"].push_back(node_json(*matches[i].second));
+        ids.insert(matches[i].second->id); result["nodes"].push_back(node_prompt_json(*matches[i].second));
     }
-    if (include_edges) for (const auto & edge : graph.edges) {
+    std::vector<const common_context_graph_edge *> context_edges;
+    for (const auto & edge : graph.edges) context_edges.push_back(&edge);
+    std::stable_sort(context_edges.begin(), context_edges.end(), [](const auto * a, const auto * b) {
+        const auto priority = [](const std::string & status) {
+            return status == "proposed" ? 0 : status == "retraction_proposed" ? 1 : 2;
+        };
+        return priority(a->status) < priority(b->status);
+    });
+    if (include_edges) for (const auto * candidate : context_edges) {
+        const auto & edge = *candidate;
         if (!ids.count(edge.from) && !ids.count(edge.to)) continue;
         const auto * from = find_node(graph, edge.from); const auto * to = find_node(graph, edge.to);
         if (!from || !to || result["edges"].size() >= 8) { result["truncated"] = true; continue; }
         for (const auto * node : {from, to}) if (!ids.count(node->id)) {
             if (result["nodes"].size() >= 8) { result["truncated"] = true; break; }
-            ids.insert(node->id); result["nodes"].push_back(node_json(*node));
+            ids.insert(node->id); result["nodes"].push_back(node_prompt_json(*node));
         }
         if (ids.count(edge.from) && ids.count(edge.to)) result["edges"].push_back(edge_json(edge));
     }
@@ -160,7 +208,7 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             if (term.size() >= 4) terms.push_back(term);
             std::vector<std::pair<size_t, const common_context_graph_node *>> matches;
             for (const auto & node : graph.nodes) {
-                const auto text = lower(node.name + " " + node.path + " " + node.source_ref);
+                const auto text = node_search_text(node);
                 size_t score = text.find(query) != std::string::npos ? 100 : 0;
                 for (const auto & word : terms) if (text.find(word) != std::string::npos) ++score;
                 if (score) matches.push_back({score, &node});
@@ -172,9 +220,26 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
         }
         if (operation == "graph.get") {
             if (!text_value(args, "id", 256)) return common_adapter_validation_failure("tool.graph.invalid_arguments", "id is required");
+            if (args.contains("observation_offset") && (!args["observation_offset"].is_number_unsigned() || args["observation_offset"] > 256))
+                return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid observation offset");
             const auto id = args["id"].get<std::string>();
             const auto * node = find_node(graph, id);
-            if (node) return common_adapter_success_json({{"revision", graph.revision}, {"node", node_json(*node)}});
+            if (node) {
+                json result = {{"revision", graph.revision}, {"node", node_json(*node)}};
+                if (args.contains("observation_offset")) {
+                    const auto offset = args["observation_offset"].get<size_t>();
+                    json page = json::array();
+                    for (size_t i = offset; i < node->observations.size() && i - offset < 8; ++i) {
+                        const auto & o = node->observations[i];
+                        page.push_back({{"path", o.path}, {"line", o.line}, {"source_revision", o.source_revision}, {"source_ref", o.source_ref}});
+                    }
+                    const auto end = std::min(node->observations.size(), offset + page.size());
+                    result["observation_page"] = {{"offset", offset}, {"items", page}, {"total", node->observations.size()},
+                        {"next_offset", end < node->observations.size() ? json(end) : json(nullptr)}};
+                }
+                return common_adapter_success_json(result);
+            }
+            if (args.contains("observation_offset")) return common_adapter_validation_failure("tool.graph.invalid_arguments", "observation pagination requires a node");
             const auto edge = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto & item) { return item.id == id; });
             if (edge != graph.edges.end()) return common_adapter_success_json({{"revision", graph.revision}, {"edge", edge_json(*edge)}});
             return common_adapter_not_found_failure("tool.graph.not_found", "graph item is unavailable", "Graph item is unavailable.");
@@ -276,6 +341,8 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                     return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid evidence reference");
                 refs.push_back(value.get<std::string>());
             }
+            json old_nodes = json::array();
+            for (const auto & node : graph.nodes) old_nodes.push_back(node_json(node));
             std::string from, to;
             if (!resolve_endpoint(args["from"], bindings.tool_scope, graph, from, error) ||
                     !resolve_endpoint(args["to"], bindings.tool_scope, graph, to, error))
@@ -285,7 +352,19 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             edge.evidence_refs = refs; edge.source_revision = args.value("source_revision", std::string{});
             edge.id = identity("edge:", json::array({bindings.tool_scope.namespace_id, bindings.tool_scope.project_id, from, relation, to, edge.rationale, refs, edge.source_revision}));
             const auto prior = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto & item) { return item.id == edge.id; });
-            if (prior != graph.edges.end()) return common_adapter_success_json({{"revision", graph.revision}, {"edge", edge_json(*prior)}, {"reused", true}});
+            if (prior != graph.edges.end()) {
+                const auto existing = edge_json(*prior);
+                json new_nodes = json::array();
+                for (const auto & node : graph.nodes) new_nodes.push_back(node_json(node));
+                if (new_nodes == old_nodes) return common_adapter_success_json({{"revision", graph.revision}, {"edge", existing}, {"reused", true}});
+                const auto expected = graph.revision; graph.revision++;
+                common_context_graph_state published;
+                const auto result = bindings.data_store->publish_context_graph(bindings.tool_scope, expected, graph, published, error);
+                if (result != common_agent_publication_status::published)
+                    return common_adapter_failure("tool.graph.publish_failed", result == common_agent_publication_status::conflict ? common_tool_failure_class::conflict : common_tool_failure_class::execution,
+                        result == common_agent_publication_status::conflict, "Graph observation could not be saved.", error);
+                return common_adapter_success_json({{"revision", published.revision}, {"edge", existing}, {"reused", true}});
+            }
             const auto expected = graph.revision; graph.revision++; graph.edges.push_back(edge);
             common_context_graph_state published;
             const auto result = bindings.data_store->publish_context_graph(bindings.tool_scope, expected, graph, published, error);

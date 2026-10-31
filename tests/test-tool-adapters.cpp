@@ -696,6 +696,7 @@ int main() {
         assert(item["edge"]["status"] == "proposed" && item["revision"] == 1);
         const auto edge_id = item["edge"]["id"].get<std::string>();
         const auto from = item["edge"]["from"].get<std::string>();
+        const auto to = item["edge"]["to"].get<std::string>();
         const auto graph_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
             "change planning selection", 1800, true);
         assert(!graph_context.empty());
@@ -712,6 +713,16 @@ int main() {
         assert(expanded.ok && nlohmann::json::parse(expanded.output)["edges"].size() == 1);
         auto withdrawn = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",1},{"rationale","recheck"}}.dump()});
         assert(withdrawn.ok && nlohmann::json::parse(withdrawn.output)["edge"]["status"] == "retraction_proposed");
+        const auto contested_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
+            "change planning selection", 1800, true);
+        assert(nlohmann::json::parse(contested_context)["edges"][0]["status"] == "retraction_proposed");
+        const auto active = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",from}}}, {"to", {{"id",to}}}, {"relation","references"}, {"rationale","inspect code"}}.dump()});
+        assert(active.ok);
+        const auto ranked = nlohmann::json::parse(common_context_graph_prompt_projection(foundation_data,
+            graph_bindings.tool_scope, "change planning selection", 1800, true));
+        assert(ranked["edges"].size() == 2 && ranked["edges"][0]["status"] == "proposed" &&
+            ranked["edges"][1]["status"] == "retraction_proposed");
         auto conflict = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",1},{"rationale","stale"}}.dump()});
         assert(!conflict.ok && conflict.failure_class == common_tool_failure_class::conflict);
         auto missing_ref = graph_registry.execute({"graph.link.propose", R"({"from":{"kind":"actor","name":"Alice"},"to":{"id":"unused"},"relation":"associated_with","rationale":"check"})"});
@@ -739,6 +750,31 @@ int main() {
         const auto exact_custom = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"relation","är släkt med"}}.dump()});
         assert(exact_custom.ok && nlohmann::json::parse(exact_custom.output)["edges"].size() == 1);
         const auto paper = nlohmann::json::parse(authorship.output)["edge"]["to"].get<std::string>();
+        const auto symbol_link = [&](int line, const char * revision) {
+            return graph_registry.execute({"graph.link.propose", nlohmann::json{
+                {"from", {{"kind","symbol"},{"name","ns::f(int)"},{"path","src/f.cpp"},
+                    {"line",line},{"source_revision",revision},{"symbol_key","clang:usr:f-int"}}},
+                {"to", {{"id",paper}}}, {"relation","references"}, {"rationale","inspect"}}.dump()});
+        };
+        const auto symbol_first = symbol_link(10, "r1");
+        const auto symbol_second = symbol_link(20, "r2");
+        assert(symbol_first.ok && symbol_second.ok);
+        const auto symbol_id = nlohmann::json::parse(symbol_first.output)["edge"]["from"].get<std::string>();
+        assert(nlohmann::json::parse(symbol_second.output)["edge"]["from"] == symbol_id);
+        const auto symbol_read = graph_registry.execute({"graph.get", nlohmann::json{{"id",symbol_id}}.dump()});
+        assert(symbol_read.ok && nlohmann::json::parse(symbol_read.output)["node"]["observations"].size() == 2 &&
+            nlohmann::json::parse(symbol_read.output)["node"]["line"] == 20);
+        const auto symbol_page = graph_registry.execute({"graph.get", nlohmann::json{{"id",symbol_id},{"observation_offset",0}}.dump()});
+        assert(symbol_page.ok && nlohmann::json::parse(symbol_page.output)["observation_page"]["total"] == 2 &&
+            nlohmann::json::parse(symbol_page.output)["observation_page"]["items"][0]["line"] == 10);
+        assert(!graph_registry.execute({"graph.get", nlohmann::json{{"id",symbol_id},{"observation_offset",-1}}.dump()}).ok);
+        auto ambiguous = nlohmann::json{{"from", {{"kind","symbol"},{"name","f"},{"path","src/f.cpp"},
+            {"line",10},{"source_revision","r1"}}}, {"to", {{"id",paper}}}, {"relation","references"}, {"rationale","inspect"}};
+        const auto ambiguous_first = graph_registry.execute({"graph.link.propose", ambiguous.dump()});
+        ambiguous["from"]["line"] = 20; ambiguous["from"]["source_revision"] = "r2";
+        const auto ambiguous_second = graph_registry.execute({"graph.link.propose", ambiguous.dump()});
+        assert(ambiguous_first.ok && ambiguous_second.ok &&
+            nlohmann::json::parse(ambiguous_first.output)["edge"]["from"] != nlohmann::json::parse(ambiguous_second.output)["edge"]["from"]);
         const auto matching = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"relation","authored"},{"to_kind","resource"}}.dump()});
         assert(matching.ok && nlohmann::json::parse(matching.output)["edges"].size() == 1 &&
             nlohmann::json::parse(matching.output)["nodes"].size() == 2);

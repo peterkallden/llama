@@ -795,8 +795,12 @@ std::string context_graph_scope_key(const common_agent_scope & scope) {
     return json{{"namespace_id", scope.namespace_id}, {"project_id", scope.project_id}}.dump();
 }
 json context_graph_node_json(const common_context_graph_node & node) {
+    json observations = json::array();
+    for (const auto & o : node.observations) observations.push_back({{"path", o.path}, {"line", o.line},
+        {"source_revision", o.source_revision}, {"source_ref", o.source_ref}});
     return {{"id", node.id}, {"kind", node.kind}, {"name", node.name}, {"path", node.path},
-        {"line", node.line}, {"source_revision", node.source_revision}, {"source_ref", node.source_ref}};
+        {"line", node.line}, {"source_revision", node.source_revision}, {"source_ref", node.source_ref},
+        {"symbol_key", node.symbol_key}, {"observations", observations}};
 }
 json context_graph_edge_json(const common_context_graph_edge & edge) {
     return {{"id", edge.id}, {"from", edge.from}, {"to", edge.to}, {"relation", edge.relation},
@@ -833,6 +837,10 @@ bool common_agent_cozo_data_store::load_context_graph(const common_agent_scope &
                     node.name = item.at("name").get<std::string>(); node.path = item.value("path", std::string{});
                     node.line = item.value("line", int64_t(0)); node.source_revision = item.value("source_revision", std::string{});
                     node.source_ref = item.value("source_ref", std::string{});
+                    node.symbol_key = item.value("symbol_key", std::string{});
+                    if (item.contains("observations")) for (const auto & o : item.at("observations"))
+                        node.observations.push_back({o.at("path").get<std::string>(), o.at("line").get<int64_t>(),
+                            o.at("source_revision").get<std::string>(), o.at("source_ref").get<std::string>()});
                     out.nodes.push_back(std::move(node));
                 } else {
                     common_context_graph_edge edge;
@@ -903,17 +911,32 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
     std::set<std::string> node_ids, edge_ids;
     for (const auto & node : input.nodes) {
         if (node.id.empty() || node.id.size() > 256 || node.name.empty() || node.name.size() > 512 ||
-                node.path.size() > 512 || node.line < 0 || node.source_revision.size() > 256 || node.source_ref.size() > 512 || !node_ids.insert(node.id).second ||
+                node.path.size() > 512 || node.line < 0 || node.source_revision.size() > 256 || node.source_ref.size() > 512 ||
+                node.symbol_key.size() > 512 || (node.kind != "symbol" && !node.symbol_key.empty()) ||
+                (!node.observations.empty() && (node.kind != "symbol" || node.symbol_key.empty())) ||
+                node.observations.size() > 256 || !node_ids.insert(node.id).second ||
                 ((node.kind == "actor" || node.kind == "claim" || node.kind == "event" || node.kind == "plan") && node.source_ref.empty()) ||
                 (node.kind != "file" && node.kind != "symbol" && node.kind != "component" && node.kind != "memory" && node.kind != "resource" &&
                  node.kind != "actor" && node.kind != "claim" && node.kind != "event" && node.kind != "plan")) {
             error = "context graph node is invalid"; return common_agent_publication_status::invalid;
         }
+        for (const auto & o : node.observations) if (o.path.size() > 512 || o.line < 0 || o.source_revision.size() > 256 || o.source_ref.size() > 512) {
+            error = "context graph observation is invalid"; return common_agent_publication_status::invalid;
+        }
     }
     for (const auto & previous : current.nodes) {
         const auto found = std::find_if(input.nodes.begin(), input.nodes.end(), [&](const auto & n) { return n.id == previous.id; });
-        if (found == input.nodes.end() || context_graph_node_json(*found) != context_graph_node_json(previous)) {
+        if (found == input.nodes.end()) {
             error = "existing graph nodes cannot be removed or silently changed"; return common_agent_publication_status::invalid;
+        }
+        auto allowed = previous;
+        if (found->observations.size() < previous.observations.size() ||
+                !std::equal(previous.observations.begin(), previous.observations.end(), found->observations.begin(), [](const auto & a, const auto & b) {
+                    return a.path == b.path && a.line == b.line && a.source_revision == b.source_revision && a.source_ref == b.source_ref;
+                })) { error = "graph observations cannot be removed or changed"; return common_agent_publication_status::invalid; }
+        allowed.observations = found->observations;
+        if (context_graph_node_json(*found) != context_graph_node_json(allowed)) {
+            error = "existing graph node identity cannot be changed"; return common_agent_publication_status::invalid;
         }
     }
     for (const auto & edge : input.edges) {
@@ -945,7 +968,13 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
     const auto key = context_graph_scope_key(scope);
     json nodes = json::array(), edges = json::array(), history = json::array();
     json forward = json::array(), reverse = json::array(), relations_index = json::array();
-    for (const auto & node : input.nodes) nodes.push_back({key, node.id, context_graph_node_json(node).dump()});
+    for (const auto & node : input.nodes) {
+        const auto payload = context_graph_node_json(node).dump();
+        nodes.push_back({key, node.id, payload});
+        const auto prior = std::find_if(current.nodes.begin(), current.nodes.end(), [&](const auto & value) { return value.id == node.id; });
+        if (prior == current.nodes.end() || context_graph_node_json(*prior) != context_graph_node_json(node))
+            history.push_back({key, input.revision, node.id, payload});
+    }
     for (const auto & edge : input.edges) {
         const auto payload = context_graph_edge_json(edge).dump();
         edges.push_back({key, edge.id, payload});

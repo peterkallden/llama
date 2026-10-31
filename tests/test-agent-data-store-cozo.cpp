@@ -71,8 +71,8 @@ int main() {
     common_context_graph_state graph;
     TEST_ASSERT(store.get_context_graph(graph_scope, graph, error) && graph.revision == 0);
     graph.revision = 1;
-    graph.nodes.push_back({"node:a", "component", "planning", "", 0, "", ""});
-    graph.nodes.push_back({"node:b", "file", "selection", "src/selection.cpp", 0, "rev1", ""});
+    graph.nodes.push_back({"node:a", "component", "planning", "", 0, "", "", "", {}});
+    graph.nodes.push_back({"node:b", "file", "selection", "src/selection.cpp", 0, "rev1", "", "", {}});
     common_context_graph_edge graph_edge;
     graph_edge.id = "edge:a"; graph_edge.from = "node:a"; graph_edge.to = "node:b";
     graph_edge.relation = "depends_on"; graph_edge.rationale = "inspect this seam";
@@ -90,7 +90,7 @@ int main() {
     updated_graph.edges[0].status = "retraction_proposed"; updated_graph.edges[0].rationale = "recheck"; updated_graph.edges[0].version = 2;
     TEST_ASSERT(store.publish_context_graph(graph_scope, 1, updated_graph, graph, error) == common_agent_publication_status::published);
     auto domain_graph = graph; domain_graph.revision = 3;
-    domain_graph.nodes.push_back({"node:actor", "actor", "Alice", "", 0, "", "case:a/entity:alice"});
+    domain_graph.nodes.push_back({"node:actor", "actor", "Alice", "", 0, "", "case:a/entity:alice", "", {}});
     common_context_graph_edge domain_edge;
     domain_edge.id = "edge:actor"; domain_edge.from = "node:actor"; domain_edge.to = "node:a";
     domain_edge.relation = "associated_with"; domain_edge.rationale = "inspect case";
@@ -104,6 +104,26 @@ int main() {
     TEST_ASSERT(!store.find_context_graph_edges(graph_scope, 2, "", "associated_with", "", graph_ids, error));
     auto missing_graph_scope = graph_scope; missing_graph_scope.project_id.clear();
     TEST_ASSERT(!store.get_context_graph(missing_graph_scope, published_graph, error));
+    common_agent_scope symbol_scope = graph_scope;
+    symbol_scope.project_id = "symbol-observation-test";
+    common_context_graph_state symbols;
+    TEST_ASSERT(store.get_context_graph(symbol_scope, symbols, error));
+    symbols.revision = 1;
+    common_context_graph_node symbol;
+    symbol.id = "node:symbol"; symbol.kind = "symbol"; symbol.name = "ns::f(int)";
+    symbol.path = "src/f.cpp"; symbol.line = 10; symbol.source_revision = "r1";
+    symbol.symbol_key = "clang:usr:f-int";
+    symbol.observations.push_back({"src/f.cpp", 10, "r1", ""});
+    symbols.nodes.push_back(symbol);
+    TEST_ASSERT(store.publish_context_graph(symbol_scope, 0, symbols, published_graph, error) == common_agent_publication_status::published);
+    symbols.revision = 2;
+    symbols.nodes[0].observations.push_back({"src/f.cpp", 20, "r2", ""});
+    TEST_ASSERT(store.publish_context_graph(symbol_scope, 1, symbols, published_graph, error) == common_agent_publication_status::published);
+    auto changed_observation = symbols;
+    changed_observation.revision = 3; changed_observation.nodes[0].observations[0].line = 99;
+    TEST_ASSERT(store.publish_context_graph(symbol_scope, 2, changed_observation, published_graph, error) == common_agent_publication_status::invalid);
+    TEST_ASSERT(store.get_context_graph(symbol_scope, published_graph, error) &&
+        published_graph.nodes.size() == 1 && published_graph.nodes[0].observations.size() == 2);
     virtual_dataset_fixture virtual_source;
     TEST_ASSERT(store.set_virtual_dataset_source(&virtual_source));
     common_investigation_case_revision investigation;
@@ -483,6 +503,10 @@ int main() {
     TEST_ASSERT(store.open((root / "data.cozo").string(), error));
     TEST_ASSERT(store.get_context_graph(graph_scope, published_graph, error) && published_graph.revision == 3 &&
         published_graph.edges.size() == 2 && published_graph.edges[0].status == "retraction_proposed" && published_graph.edges[0].version == 2);
+    common_context_graph_state reloaded_symbols;
+    TEST_ASSERT(store.get_context_graph(symbol_scope, reloaded_symbols, error) && reloaded_symbols.revision == 2 &&
+        reloaded_symbols.nodes.size() == 1 && reloaded_symbols.nodes[0].symbol_key == "clang:usr:f-int" &&
+        reloaded_symbols.nodes[0].observations.size() == 2 && reloaded_symbols.nodes[0].observations[1].line == 20);
     TEST_ASSERT(std::any_of(published_graph.nodes.begin(), published_graph.nodes.end(), [](const auto & node) {
         return node.kind == "actor" && node.source_ref == "case:a/entity:alice";
     }));

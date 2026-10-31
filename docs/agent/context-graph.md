@@ -11,11 +11,25 @@ The `graph` tool family offers `graph.find`, `graph.get`, `graph.expand`, `graph
 `proposed`; a withdrawal changes the current status to `retraction_proposed`
 while preserving previous versions. Cozo persistence is scoped by the
 host-provided namespace and project, and graph operations fail if a project is
-not configured. File and symbol paths are repository-relative. Symbol identity
-includes its source location and stated revision; ambiguous symbols are not
-silently combined across revisions. Actor, claim, event and plan nodes require
+not configured. File and symbol paths are repository-relative. A symbol may
+include a provider-qualified `symbol_key`: observations with the same key in
+the same project share a node and retain their individual locations and stated
+revisions. A key is a caller-supplied identifier, not independently verified
+evidence; it must also distinguish repositories within a project. Without a
+key, symbol identity includes its source location and stated revision, so
+ambiguous symbols are not silently combined across revisions. Existing node
+IDs remain unchanged. Tool responses show the most recently submitted
+observation as the location and include up to eight recent observations, with
+an explicit truncation flag. Submission order does not establish which
+revision is newest. To read the full bounded observation list, call `graph.get`
+with `observation_offset: 0` and follow `observation_page.next_offset` until it
+is null. Actor, claim, event and plan nodes require
 an opaque source reference, which distinguishes objects with the same name and
 does not grant access to their sources. Returned freshness is `unverified`.
+
+Planning context prioritizes proposed relationships before relationships with
+a pending retraction. A pending retraction remains visible and is not an
+approved withdrawal.
 
 Relation names are strings, up to 64 bytes. Suggested names include `calls`,
 `depends_on`, `related_to`, `contains`, `supports` and `references`; arbitrary names
