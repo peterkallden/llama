@@ -90,8 +90,9 @@ Coefficient magnitude, intervention norm, residual-relative dose and the legacy
 behavior-delta-relative displacement are different quantities. Trace carries the
 original requested/applied measurements and calibration reference when available;
 it does not recalculate them. Availability markers distinguish missing values
-from actual zero. DoseController decisions still bound the experiment. Unsupported
-TFO/dose combinations retain their existing rejection behavior.
+from actual zero. DoseController decisions still bound the experiment. TFO-lite
+supports direction-dose calibration; residual-fraction mode remains restricted
+to coordinate search.
 
 ## Durable state has several owners
 

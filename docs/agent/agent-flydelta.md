@@ -788,12 +788,18 @@ The common coordinate coefficient search accepts an optional host-resolved
 center bound to a basis fingerprint. Its first local arm replays the complete
 center, later local proposals perturb that complete intervention, and at
 least half of the arm proposals remain independent exploration. The unsteered
-baseline remains separate. TFO-lite rejects this center until it supports the
-same semantics. Deep restores the search center from the persisted anchor;
-the end-to-end restart and model paths still require functional verification.
+baseline remains separate. Calibrated TFO-lite can replay the physical center
+and generate new bounded direction/dose proposals around it. Deep restores the
+search center from the persisted anchor; model-backed restart remains separately
+verified from synthetic contract and replay coverage.
 Composition uses the same basis-identity-checked reconstruction helper as
 the search-center contract; a normalized composed direction by itself is not
 an exact checkpoint of the original applied coefficients or dose.
+
+The TFO dose smoke runs synthetic queue/restart and Deep replay without a model:
+`scripts/test-agent-flydelta-tfo-dose-smoke.sh`. Pass `--model PATH` to also run
+the model-backed search with the smoke-only Deep/TFO override. The synthetic
+observations and the model result must be interpreted separately.
 
 New daemon coefficient searches default to `direction_dose`; set
 `runtime.adaptation.flydelta.dose_mode` to `raw_coefficients` to select the

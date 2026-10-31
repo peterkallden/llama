@@ -145,6 +145,7 @@ struct common_flydelta_search_pipeline_result {
     std::vector<common_flydelta_search_pipeline_direction_result> directions;
     common_flydelta_search_pipeline_selection selection;
     std::string provisional_anchor_ref;
+    bool resume_calibrated_tfo = false;
     size_t search_model_call_limit = 0;
     size_t search_model_calls_used = 0;
     size_t physical_rows_started = 0;

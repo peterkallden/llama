@@ -549,8 +549,9 @@ int main(int argc, char ** argv) {
                   << " [--n-ctx-per-sequence N]\n";
         return 2;
     }
-    if (value.dose_comparison && (!dose_environment || value.low_rank_rank_sweep || value.force_tfo_lite)) {
-        std::cerr << "--dose-comparison requires one explicit dose mode and coordinate search\n";
+    if (value.dose_comparison && (!dose_environment || value.low_rank_rank_sweep ||
+            (value.force_tfo_lite && dose_experiment != "direction-dose"))) {
+        std::cerr << "--dose-comparison requires a compatible explicit dose mode\n";
         return 2;
     }
     if (value.model.empty() || !std::filesystem::is_regular_file(value.model)) {
@@ -2113,14 +2114,21 @@ int main(int argc, char ** argv) {
                 common_flydelta_deep_search_config rank_config = deep_config;
                 rank_config.max_rank = requested_rank;
                 if (dose_environment) {
-                    if ((!value.low_rank_rank_sweep && !value.dose_comparison) || value.force_tfo_lite) {
-                        host.close(); std::cerr << "dose comparison requires coordinate search mode\n"; return 2;
+                    if ((!value.low_rank_rank_sweep && !value.dose_comparison) ||
+                            (value.force_tfo_lite && dose_experiment != "direction-dose")) {
+                        host.close(); std::cerr << "dose comparison requires a compatible search mode\n"; return 2;
                     }
                     auto & coefficients = rank_config.coefficients;
                     coefficients.record_intervention_norms = true;
                     coefficients.max_candidates = 16;
-                    // No retries: baseline + 15 proposals is the same inference
-                    // budget in all three conditions; unavailable arms are explicit.
+                    if (value.force_tfo_lite) {
+                        coefficients.max_candidates = 1;
+                        coefficients.population_size = 2;
+                        coefficients.iterations = 1;
+                        rank_config.full_generation_top_k = 1;
+                    }
+                    // Coordinate comparisons use the same inference budget in all three conditions.
+                    // The forced TFO smoke uses its smaller bounded population.
                     coefficients.max_dose_retries = 0;
                     if (dose_experiment != "raw") {
                         std::vector<common_flydelta_hidden_state_capture> calibration_captures;

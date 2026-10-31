@@ -196,6 +196,51 @@ int main() {
         report.has_experiment_plan && report.experiment_plan.plateau_escape_completed &&
         !report.experiment_plan.run_orthogonal_search &&
         report.experiment_plan.depth == common_flydelta_search_depth::bootstrap);
+    common_flydelta_experiment_plan tfo_plan = plan;
+    tfo_plan.depth = common_flydelta_search_depth::deep;
+    tfo_plan.phase = common_flydelta_experiment_phase::deep_controls;
+    tfo_plan.budget = common_flydelta_search_budget_for_depth(common_flydelta_search_depth::deep);
+    tfo_plan.tfo_lite_permitted_by_evidence = true;
+    tfo_plan.tfo_lite_requires_utility_gate = true;
+    tfo_plan.run_tfo_lite = true;
+    tfo_plan.search_anchor_ref = "resource:old-anchor";
+    auto tfo_job = job;
+    tfo_job.id = "flydelta://job/tfo-dose-smoke";
+    CHECK(callbacks.persist_search_orchestration_state_for_job(tfo_job, tfo_plan, {}, tfo_job.search_state_ref, error));
+    callbacks.run_search_pipeline_with_search_state = [](const auto &, const auto & ref, auto & result,
+            auto & next_ref, std::string &) {
+        result = observed_slice();
+        result.provisional_anchor_ref = "resource:new-anchor";
+        result.resume_calibrated_tfo = true;
+        next_ref = ref;
+        return true;
+    };
+    const auto tfo_queue_path = root / "tfo-queue";
+    CHECK(common_flydelta_experiment_queue_enqueue(tfo_queue_path, tfo_job, {}, error));
+    CHECK(common_flydelta_experiment_worker_run_evaluator_once(tfo_queue_path, {}, config, callbacks, report, error));
+    CHECK(report.state == common_flydelta_experiment_queue_state::succeeded && report.has_experiment_plan &&
+        report.experiment_plan.run_tfo_lite && report.experiment_plan.search_anchor_pending &&
+        report.experiment_plan.search_anchor_ref == "resource:new-anchor");
+    CHECK(common_flydelta_collect_next_action_job(tfo_queue_path, {}, report.completed_job, report.next_action,
+        report.bootstrap_zoom_state_ref, report.search_state_ref, "", "", collected, error));
+    CHECK(collected == common_flydelta_experiment_collection_result::enqueued);
+    const auto tfo_saved_ref = report.search_state_ref;
+    callbacks = {};
+    provider.reset();
+    reopened.reset();
+    reopened = std::make_shared<common_learning_jsonl_lifecycle_store>();
+    CHECK(reopened->open(journal_path, error));
+    provider = std::make_shared<daemon_flydelta_resource_provider>();
+    provider->lifecycle_store = reopened;
+    provider->authority.namespace_id = "local";
+    provider->authority.session_id = "session";
+    CHECK(daemon_flydelta_bind_state_callbacks(provider, callbacks, error));
+    common_flydelta_experiment_plan restored_tfo;
+    common_flydelta_utility_history restored_history;
+    CHECK(callbacks.resolve_search_orchestration_state_for_job(
+        tfo_job, tfo_saved_ref, restored_tfo, restored_history, error));
+    CHECK(restored_tfo.run_tfo_lite && restored_tfo.search_anchor_ref == "resource:new-anchor");
+    std::cout << "tfo_queue_continuation=synthetic_passed\n";
     std::cout << "plateau_queue=passed\nreopened_journal=passed\nobservations=synthetic\n";
     std::error_code ignored;
     std::filesystem::remove_all(root, ignored);

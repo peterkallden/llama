@@ -57,7 +57,8 @@ bool common_flydelta_coefficient_search_config_validate(
         case common_flydelta_coefficient_dose_mode::raw_coefficients: break;
         case common_flydelta_coefficient_dose_mode::residual_fraction:
         case common_flydelta_coefficient_dose_mode::direction_dose:
-            if (config.strategy != common_flydelta_coefficient_search_strategy::coordinate ||
+            if ((config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::residual_fraction &&
+                    config.strategy != common_flydelta_coefficient_search_strategy::coordinate) ||
                     !finite(config.residual_fraction) || config.residual_fraction <= 0 ||
                     config.residual_fraction > 1 || config.residual_fraction_candidates.empty() ||
                     config.residual_fraction_candidates.size() > 16) {

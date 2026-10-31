@@ -11,6 +11,14 @@ namespace common_flydelta_coefficient_detail {
 
 float norm(const std::vector<float> & values);
 
+bool validate_dose_calibration(const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config, std::string & error);
+bool calibrate_direction(const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config,
+        const std::vector<float> & direction, float dose,
+        std::vector<float> & candidate, std::string & error);
+
 // Run after setting the observed overlay status. Raw production searches do
 // not compose vectors or acquire new validation failures for diagnostics.
 bool update_dose_metrics(

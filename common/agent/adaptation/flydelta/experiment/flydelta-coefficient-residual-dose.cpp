@@ -91,16 +91,10 @@ bool common_flydelta_calibrate_residual_dose(
     return true;
 }
 
-bool common_flydelta_propose_calibrated_coefficients(
+bool common_flydelta_coefficient_detail::validate_dose_calibration(
         const common_flydelta_experiment_fixture & fixture,
         const common_flydelta_low_rank_basis & basis,
-        const common_flydelta_coefficient_search_config & config,
-        std::vector<std::vector<float>> & proposals, std::string & error,
-        std::vector<float> * requested_fractions) {
-    proposals.clear(); error.clear();
-    if (requested_fractions) requested_fractions->clear();
-    if (config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::raw_coefficients)
-        return common_flydelta_propose_low_rank_coefficients(config, basis.vectors.size(), proposals, error);
+        const common_flydelta_coefficient_search_config & config, std::string & error) {
     if (!common_flydelta_coefficient_search_config_validate(config, basis.vectors.size(), error) ||
             !common_flydelta_low_rank_basis_validate(basis, 16, error)) return false;
     const auto & c = config.residual_calibration;
@@ -146,6 +140,47 @@ bool common_flydelta_propose_calibrated_coefficients(
     if (std::abs(median - c.median_norm) > 1e-6 * median) {
         error = "FlyDelta residual calibration median differs from samples"; return false;
     }
+    return true;
+}
+
+bool common_flydelta_coefficient_detail::calibrate_direction(
+        const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config,
+        const std::vector<float> & direction, float dose,
+        std::vector<float> & candidate, std::string & error) {
+    candidate = direction;
+    float magnitude = 0;
+    if (!common_flydelta_intervention_norm(basis, candidate, magnitude, error)) return false;
+    double upper = 0;
+    for (size_t i = 0; i < candidate.size(); ++i) {
+        double squared = 0;
+        for (float v : basis.vectors[i]) squared += double(v) * v;
+        upper += std::abs(candidate[i]) * std::sqrt(squared);
+    }
+    if (!std::isfinite(dose) || dose <= 0 || magnitude <= 1e-6 * upper || upper == 0) {
+        error = "FlyDelta calibrated direction or dose is invalid"; return false;
+    }
+    const double factor = double(dose) * config.residual_calibration.median_norm / magnitude;
+    double squared = 0;
+    for (float & v : candidate) { v = static_cast<float>(v * factor); squared += double(v) * v; }
+    if (!std::isfinite(squared)) { error = "FlyDelta calibrated coefficients overflow"; return false; }
+    const double coefficient_norm = std::sqrt(squared);
+    if (coefficient_norm > config.max_l2_norm)
+        for (float & v : candidate) v *= config.max_l2_norm / coefficient_norm;
+    return true;
+}
+
+bool common_flydelta_propose_calibrated_coefficients(
+        const common_flydelta_experiment_fixture & fixture,
+        const common_flydelta_low_rank_basis & basis,
+        const common_flydelta_coefficient_search_config & config,
+        std::vector<std::vector<float>> & proposals, std::string & error,
+        std::vector<float> * requested_fractions) {
+    proposals.clear(); error.clear();
+    if (requested_fractions) requested_fractions->clear();
+    if (config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::raw_coefficients)
+        return common_flydelta_propose_low_rank_coefficients(config, basis.vectors.size(), proposals, error);
+    if (!common_flydelta_coefficient_detail::validate_dose_calibration(fixture, basis, config, error)) return false;
     std::vector<std::vector<float>> directions;
     auto stencil_config = config;
     // Generate the legacy directions independently from the dose grid size.
@@ -168,28 +203,13 @@ bool common_flydelta_propose_calibrated_coefficients(
     // Dose-major ordering explores every direction before increasing the dose.
     for (float dose : doses) for (size_t index = 1; index < directions.size(); ++index) {
         if (proposals.size() >= config.max_candidates) return true;
-        auto candidate = directions[index];
-        float magnitude = 0;
-        if (!common_flydelta_intervention_norm(basis, candidate, magnitude, error)) return false;
-        double upper = 0;
-        for (size_t i = 0; i < candidate.size(); ++i) {
-            double squared = 0;
-            for (float v : basis.vectors[i]) squared += double(v) * v;
-            upper += std::abs(candidate[i]) * std::sqrt(squared);
+        std::vector<float> candidate;
+        std::string direction_error;
+        if (!common_flydelta_coefficient_detail::calibrate_direction(
+                basis, config, directions[index], dose, candidate, direction_error)) {
+            if (direction_error == "FlyDelta calibrated direction or dose is invalid") continue;
+            error = direction_error; return false;
         }
-        // Cancellation is not a direction to amplify. Skip it explicitly.
-        if (magnitude <= 1e-6 * upper) continue;
-        const double factor = double(dose) * c.median_norm / magnitude;
-        double coefficient_squared = 0;
-        for (float & v : candidate) {
-            v = static_cast<float>(v * factor); coefficient_squared += double(v) * v;
-        }
-        if (!std::isfinite(coefficient_squared)) {
-            error = "FlyDelta calibrated coefficients overflow"; return false;
-        }
-        const double coefficient_norm = std::sqrt(coefficient_squared);
-        if (coefficient_norm > config.max_l2_norm)
-            for (float & v : candidate) v *= config.max_l2_norm / coefficient_norm;
         float actual = 0;
         if (!common_flydelta_intervention_norm(basis, candidate, actual, error)) return false;
         bool duplicate = false;

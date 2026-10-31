@@ -1139,7 +1139,7 @@ bool common_flydelta_evaluate_job(
                     orchestration.plan.search_anchor_ref = provisional_ref;
                     orchestration.plan.search_anchor_round = current_plan.search_anchor_round + 1;
                     orchestration.plan.search_anchor_pending = true;
-                    orchestration.plan.run_tfo_lite = false;
+                    orchestration.plan.run_tfo_lite = current_plan.run_tfo_lite && completed_slice.resume_calibrated_tfo;
                     orchestration.next_action = common_flydelta_next_action::run_deep_controls;
                     orchestration.reason = "Continue bounded experimental search from verified partial progress";
                 }

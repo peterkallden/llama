@@ -362,8 +362,9 @@ bool common_flydelta_run_low_rank_coefficient_search_batched(
         return false;
     }
     if (config.strategy == common_flydelta_coefficient_search_strategy::tfo_lite) {
-        if (!config.anchor_coefficients.empty() || !config.anchor_basis_identity.empty()) {
-            error = "FlyDelta anchored search requires coordinate strategy";
+        if ((!config.anchor_coefficients.empty() || !config.anchor_basis_identity.empty()) &&
+                config.experimental_dose_mode != common_flydelta_coefficient_dose_mode::direction_dose) {
+            error = "FlyDelta anchored TFO requires direction dose";
             return false;
         }
         return common_flydelta_coefficient_detail::run_tfo_lite_coefficient_search(

@@ -986,10 +986,6 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     coefficient_config.strategy = plan.run_tfo_lite
         ? common_flydelta_coefficient_search_strategy::tfo_lite
         : common_flydelta_coefficient_search_strategy::coordinate;
-    if (effective_dose_mode == "direction_dose" && plan.run_tfo_lite) {
-        error = "FlyDelta TFO-lite does not yet support direction_dose";
-        return false;
-    }
     if (effective_dose_mode == "direction_dose") {
         coefficient_config.experimental_dose_mode = common_flydelta_coefficient_dose_mode::direction_dose;
         if (!daemon_flydelta_load_dose_calibration(
@@ -1838,6 +1834,12 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         if (!plan.search_anchor_ref.empty()) {
             const auto & anchor = resume_anchor;
             try {
+                auto anchor_policy = anchor.at("search_policy");
+                if (plan.run_tfo_lite && anchor_policy.is_object() &&
+                        anchor_policy.value("strategy", -1) ==
+                            static_cast<int>(common_flydelta_coefficient_search_strategy::coordinate)) {
+                    anchor_policy["strategy"] = static_cast<int>(coefficient_config.strategy);
+                }
                 if (anchor.at("kind") != "flydelta_search_anchor" || anchor.at("schema_version") != 1 ||
                         anchor.at("task_fingerprint") != fixture.task_fingerprint ||
                         anchor.at("model_profile_fingerprint") != fixture.model_profile_fingerprint ||
@@ -1850,7 +1852,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                         anchor.at("dose_mode") != effective_dose_mode ||
                         anchor.at("calibration_ref") != effective_calibration_ref ||
                         anchor.at("calibration_fingerprint") != calibration_fingerprint ||
-                        anchor.at("search_policy") != search_policy) {
+                        anchor_policy != search_policy) {
                     error = "FlyDelta search anchor provenance is incompatible"; return false;
                 }
                 deep_config.anchor_basis.layer_index = anchor.at("layer_index").get<int32_t>();
@@ -2097,6 +2099,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     direction_result.region_selection.score = selection.score;
     output = {};
     output.provisional_anchor_ref = provisional_anchor_ref;
+    output.resume_calibrated_tfo = plan.run_tfo_lite && effective_dose_mode == "direction_dose";
     output.search_model_call_limit = execution_budget.limit;
     output.search_model_calls_used = execution_budget.used;
     output.physical_rows_started = execution_budget.physical_rows_started;

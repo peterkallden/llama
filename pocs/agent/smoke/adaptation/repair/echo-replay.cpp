@@ -441,6 +441,42 @@ int main(int argc, char ** argv) {
         CHECK(deep_result.coefficient_selection.trial_index < deep_result.coefficient_trials.size());
         CHECK(deep_result.coefficient_trials[deep_result.coefficient_selection.trial_index].outcome ==
             common_flydelta_counterfactual_outcome::helped);
+        auto calibrated_tfo = deep_config;
+        auto & dose = calibrated_tfo.coefficients;
+        dose.experimental_dose_mode = common_flydelta_coefficient_dose_mode::direction_dose;
+        auto & calibration = dose.residual_calibration;
+        calibration.schema_version = 2;
+        calibration.reference = "calibration:synthetic-replay";
+        calibration.model_profile_fingerprint = experiment_fixture.model_profile_fingerprint;
+        calibration.tokenizer_fingerprint = experiment_fixture.tokenizer_fingerprint;
+        calibration.template_fingerprint = experiment_fixture.template_fingerprint;
+        calibration.capture_layout_revision = "layout:synthetic-spread-v1";
+        calibration.token_selection = "generation_boundary";
+        calibration.layer_index = kLayer;
+        calibration.dimension = basis.dimension;
+        calibration.sample_count = 1;
+        calibration.sample_norms = {5.0f};
+        calibration.median_norm = 5.0f;
+        calibration.intervention_site = "layer-input:additive-cvec:v1";
+        calibration.measurement_stage = "final_prompt_row";
+        calibration.runtime_configuration_fingerprint = "runtime:synthetic";
+        calibration.runtime_layout_revision = "layout:synthetic";
+        calibration.dataset_revision = "dataset:synthetic";
+        calibration.aggregation = "median_of_sequence_medians:v1";
+        calibration.sequence_ids = {"sequence:synthetic"};
+        dose.injection_capture_layout_revision = calibration.capture_layout_revision;
+        dose.injection_token_selection = calibration.token_selection;
+        dose.injection_intervention_site = calibration.intervention_site;
+        dose.injection_runtime_configuration_fingerprint = calibration.runtime_configuration_fingerprint;
+        dose.injection_runtime_layout_revision = calibration.runtime_layout_revision;
+        common_flydelta_deep_search_result calibrated_result;
+        CHECK(common_flydelta_run_deep_search(experiment_fixture, calibrated_tfo, deep_directions,
+            coefficient_runner, coefficient_runner, calibrated_result, error));
+        CHECK(!calibrated_result.coefficient_trials.empty());
+        CHECK(std::any_of(calibrated_result.coefficient_trials.begin(), calibrated_result.coefficient_trials.end(),
+            [&](const auto & trial) { return trial.intervention_norms_available &&
+                trial.residual_calibration_ref == calibration.reference && trial.applied_residual_fraction > 0; }));
+        std::cout << "flydelta_tfo_direction_dose=synthetic_replay_passed\n";
         ++forced_deep_groups;
         ++tfo_groups;
         std::cout << "flydelta_spread_group behavior_key=" << behavior_key

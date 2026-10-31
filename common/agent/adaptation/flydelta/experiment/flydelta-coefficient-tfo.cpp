@@ -20,6 +20,24 @@ bool run_tfo_lite_coefficient_search(
     trials.clear();
     selection = {};
 
+    const bool calibrated = config.experimental_dose_mode ==
+        common_flydelta_coefficient_dose_mode::direction_dose;
+    if (calibrated && !validate_dose_calibration(fixture, basis, config, error)) return false;
+    if (!config.anchor_coefficients.empty() || !config.anchor_basis_identity.empty()) {
+        if (!calibrated || config.anchor_coefficients.size() != basis.vectors.size() ||
+                config.anchor_basis_identity != common_flydelta_coefficient_basis_identity(basis) ||
+                !std::all_of(config.anchor_coefficients.begin(), config.anchor_coefficients.end(),
+                    [](float value) { return std::isfinite(value); }) ||
+                norm(config.anchor_coefficients) <= 0 || norm(config.anchor_coefficients) > config.max_l2_norm) {
+            error = "FlyDelta TFO anchor is incompatible"; return false;
+        }
+    }
+    if (calibrated && (config.evaluated_coefficients.size() > 4096 ||
+            std::any_of(config.evaluated_coefficients.begin(), config.evaluated_coefficients.end(),
+                [&](const auto & value) { return value.size() != basis.vectors.size() ||
+                    !std::all_of(value.begin(), value.end(), [](float v) { return std::isfinite(v); }); }))) {
+        error = "FlyDelta TFO evaluated coefficients are invalid"; return false;
+    }
     std::vector<float> zero(basis.vectors.size(), 0.0f);
     common_flydelta_counterfactual_trial baseline;
     common_flydelta_decision_margin baseline_margin;
@@ -37,6 +55,7 @@ bool run_tfo_lite_coefficient_search(
     std::mt19937_64 generator(config.seed);
     std::uniform_real_distribution<float> distribution(-config.step, config.step);
     std::vector<std::vector<float>> population;
+    std::vector<float> population_doses;
     std::vector<size_t> population_parents;
     std::vector<std::string> population_mutations;
     const size_t candidate_limit = std::min(config.max_candidates,
@@ -53,8 +72,24 @@ bool run_tfo_lite_coefficient_search(
         } else {
             for (float & coefficient : coefficients) coefficient = distribution(generator);
         }
-        coefficients = bound_coefficients(std::move(coefficients), config.max_l2_norm);
+        float dose = 0;
+        if (calibrated) {
+            if (index == 0 && !config.anchor_coefficients.empty()) {
+                coefficients = config.anchor_coefficients;
+                float physical = 0;
+                if (!common_flydelta_intervention_norm(basis, coefficients, physical, error)) return false;
+                dose = physical / config.residual_calibration.median_norm;
+            } else {
+                dose = config.residual_fraction_candidates[index % config.residual_fraction_candidates.size()];
+                std::vector<float> physical;
+                if (!calibrate_direction(basis, config, coefficients, dose, physical, error)) return false;
+                coefficients = std::move(physical);
+            }
+        } else {
+            coefficients = bound_coefficients(std::move(coefficients), config.max_l2_norm);
+        }
         if (!contains_coefficients(population, coefficients)) {
+            population_doses.push_back(dose);
             population.push_back(std::move(coefficients));
             population_parents.push_back(static_cast<size_t>(-1));
             population_mutations.push_back(index < coordinate_count
@@ -71,8 +106,10 @@ bool run_tfo_lite_coefficient_search(
         std::vector<std::vector<float>> pending_coefficients;
         for (size_t population_index = 0; population_index < population.size(); ++population_index) {
             const auto & coefficients = population[population_index];
-            if (evaluated >= candidate_limit || contains_coefficients(
-                    evaluated_coefficients, coefficients)) {
+            const bool anchor_replay = iteration == 0 && population_index == 0 &&
+                !config.anchor_coefficients.empty() && coefficients == config.anchor_coefficients;
+            if (evaluated >= candidate_limit || contains_coefficients(evaluated_coefficients, coefficients) ||
+                    (calibrated && !anchor_replay && contains_coefficients(config.evaluated_coefficients, coefficients))) {
                 continue;
             }
             pending_indices.push_back(population_index);
@@ -143,6 +180,7 @@ bool run_tfo_lite_coefficient_search(
             trial.dose_evaluated = arm.dose_evaluated;
             trial.dose_safety_limited = arm.dose_safety_limited;
             trial.dose_reason = arm.dose_reason;
+            if (calibrated) trial.requested_residual_fraction = population_doses[population_index];
             trial.margin = arm.margin;
             trial.margin_comparison.available = baseline_margin.available && arm.margin.available;
             trial.margin_comparison.baseline = baseline_margin;
@@ -161,6 +199,8 @@ bool run_tfo_lite_coefficient_search(
             trial.search_fitness = diagnostic_fitness(
                 trial, baseline_margin, arm.margin, config);
             evaluated_coefficients.push_back(pending_coefficients[pending]);
+            if (calibrated && !contains_coefficients(evaluated_coefficients, arm.executed_coefficients))
+                evaluated_coefficients.push_back(arm.executed_coefficients);
             trials.push_back(std::move(trial));
             ++evaluated;
         }
@@ -170,7 +210,9 @@ bool run_tfo_lite_coefficient_search(
         for (size_t index = 0; index < trials.size(); ++index) {
             const auto & trial = trials[index];
             if (trial.iteration != iteration ||
-                    trial.outcome == common_flydelta_counterfactual_outcome::harmed) continue;
+                    trial.outcome == common_flydelta_counterfactual_outcome::harmed ||
+                    (calibrated && (!trial.executed || !trial.overlay_applied ||
+                        (trial.dose_evaluated && trial.dose_action != common_flydelta_dose_action::accept)))) continue;
             if (best == nullptr || better_diagnostic_trial(trial, *best)) {
                 best = &trial;
             }
@@ -182,16 +224,40 @@ bool run_tfo_lite_coefficient_search(
             static_cast<float>(iteration + 2);
         std::uniform_real_distribution<float> local_distribution(-radius, radius);
         population.clear();
+        population_doses.clear();
         population_parents.clear();
         population_mutations.clear();
-        population.push_back(anchor);
-        population_parents.push_back(anchor_index);
-        population_mutations.push_back("forage_anchor");
+        if (!calibrated || best) {
+            population.push_back(anchor);
+            population_doses.push_back(calibrated ? best->applied_residual_fraction : 0);
+            population_parents.push_back(anchor_index);
+            population_mutations.push_back("forage_anchor");
+        }
         for (size_t index = 1; index < config.population_size; ++index) {
             std::vector<float> coefficients = anchor;
+            const float anchor_norm = norm(coefficients);
+            if (calibrated && anchor_norm > 0)
+                for (float & coefficient : coefficients) coefficient /= anchor_norm;
             for (float & coefficient : coefficients) coefficient += local_distribution(generator);
-            coefficients = bound_coefficients(std::move(coefficients), config.max_l2_norm);
+            float dose = 0;
+            if (calibrated) {
+                dose = best ? best->applied_residual_fraction : config.residual_fraction_candidates.front();
+                const auto & doses = config.residual_fraction_candidates;
+                const auto nearest = std::min_element(doses.begin(), doses.end(), [&](float a, float b) {
+                    return std::abs(a - dose) < std::abs(b - dose);
+                });
+                size_t dose_index = static_cast<size_t>(nearest - doses.begin());
+                if (index % 2 && dose_index + 1 < doses.size()) ++dose_index;
+                else if (!(index % 2) && dose_index > 0) --dose_index;
+                dose = doses[dose_index];
+                std::vector<float> physical;
+                if (!calibrate_direction(basis, config, coefficients, dose, physical, error)) return false;
+                coefficients = std::move(physical);
+            } else {
+                coefficients = bound_coefficients(std::move(coefficients), config.max_l2_norm);
+            }
             if (!contains_coefficients(population, coefficients)) {
+                population_doses.push_back(dose);
                 population.push_back(std::move(coefficients));
                 population_parents.push_back(anchor_index);
                 population_mutations.push_back("forage_perturbation");
@@ -203,7 +269,8 @@ bool run_tfo_lite_coefficient_search(
         const auto & trial = trials[index];
         if (!valid_outcome(trial.outcome) ||
                 trial.outcome != common_flydelta_counterfactual_outcome::helped ||
-                !trial.executed || !trial.verifier_known) continue;
+                !trial.executed || !trial.verifier_known ||
+                (calibrated && trial.dose_evaluated && trial.dose_action != common_flydelta_dose_action::accept)) continue;
         if (!selection.selected || trial.quality_delta > selection.score ||
                 (trial.quality_delta == selection.score &&
                  norm(trial.coefficients) < norm(trials[selection.trial_index].coefficients))) {

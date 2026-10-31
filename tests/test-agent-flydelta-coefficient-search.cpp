@@ -463,6 +463,74 @@ int main() {
         CHECK(!trial.dose_safety_limited);
     }
     CHECK(saw_clipped_proposal);
+    const common_flydelta_coefficient_search_batch_runner calibrated_tfo_runner =
+        [&](const auto & current_fixture, const auto & current_basis, const auto & coefficients,
+                auto & results, auto & margins, auto & geometries, auto & available, std::string & current_error) {
+            if (!calibrated_batch_runner(current_fixture, current_basis, coefficients,
+                    results, margins, geometries, available, current_error)) return false;
+            for (size_t i = 0; i < coefficients.size(); ++i) {
+                float magnitude = 0;
+                if (!common_flydelta_intervention_norm(current_basis, coefficients[i], magnitude, current_error)) return false;
+                geometries[i] = {1, static_cast<uint32_t>(current_basis.layer_index), 0.8f, 0.1f, 0.0f, magnitude * 2};
+                available[i] = true;
+            }
+            return true;
+        };
+    auto calibrated_tfo = calibrated_config;
+    calibrated_tfo.strategy = common_flydelta_coefficient_search_strategy::tfo_lite;
+    calibrated_tfo.population_size = 4;
+    calibrated_tfo.iterations = 2;
+    calibrated_tfo.max_candidates = 8;
+    calibrated_tfo.use_dose_controller = true;
+    calibrated_tfo.max_dose_retries = 1;
+    calibrated_tfo.dose_policy.max_shift_norm = 0.1f;
+    CHECK(common_flydelta_run_low_rank_coefficient_search_batched(
+        fixture(), basis, calibrated_tfo, batch_baseline_runner,
+        calibrated_tfo_runner, batch_trials_result, batch_selection, error));
+    CHECK(!batch_trials_result.empty());
+    CHECK(std::any_of(batch_trials_result.begin(), batch_trials_result.end(), [](const auto & trial) {
+        return trial.iteration == 1;
+    }));
+    for (const auto & trial : batch_trials_result) {
+        CHECK(trial.intervention_norms_available);
+        CHECK(trial.residual_calibration_ref == calibration.reference);
+        CHECK(trial.requested_residual_fraction > 0);
+        CHECK(std::fabs(trial.applied_intervention_norm / calibration.median_norm -
+            trial.applied_residual_fraction) < 1e-6f);
+    }
+    CHECK(std::any_of(batch_trials_result.begin(), batch_trials_result.end(), [](const auto & trial) {
+        return trial.dose_safety_limited && trial.dose_action == common_flydelta_dose_action::accept &&
+            trial.applied_residual_fraction < trial.requested_residual_fraction;
+    }));
+    bool saw_safe_parent = false;
+    for (const auto & trial : batch_trials_result) {
+        if (trial.iteration == 0 || trial.parent_trial_index >= batch_trials_result.size()) continue;
+        const auto & parent = batch_trials_result[trial.parent_trial_index];
+        CHECK(parent.executed && parent.overlay_applied);
+        CHECK(!parent.dose_evaluated || parent.dose_action == common_flydelta_dose_action::accept);
+        saw_safe_parent = true;
+    }
+    CHECK(saw_safe_parent);
+    const auto anchor = batch_trials_result.front().coefficients;
+    calibrated_tfo.anchor_coefficients = anchor;
+    calibrated_tfo.anchor_basis_identity = common_flydelta_coefficient_basis_identity(basis);
+    calibrated_tfo.evaluated_coefficients = {anchor};
+    CHECK(common_flydelta_run_low_rank_coefficient_search_batched(
+        fixture(), basis, calibrated_tfo, batch_baseline_runner,
+        calibrated_tfo_runner, batch_trials_result, batch_selection, error));
+    CHECK(!batch_trials_result.empty());
+    CHECK(batch_trials_result.front().requested_coefficients == anchor);
+    calibrated_tfo.anchor_basis_identity = "invalid-basis";
+    CHECK(!common_flydelta_run_low_rank_coefficient_search_batched(
+        fixture(), basis, calibrated_tfo, batch_baseline_runner,
+        calibrated_tfo_runner, batch_trials_result, batch_selection, error));
+    calibrated_tfo.anchor_coefficients.clear();
+    calibrated_tfo.anchor_basis_identity.clear();
+    calibrated_tfo.residual_calibration.layer_index = basis.layer_index + 1;
+    CHECK(!common_flydelta_run_low_rank_coefficient_search_batched(
+        fixture(), basis, calibrated_tfo, batch_baseline_runner,
+        calibrated_tfo_runner, batch_trials_result, batch_selection, error));
+
     calibrated_config.residual_calibration.layer_index = basis.layer_index + 1;
     const size_t before_invalid = coefficient_batch_calls;
     CHECK(!common_flydelta_run_low_rank_coefficient_search_batched(
