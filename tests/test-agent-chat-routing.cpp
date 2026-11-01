@@ -206,6 +206,19 @@ static void check_planner_prompt_contracts() {
         "planner did not expand the resource inventory when capacity allowed it");
     request.input_resources.clear();
 
+    request.project_graph_context = "Graph guidance.\n"
+        R"({"revision":1,"nodes":[{"id":"node-1","name":"planning"}],"edges":[],"truncated":false})";
+    planner_prompt_inference small_graph, large_graph;
+    small_graph.capacity = 500;
+    large_graph.capacity = 10000;
+    make_llama_cli_planner(small_graph, config, {tool})->create_plan(request, error);
+    make_llama_cli_planner(large_graph, config, {tool})->create_plan(request, error);
+    require(small_graph.requests.size() == 1 && large_graph.requests.size() == 1 &&
+        small_graph.requests[0].messages.back().content.find("node-1") == std::string::npos &&
+        large_graph.requests[0].messages.back().content.find("node-1") != std::string::npos,
+        "planner did not allocate optional project graph context within capacity");
+    request.project_graph_context.clear();
+
     common_plan_state evidence_plan;
     evidence_plan.goal = "Report the observed result";
     evidence_plan.observations.push_back({"tool:sample:dataset.schema", "dataset.schema",

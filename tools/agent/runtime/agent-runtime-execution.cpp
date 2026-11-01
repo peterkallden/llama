@@ -33,9 +33,11 @@ using json = nlohmann::ordered_json;
 
 std::string prepare_project_graph_context(common_agent_runtime_driver_execution & execution) {
     auto * view = execution.tooling.tool_view;
+    const auto & query = execution.orchestration_config.graph_query
+        ? *execution.orchestration_config.graph_query : execution.orchestration_config.prompt;
     if (execution.scope.project_id.empty() || !view || !view->exposes_tool("graph.find") ||
             !view->is_read_only("graph.find") || !execution.tooling.project_graph_context ||
-            execution.orchestration_config.prompt.empty()) return {};
+            query.empty()) return {};
     const bool include_edges = view->exposes_tool("graph.expand") && view->is_read_only("graph.expand");
     const auto budget = execution.runtime_config.generation_config.context_budgets.tool_observation_chars;
     if (budget == 0) return {};
@@ -45,7 +47,7 @@ std::string prepare_project_graph_context(common_agent_runtime_driver_execution 
     if (view->exposes_tool("graph.describe.propose") || view->exposes_tool("graph.link.propose"))
         guidance += " Graph updates can be proposed when useful, subject to host policy.";
     if (guidance.size() + 1 >= budget) return {};
-    const auto context = execution.tooling.project_graph_context(execution.scope, execution.orchestration_config.prompt,
+    const auto context = execution.tooling.project_graph_context(execution.scope, query,
         budget - guidance.size() - 1, include_edges);
     return guidance + (context.empty() ? std::string{} : "\n" + context);
 }

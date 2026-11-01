@@ -85,6 +85,17 @@ int main() {
 
     auto too_small = compose_common_agent_conversation_context(segments, &*checkpoint, 1, 8);
     assert(!too_small.missing_protected_refs.empty());
+    assert(!common_agent_conversation_token_pressure(0, 10000, 10000));
+    assert(!common_agent_conversation_token_pressure(4096, 2000, 768));
+    assert(common_agent_conversation_token_pressure(4096, 3000, 768));
+    assert(common_agent_conversation_token_pressure(512, 0, 768));
+    const auto graph_query = common_agent_conversation_graph_query(
+        "Find the current component", std::string(700, 'h'), false);
+    assert(graph_query.find("Find the current component") == 0);
+    assert(graph_query.size() > 512 && graph_query.find(std::string(20, 'h')) < 512);
+    assert(common_agent_conversation_graph_query(
+        "Find the current component", "old history", true) == "Find the current component");
+    assert(common_agent_conversation_graph_query("", "old history", true).empty());
 
     agent_session_context_store other_scope(&resources, "ns-b", "session-a", true);
     assert(other_scope.load(segments, checkpoint, epoch, error));

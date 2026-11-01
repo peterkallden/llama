@@ -12,6 +12,7 @@
 #include "runtime/runtime-trace.h"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,8 @@ struct common_agent_orchestration_config {
     std::string agent_import;
     std::string agent_export;
     common_blueprint_instance_materializer blueprint_instance_materializer;
+    // Host-supplied graph retrieval query, independent of the composed prompt.
+    std::optional<std::string> graph_query;
 };
 
 struct common_agent_orchestration_build_config {

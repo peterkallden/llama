@@ -61,6 +61,22 @@ struct common_agent_context_composition {
     bool checkpoint_material_omitted = false;
 };
 
+// The pressure threshold is advisory; it never authorizes dropping an
+// uncovered turn or a protected instruction.
+inline bool common_agent_conversation_token_pressure(size_t capacity, size_t prompt_tokens, size_t reserve) {
+    if (capacity == 0) return false;
+    const size_t limit = capacity - capacity / 5;
+    return reserve > limit || prompt_tokens > limit - reserve;
+}
+
+// The current user request must lead even when a graph backend only examines
+// a bounded query prefix. History is supplementary and is omitted at pressure.
+inline std::string common_agent_conversation_graph_query(
+        const std::string & current_request, const std::string & history, bool context_pressure) {
+    if (current_request.empty() || context_pressure || history.empty()) return current_request;
+    return current_request + "\n" + history;
+}
+
 inline size_t common_agent_projected_conversation_context_chars(
         const common_agent_context_composition & composition,
         size_t current_request_chars) {

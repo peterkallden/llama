@@ -1001,6 +1001,7 @@ bool common_agent_runtime_session_host::run_turn(
     std::optional<common_agent_context_checkpoint> context_checkpoint;
     std::vector<common_agent_conversation_segment> context_segments;
     uint64_t context_epoch = 1;
+    bool graph_context_pressure = false;
     if (config.runtime_config.context_management.enabled) {
         if (!conversation_context_store || context_store_namespace != request.namespace_id || context_store_session != request.session_id) {
             conversation_context_store = std::make_unique<agent_session_context_store>(
@@ -1049,7 +1050,7 @@ bool common_agent_runtime_session_host::run_turn(
             config.runtime_config.context_management.recent_turns,
             config.runtime_config.context_management.max_history_chars);
         const size_t projected_pre_compaction_chars = common_agent_projected_conversation_context_chars(
-            pre_compaction_composition, request.prompt.size());
+            pre_compaction_composition, request.prompt.size() + document_context_text.size() + investigation_context_text.size());
         auto * resident_inference = runtime->inference();
         // A restored session can have history before its model has been
         // prepared. Resolve an automatically fitted context before deciding
@@ -1068,6 +1069,25 @@ bool common_agent_runtime_session_host::run_turn(
         const size_t pressure_chars = model_context_tokens > 0
             ? std::min(config.runtime_config.context_management.max_history_chars, model_context_tokens * 4 * 80 / 100)
             : config.runtime_config.context_management.max_history_chars;
+        // History cannot be discarded merely to meet a soft budget: uncovered
+        // turns and protected instructions require a validated checkpoint.
+        // Use actual token counts to trigger the existing compaction path when
+        // the current request and reserved generation leave too little room.
+        bool token_context_pressure = false;
+        if (resident_inference && model_context_tokens > 0) {
+            const std::string composed = "Conversation context (source records remain available to the host):\n" +
+                pre_compaction_composition.rendered_history + "\nCurrent request:\n" + request.prompt +
+                document_context_text + investigation_context_text;
+            const auto measured = resident_inference->count_context_text_tokens(composed);
+            if (measured) {
+                const int response_limit = request.n_predict > 0 ? request.n_predict :
+                    config.runtime_config.generation_config.n_predict;
+                const int planner_limit = config.runtime_config.generation_config.planner_n_predict > 0
+                    ? config.runtime_config.generation_config.planner_n_predict : std::max(512, response_limit);
+                const size_t reserve = static_cast<size_t>(std::max({1, response_limit, planner_limit})) + 256;
+                token_context_pressure = common_agent_conversation_token_pressure(model_context_tokens, *measured, reserve);
+            }
+        }
         const size_t summary_source_budget = std::min(config.runtime_config.context_management.max_history_chars,
             model_context_tokens > 0 ? model_context_tokens * 8 : config.runtime_config.context_management.max_history_chars);
         std::vector<common_agent_conversation_segment> bounded_older;
@@ -1078,10 +1098,11 @@ bool common_agent_runtime_session_host::run_turn(
             bounded_older.push_back(segment);
             summary_source_chars += row_chars;
         }
-        const bool deterministic_context_pressure = projected_pre_compaction_chars > pressure_chars ||
+        const bool deterministic_context_pressure = token_context_pressure || projected_pre_compaction_chars > pressure_chars ||
             !pre_compaction_composition.omitted_refs.empty() ||
             !pre_compaction_composition.missing_protected_refs.empty() ||
             pre_compaction_composition.checkpoint_material_omitted;
+        graph_context_pressure = deterministic_context_pressure;
         if (!bounded_older.empty() && deterministic_context_pressure &&
                 config.runtime_config.context_management.semantic_compaction &&
                 config.runtime_config.context_management.max_summary_calls_per_turn > 0) {
@@ -1133,7 +1154,7 @@ bool common_agent_runtime_session_host::run_turn(
         const std::string context_prefix = "Conversation context (source records remain available to the host):\n";
         const std::string current_request_prefix = "\nCurrent request:\n";
         const size_t composed_chars = common_agent_projected_conversation_context_chars(
-            result.context_composition, request.prompt.size() + document_context_text.size());
+            result.context_composition, request.prompt.size() + document_context_text.size() + investigation_context_text.size());
         result.context_composition.estimated_tokens = (composed_chars + 3) / 4;
         std::set<std::string> checkpoint_covered;
         if (context_checkpoint) checkpoint_covered.insert(context_checkpoint->covered_turn_refs.begin(), context_checkpoint->covered_turn_refs.end());
@@ -1167,6 +1188,8 @@ bool common_agent_runtime_session_host::run_turn(
 
     runtime->set_tooling(std::move(resolved_tooling));
     runtime->set_execution_control(request.execution_control);
+    runtime->set_graph_query(common_agent_conversation_graph_query(
+        request.prompt, result.context_composition.rendered_history, graph_context_pressure));
     runtime->set_flydelta_activation(effective_request.flydelta_activation);
     runtime->set_turn_inputs(effective_request.input_resources, effective_request.require_tool_execution,
         effective_request.resource_read_binding, effective_request.investigation_context);

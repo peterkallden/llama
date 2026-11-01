@@ -2504,9 +2504,15 @@ The resident backend exposes the fitted per-slot capacity to the agent. For
 planning, reasoning and memory learning, optional memory projections are
 allocated within the remaining capacity using the configured prompt budgets as
 soft targets, while omitted targets follow observed demand; unused capacity can
-be redistributed. The planner can expand
-resource and dataset inventory projections when capacity permits, retaining
-their established minimum view. Allocation uses the resident model tokenizer
+be redistributed. During planning, resource and dataset inventories share the
+optional budget with memory and project graph context. Graph projection is
+reduced at node and edge boundaries with a truncation flag, or omitted when
+even its smallest view cannot fit. Session graph retrieval uses the current user
+request first; when context pressure is detected, conversation history is not
+included in the retrieval query. Inventory entries are included whole; omitted
+entries are disclosed. Required current-turn attachments are retained even if
+their descriptors exceed the soft budget, so exact admission can report that
+the mandatory prompt does not fit. Allocation uses the resident model tokenizer
 where available and an estimate otherwise, with headroom for the chat template.
 The backend still tokenizes and validates the complete prompt before inference.
 Policy text and task instructions are not shortened by this
@@ -2522,7 +2528,11 @@ the model call. `compact_recommended` is recorded as bounded runtime guidance;
 `compact_required` and `continuation_required` stop before draft inference and
 use the existing continuation/checkpoint path. The estimate is intentionally
 not tokenizer-precise and does not claim that full conversation compaction is
-implemented. Resource chunking is for large resource payloads and is not used
+implemented. When a tokenizer and fitted capacity are available, conversation
+compaction pressure also accounts for the current request and output reserve.
+History remains subject to the existing checkpoint and protected-instruction
+rules; an optional budget does not authorize silently dropping uncovered turns.
+Resource chunking is for large resource payloads and is not used
 to split a reflection response: a reflection JSON object must remain one
 complete structured generation. Existing compaction is limited to bounded
 model-facing projections, memory/policy overlays and continuation working

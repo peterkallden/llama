@@ -487,6 +487,26 @@ int main() {
     TEST_ASSERT(rendered_datasets.find("$datasets.datasets[index].dataset") != std::string::npos);
     TEST_ASSERT(rendered_datasets.find("agent-resource://turn/t/orders.csv") != std::string::npos);
 
+    // Tight prompt budgets must preserve required attachments and never leave
+    // a partial descriptor or an unterminated inventory in the model context.
+    auto required_attachment = request.input_resources.back();
+    required_attachment.required = true;
+    required_attachment.resource.name = "required\\\"file.csv";
+    auto optional_attachment = request.input_resources.front();
+    optional_attachment.required = false;
+    optional_attachment.resource.name = std::string(3000, 'x');
+    const auto bounded_resources = common_agent_render_input_resource_context(
+        {optional_attachment, required_attachment}, 1);
+    TEST_ASSERT(bounded_resources.find("id=r2") != std::string::npos);
+    TEST_ASSERT(bounded_resources.find("required=true") != std::string::npos);
+    TEST_ASSERT(bounded_resources.find("id=r1") == std::string::npos);
+    TEST_ASSERT(bounded_resources.find("additional entries were omitted") != std::string::npos);
+    TEST_ASSERT(bounded_resources.find("</runtime_input_resources>") != std::string::npos);
+    const auto bounded_datasets = common_agent_render_dataset_inventory(request.available_datasets, 1);
+    TEST_ASSERT(bounded_datasets.find("additional entries were omitted") != std::string::npos);
+    TEST_ASSERT(bounded_datasets.find("Dataset: id=") == std::string::npos);
+    TEST_ASSERT(bounded_datasets.find("</runtime_dataset_inventory>") != std::string::npos);
+
     normalized = nlohmann::ordered_json();
     changed = false;
     TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults_to_json(

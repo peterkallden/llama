@@ -106,6 +106,10 @@ void common_agent_runtime_resident_runtime::set_execution_control(
     base_turn_request.execution_control = std::move(execution_control);
 }
 
+void common_agent_runtime_resident_runtime::set_graph_query(std::string query) {
+    base_turn_request.orchestration_config.graph_query = std::move(query);
+}
+
 void common_agent_runtime_resident_runtime::set_policy_pack(
         std::optional<common_memory_policy_pack> policy_pack) {
     base_turn_request.request.policy_pack = std::move(policy_pack);

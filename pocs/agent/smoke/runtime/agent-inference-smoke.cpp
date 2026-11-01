@@ -2402,6 +2402,7 @@ static void test_runtime_resident_chat_host_builder() {
     assert(result.response == "counted");
     assert(inference_ptr->calls == 1);
 
+    base_turn_request.orchestration_config.graph_query = "Current question\nEarlier history";
     const auto request = make_agent_runtime_resident_turn_request(base_turn_request, "Prompt text", "turn-10");
     assert(request.request.prompt == "Prompt text");
     assert(request.request.messages.size() == 1);
@@ -2409,6 +2410,8 @@ static void test_runtime_resident_chat_host_builder() {
     assert(request.request.turn_id == "turn-10");
     assert(request.scope.turn_id == "turn-10");
     assert(request.orchestration_config.prompt == "Prompt text");
+    assert(request.orchestration_config.graph_query &&
+        *request.orchestration_config.graph_query == "Current question\nEarlier history");
 }
 
 static void test_runtime_resident_request_builders() {
