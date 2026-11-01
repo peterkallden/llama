@@ -50,7 +50,8 @@ struct agent_host_config {
     // remain the effective runtime input until profile routing is enabled.
     common_agent_model_catalog model_catalog;
 
-    int runtime_context_size = 3072;
+    // Zero leaves the context size to model metadata and fitting.
+    int runtime_context_size = 0;
     int n_predict = 256;
     int n_threads = 2;
     common_agent_context_budget_config context_budgets;

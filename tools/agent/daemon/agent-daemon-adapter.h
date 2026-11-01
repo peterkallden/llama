@@ -61,7 +61,7 @@ struct daemon_options {
     int n_predict = 256;
     int memory_learning_n_predict = 128;
     int n_threads = 2;
-    int context_size = 3072;
+    int context_size = 0;
     common_agent_context_budget_config context_budgets;
     common_agent_context_management_config context_management;
     size_t max_continuations = 2;

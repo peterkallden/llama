@@ -5,6 +5,8 @@
 #include "agent/adaptation/flydelta/flydelta-hidden-state-hook.h"
 #include "tools/agent/cli/agent-cli-generation.h"
 
+#include <algorithm>
+
 namespace {
 
 class llama_cli_agent_inference final : public common_agent_inference {
@@ -13,13 +15,35 @@ public:
             llama_model * model,
             const common_chat_templates * templates,
             std::vector<llama_adapter_lora *> adapters,
-            std::vector<float> adapter_scales)
+            std::vector<float> adapter_scales, size_t context_size_tokens)
         : model(model), templates(templates), adapters(std::move(adapters)),
-          adapter_scales(std::move(adapter_scales)) {}
+          adapter_scales(std::move(adapter_scales)), context_size_tokens(context_size_tokens) {}
+
+    size_t context_capacity_tokens() const override {
+        if (context_size_tokens != 0) return context_size_tokens;
+        return model ? static_cast<size_t>(std::max(0, llama_model_n_ctx_train(model))) : 0;
+    }
+    std::optional<size_t> count_context_text_tokens(const std::string & text) const override {
+        if (!model) return std::nullopt;
+        return common_tokenize(llama_model_get_vocab(model), text, false, true).size();
+    }
 
     bool generate(
             const common_agent_generation_request & request,
             common_agent_generation_result & result) override {
+        common_agent_prepared_generation prepared;
+        if (!model || !common_agent_prepare_chat_generation(templates, request, prepared)) {
+            result = {};
+            result.error_message = "failed to prepare CLI generation for context validation";
+            return false;
+        }
+        const size_t prompt_tokens = common_tokenize(llama_model_get_vocab(model), prepared.prompt, true, true).size();
+        std::string budget_error;
+        if (!common_agent_generation_context_fits(prompt_tokens, context_capacity_tokens(), request.options.n_predict, budget_error)) {
+            result = {};
+            result.error_message = budget_error;
+            return false;
+        }
         common_chat_params chat_params;
         common_flydelta_static_overlay no_overlay;
         const common_flydelta_static_overlay * flydelta_overlay = &no_overlay;
@@ -108,6 +132,7 @@ private:
     const common_chat_templates * templates;
     std::vector<llama_adapter_lora *> adapters;
     std::vector<float> adapter_scales;
+    size_t context_size_tokens;
 };
 
 } // namespace
@@ -116,6 +141,7 @@ std::unique_ptr<common_agent_inference> make_llama_cli_agent_inference(
     llama_model * model,
     const common_chat_templates * templates,
     const std::vector<llama_adapter_lora *> & adapters,
-    const std::vector<float> & adapter_scales) {
-    return std::make_unique<llama_cli_agent_inference>(model, templates, adapters, adapter_scales);
+    const std::vector<float> & adapter_scales,
+    size_t context_size_tokens) {
+    return std::make_unique<llama_cli_agent_inference>(model, templates, adapters, adapter_scales, context_size_tokens);
 }

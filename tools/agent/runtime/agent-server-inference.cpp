@@ -340,6 +340,12 @@ public:
         return ok;
     }
 
+    size_t context_capacity_tokens() const override { return context_tokens; }
+    std::optional<size_t> count_context_text_tokens(const std::string & text) const override {
+        if (!vocab) return std::nullopt;
+        return common_tokenize(vocab, text, false, true).size();
+    }
+
 private:
     bool validate_context(const common_agent_generation_request & request,
             const common_agent_prepared_generation & prepared, std::string & error) const {

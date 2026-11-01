@@ -398,6 +398,8 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-runtime-json.cpp
         test-agent-chat-routing.cpp
         test-agent-context-management.cpp
+        test-agent-context-allocation.cpp
+        test-agent-context-config.cpp
         test-agent-resource-chunker.cpp
         test-agent-resource-retention.cpp
         test-agent-resource-catalog-cozo.cpp
@@ -578,7 +580,7 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME MATCHES "flydelta|concept-candidate-index|concept-input-routing")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
         endif()
-        if (TEST_NAME STREQUAL "test-agent-factorized-cvec-config")
+        if (TEST_NAME STREQUAL "test-agent-factorized-cvec-config" OR TEST_NAME STREQUAL "test-agent-context-config")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support)
         endif()

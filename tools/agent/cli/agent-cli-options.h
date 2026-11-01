@@ -53,7 +53,7 @@ struct args {
     int n_threads = 2;
     // Leave enough room for the compact plan, verified observations and a
     // bounded reflection JSON response in the default CLI/daemon path.
-    int context_size = 3072;
+    int context_size = 0;
     common_agent_context_budget_config context_budgets;
     size_t max_continuations = 2;
     int n_gpu_layers = 99;

@@ -30,6 +30,7 @@ common_agent_inference_context_key make_agent_inference_context_key(
     return {
         backend,
         make_agent_model_load_key(options),
+        options.context_size_tokens,
     };
 }
 
@@ -45,7 +46,7 @@ bool common_agent_model_load_key_match(
 bool common_agent_inference_context_key_match(
         const common_agent_inference_context_key & lhs,
         const common_agent_inference_context_key & rhs) {
-    return lhs.backend == rhs.backend &&
+    return lhs.backend == rhs.backend && lhs.context_size_tokens == rhs.context_size_tokens &&
         common_agent_model_load_key_match(lhs.model_key, rhs.model_key);
 }
 
@@ -88,7 +89,7 @@ bool build_agent_inference_session(
 #endif
 
     session.inference = make_llama_cli_agent_inference(
-        model, templates, adapters, adapter_scales);
+        model, templates, adapters, adapter_scales, options.context_size_tokens);
     error.clear();
     return true;
 }
@@ -399,6 +400,7 @@ bool apply_agent_runtime_model_profile(
         scales.push_back(static_cast<float>(requested.scale));
     }
 
+    const size_t context_size_tokens = session.inference_context.key.context_size_tokens;
     session.inference_context.reset();
     for (auto * adapter : session.loaded_model.adapters) {
         llama_adapter_lora_free(adapter);
@@ -412,6 +414,7 @@ bool apply_agent_runtime_model_profile(
     options.n_gpu_layers = session.loaded_model.key.n_gpu_layers;
     options.fit_params = session.loaded_model.key.fit_params;
     options.mmproj = session.loaded_model.key.mmproj;
+    options.context_size_tokens = context_size_tokens;
     if (!build_agent_inference_session(
             options,
             session.loaded_model.backend,
@@ -429,6 +432,7 @@ bool apply_agent_runtime_model_profile(
     session.inference_context.key = {
         session.loaded_model.backend,
         session.loaded_model.key,
+        options.context_size_tokens,
     };
     session.inference_context.session.profile_id = session.loaded_model.profile_id;
     session.inference_context.session.profile_cache_key = session.loaded_model.profile_cache_key;

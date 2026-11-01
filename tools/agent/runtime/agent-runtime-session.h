@@ -24,6 +24,7 @@ struct common_agent_model_load_key {
 struct common_agent_inference_context_key {
     agent_inference_backend backend = agent_inference_backend::cli;
     common_agent_model_load_key model_key;
+    size_t context_size_tokens = 0;
 };
 
 struct common_agent_runtime_loaded_model_state {

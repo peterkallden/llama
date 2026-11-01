@@ -1050,7 +1050,21 @@ bool common_agent_runtime_session_host::run_turn(
             config.runtime_config.context_management.max_history_chars);
         const size_t projected_pre_compaction_chars = common_agent_projected_conversation_context_chars(
             pre_compaction_composition, request.prompt.size());
-        const size_t model_context_tokens = config.resident_request.context_size_tokens;
+        auto * resident_inference = runtime->inference();
+        // A restored session can have history before its model has been
+        // prepared. Resolve an automatically fitted context before deciding
+        // whether that history needs compaction.
+        if (!resident_inference && !prior_segments.empty() && config.resident_request.context_size_tokens == 0) {
+            if (!runtime->prepare_model(error)) {
+                result.error = "could not prepare model for context management: " + error;
+                error = result.error;
+                return false;
+            }
+            resident_inference = runtime->inference();
+        }
+        const size_t actual_context = resident_inference ? resident_inference->context_capacity_tokens() : 0;
+        const size_t model_context_tokens = actual_context != 0
+            ? actual_context : config.resident_request.context_size_tokens;
         const size_t pressure_chars = model_context_tokens > 0
             ? std::min(config.runtime_config.context_management.max_history_chars, model_context_tokens * 4 * 80 / 100)
             : config.runtime_config.context_management.max_history_chars;

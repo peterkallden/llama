@@ -285,7 +285,8 @@ bool common_agent_server_context_host::build_inference_session(
         llama_model_get_vocab(llama_get_model(context)),
         static_cast<size_t>(meta.slot_n_ctx));
     if (server_context_host_trace_enabled()) {
-        std::fprintf(stderr, "agent server_context host trace: event=build-inference-session-exit\n");
+        std::fprintf(stderr, "agent server_context host trace: event=build-inference-session-exit requested_context=%d model_training_context=%d actual_slot_context=%d\n",
+            current_config.context_key.n_ctx, meta.model_n_ctx_train, meta.slot_n_ctx);
         std::fflush(stderr);
     }
     error.clear();

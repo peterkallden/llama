@@ -499,7 +499,8 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
         assembly.memory_learner.get(),
         nullptr,
         runtime_config.context_budgets,
-        runtime_config.generation_config.context_size_tokens,
+        inference.context_capacity_tokens() != 0 ? inference.context_capacity_tokens()
+                                                 : runtime_config.generation_config.context_size_tokens,
         static_cast<size_t>(std::max(0, runtime_config.generation_config.n_predict)),
         runtime_config.context_token_estimator);
     if (assembly.adaptation_observer) {

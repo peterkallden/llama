@@ -18,6 +18,22 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
+const std::pair<const char *, size_t common_agent_context_budget_config::*> prompt_budget_fields[] = {
+    {"plan_chars", &common_agent_context_budget_config::plan_chars},
+    {"step_chars", &common_agent_context_budget_config::step_chars},
+    {"tool_observation_chars", &common_agent_context_budget_config::tool_observation_chars},
+    {"input_resources_chars", &common_agent_context_budget_config::input_resources_chars},
+    {"deliberate_input_resources_chars", &common_agent_context_budget_config::deliberate_input_resources_chars},
+    {"memory_chars", &common_agent_context_budget_config::memory_chars},
+    {"memory_per_item_chars", &common_agent_context_budget_config::memory_per_item_chars},
+    {"overlay_chars", &common_agent_context_budget_config::overlay_chars},
+    {"overlay_per_item_chars", &common_agent_context_budget_config::overlay_per_item_chars},
+    {"deliberate_memory_chars", &common_agent_context_budget_config::deliberate_memory_chars},
+    {"deliberate_memory_per_item_chars", &common_agent_context_budget_config::deliberate_memory_per_item_chars},
+    {"deliberate_overlay_chars", &common_agent_context_budget_config::deliberate_overlay_chars},
+    {"deliberate_overlay_per_item_chars", &common_agent_context_budget_config::deliberate_overlay_per_item_chars},
+};
+
 bool investigation_entity_kind_from_name(const std::string & value,
         common_investigation_entity_kind & out) {
     static const std::map<std::string, common_investigation_entity_kind> kinds = {
@@ -557,6 +573,10 @@ bool parse_agent_host_config_json(
         }
         if (runtime.contains("context_budgets") && runtime["context_budgets"].is_object()) {
             const auto & budgets = runtime["context_budgets"];
+            for (const auto & field : prompt_budget_fields) {
+                if (budgets.contains(field.first) && !budgets[field.first].is_null())
+                    config.context_budgets.configured_prompt_values.insert(field.first);
+            }
             read_optional(budgets, "plan_chars", config.context_budgets.plan_chars);
             read_optional(budgets, "step_chars", config.context_budgets.step_chars);
             read_optional(budgets, "tool_observation_chars", config.context_budgets.tool_observation_chars);
@@ -2068,6 +2088,13 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"max_continuations", config.max_continuations},
         }},
     };
+    const common_agent_context_budget_config budget_defaults;
+    for (const auto & field : prompt_budget_fields) {
+        if (config.context_budgets.configured_prompt_values.count(field.first) == 0 &&
+                config.context_budgets.*(field.second) == budget_defaults.*(field.second)) {
+            result["runtime"]["context_budgets"].erase(field.first);
+        }
+    }
     if (!config.model_catalog.directory.empty() || !config.model_catalog.bases.empty() ||
             !config.model_catalog.profiles.empty()) {
         result["models"] = json::parse(common_agent_model_catalog_to_json(config.model_catalog));
@@ -2193,6 +2220,10 @@ bool validate_agent_host_config(
     }
     if (config.n_threads < 1) {
         error = "runtime.n_threads must be greater than zero";
+        return false;
+    }
+    if (config.runtime_context_size < 0) {
+        error = "runtime.context_size must not be negative";
         return false;
     }
     if (config.context_management.recent_turns == 0 || config.context_management.recent_turns > 32 ||

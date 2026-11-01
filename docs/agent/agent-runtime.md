@@ -2313,7 +2313,10 @@ shared-volume materialization for remote clusters remains a later slice.
 Prompt and observation budgets are configured by the host under
 `runtime.context_budgets`. Defaults exist in the runtime code and can be
 adjusted for the model and `runtime.context_size` used by the instance. Values
-are character budgets unless stated otherwise:
+are character budgets unless stated otherwise. Configured prompt values are
+soft targets in the adaptive projections below, and their presence is retained
+when configuration is serialized. Resource chunk and checkpoint limits remain
+hard bounds:
 
 ```json
 {
@@ -2489,13 +2492,28 @@ explicit note that linked work remains pending and no final answer was
 generated. The active plan remains resumable; the limit is not treated as
 successful completion.
 
-`context_size` is the model token context and should be configured separately
-from the character budgets. CLI and daemon defaults use `3072` tokens so the
-compact plan, verified observations and one bounded reflection response have
-reasonable headroom; smaller models or longer tool workflows may still need a
-larger value. The runtime still applies hard host-owned limits
+`context_size` is the model token context and is configured separately from
+the character budgets. When omitted or set to zero, the resident model host
+uses model metadata and llama.cpp fitting to determine a context that fits the
+available resources. A nonzero value is an explicit requested context size.
+The runtime still applies hard host-owned limits
 for transport, resources, sandbox requests and result sizes; these budgets do
 not allow a client to exceed those limits.
+
+The resident backend exposes the fitted per-slot capacity to the agent. For
+planning, reasoning and memory learning, optional memory projections are
+allocated within the remaining capacity using the configured prompt budgets as
+soft targets, while omitted targets follow observed demand; unused capacity can
+be redistributed. The planner can expand
+resource and dataset inventory projections when capacity permits, retaining
+their established minimum view. Allocation uses the resident model tokenizer
+where available and an estimate otherwise, with headroom for the chat template.
+The backend still tokenizes and validates the complete prompt before inference.
+Policy text and task instructions are not shortened by this
+allocation. Other prompt sections continue to use their existing limits.
+The CLI backend creates a context per generation; its admission limit is the
+explicit size or, in automatic mode, the model's training-context metadata.
+That limit is not a promise that an allocation will fit the available memory.
 
 When `runtime.context_size` is available, the runtime also performs a
 conservative pre-inference estimate over the active request, plan, observations,

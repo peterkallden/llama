@@ -14,6 +14,11 @@ public:
             common_agent_runtime_execution_control control)
         : backend(backend), control(std::move(control)) {}
 
+    size_t context_capacity_tokens() const override { return backend.context_capacity_tokens(); }
+    std::optional<size_t> count_context_text_tokens(const std::string & text) const override {
+        return backend.count_context_text_tokens(text);
+    }
+
     common_agent_generation_request bind(common_agent_generation_request request) const {
         request.options.should_stop = [control = control, prior = request.options.should_stop] {
             return control.should_stop() || (prior && prior());

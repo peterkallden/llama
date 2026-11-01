@@ -3,11 +3,16 @@
 #include "agent/agent-working-state.h"
 
 #include <cstddef>
+#include <set>
+#include <string>
 
 // Character budgets used when runtime state is rendered into model prompts.
 // These are soft context budgets: the host may tune them for the selected
 // model, while individual renderers still apply their own safety limits.
 struct common_agent_context_budget_config {
+    // Prompt values supplied by configuration, preserved across round trips.
+    // Programmatic callers may leave this empty when they do not know origin.
+    std::set<std::string> configured_prompt_values;
     size_t plan_chars = 2048;
     size_t step_chars = 1400;
     size_t tool_observation_chars = 4096;

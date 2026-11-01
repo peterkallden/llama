@@ -21,6 +21,8 @@ static void require(bool ok, const std::string & message) {
 }
 struct routing_inference final : common_agent_inference {
     std::vector<common_agent_generation_request> requests;
+    size_t capacity = 0;
+    size_t context_capacity_tokens() const override { return capacity; }
     std::string selection = "NO_TOOLS";
     bool fail_conversation = false;
     std::string plan_selection = "not-json";
@@ -61,6 +63,12 @@ struct routing_inference final : common_agent_inference {
 struct planner_prompt_inference final : common_agent_inference {
     std::vector<common_agent_generation_request> requests;
     std::vector<std::string> replies;
+    size_t capacity = 0;
+    size_t token_divisor = 0;
+    size_t context_capacity_tokens() const override { return capacity; }
+    std::optional<size_t> count_context_text_tokens(const std::string & text) const override {
+        return token_divisor ? std::optional<size_t>((text.size() + token_divisor - 1) / token_divisor) : std::nullopt;
+    }
     bool generate(const common_agent_generation_request & request, common_agent_generation_result & result) override {
         requests.push_back(request);
         result = {};
@@ -147,6 +155,77 @@ static void check_planner_prompt_contracts() {
     request.require_tool_execution = false;
     empty_planner->create_plan(request, error);
     require(!error.empty() && empty_inference.requests.empty(), "empty DSL tool plan was sent to the model or switched formats");
+
+    common_memory_hit hit;
+    hit.memory.id = "context-allocation-fixture";
+    hit.memory.kind = common_memory_kind::fact;
+    hit.memory.content = std::string(5000, 'x');
+    request.memories = {hit};
+    planner_prompt_inference small, large;
+    small.capacity = 2000;
+    large.capacity = 10000;
+    auto small_planner = make_llama_cli_planner(small, config, {tool});
+    auto large_planner = make_llama_cli_planner(large, config, {tool});
+    small_planner->create_plan(request, error);
+    large_planner->create_plan(request, error);
+    require(small.requests.size() == 1 && large.requests.size() == 1,
+        "context allocation fixtures did not reach planning");
+    require(small.requests[0].messages.back().content.size() < large.requests[0].messages.back().content.size(),
+        "planner did not adapt optional memories to actual context capacity");
+    require(small.requests[0].messages.back().content.find(request.prompt) != std::string::npos,
+        "planner context allocation lost the user's request");
+
+    const auto original_prompt = request.prompt;
+    request.prompt = std::string(4500, 'q');
+    planner_prompt_inference heuristic, tokenized;
+    heuristic.capacity = tokenized.capacity = 3000;
+    tokenized.token_divisor = 4;
+    make_llama_cli_planner(heuristic, config, {tool})->create_plan(request, error);
+    make_llama_cli_planner(tokenized, config, {tool})->create_plan(request, error);
+    require(heuristic.requests.size() == 1 && tokenized.requests.size() == 1 &&
+        heuristic.requests[0].messages.back().content.find("context-allocation-fixture") == std::string::npos &&
+        tokenized.requests[0].messages.back().content.find("context-allocation-fixture") != std::string::npos,
+        "planner did not use the backend tokenizer for fixed context allocation");
+    request.prompt = original_prompt;
+
+    request.memories.clear();
+    for (int index = 0; index < 20; ++index) {
+        common_agent_input_resource resource;
+        resource.resource.uri = "resource://test/" + std::to_string(index);
+        resource.resource.name = std::string(200, 'r');
+        request.input_resources.push_back(resource);
+    }
+    planner_prompt_inference small_inventory, large_inventory;
+    small_inventory.capacity = 2000;
+    large_inventory.capacity = 10000;
+    make_llama_cli_planner(small_inventory, config, {tool})->create_plan(request, error);
+    make_llama_cli_planner(large_inventory, config, {tool})->create_plan(request, error);
+    require(small_inventory.requests.size() == 1 && large_inventory.requests.size() == 1 &&
+        small_inventory.requests[0].messages.back().content.find("Resource: id=r20") == std::string::npos &&
+        large_inventory.requests[0].messages.back().content.find("Resource: id=r20") != std::string::npos,
+        "planner did not expand the resource inventory when capacity allowed it");
+    request.input_resources.clear();
+
+    common_plan_state evidence_plan;
+    evidence_plan.goal = "Report the observed result";
+    evidence_plan.observations.push_back({"tool:sample:dataset.schema", "dataset.schema",
+        "{\"value\":\"" + std::string(800, 'y') + "\"}", 1.0f});
+    planner_prompt_inference small_draft, large_draft;
+    small_draft.capacity = 500;
+    large_draft.capacity = 10000;
+    small_draft.replies = {"OK"};
+    large_draft.replies = {"OK"};
+    auto small_executor = make_llama_cli_action_executor(small_draft, config);
+    auto large_executor = make_llama_cli_action_executor(large_draft, config);
+    small_executor->generate_draft_result(request, evidence_plan, {}, error);
+    large_executor->generate_draft_result(request, evidence_plan, {}, error);
+    require(small_draft.requests.size() == 1 && large_draft.requests.size() == 1,
+        "draft allocation fixtures did not reach inference");
+    const auto & small_evidence = small_draft.requests[0].messages.back().content;
+    const auto & large_evidence = large_draft.requests[0].messages.back().content;
+    require(small_evidence.find("evidence_projection: unavailable") != std::string::npos &&
+        large_evidence.find("dataset.schema") != std::string::npos,
+        "draft did not adapt its evidence view or disclose unavailable evidence");
 }
 
 int main() {
@@ -764,6 +843,31 @@ int main() {
             planner_prompt.find("web.search") == std::string::npos,
             "blueprint planner received tools outside its selected family");
         require(bounded_plan.empty(), "failed blueprint planning left a nonexistent active plan");
+        common_memory_hit context_hit;
+        context_hit.memory.id = "host-context-fixture";
+        context_hit.memory.kind = common_memory_kind::fact;
+        context_hit.memory.content = std::string(5000, 'x');
+        memories_found.push_back(context_hit);
+        const auto host_planner_size = [&](size_t capacity, const std::string & turn_id) {
+            blueprint_turn.scope.turn_id = turn_id;
+            std::string host_plan;
+            common_agent_runtime_host_build_context host_context{memories, &plans, blueprint_turn,
+                &host_plan, &methods, memories_found, bounded_tooling};
+            auto host_inputs = make_agent_runtime_host_agent_inputs(host_context, blueprint_turn.orchestration_config);
+            auto host = make_agent_runtime_host_execution(host_inputs, inference);
+            inference.capacity = capacity;
+            inference.requests.clear();
+            run_agent_runtime_host(host, result, error);
+            const auto found = std::find_if(inference.requests.begin(), inference.requests.end(), [](const auto & item) {
+                return item.purpose == common_agent_generation_purpose::planner;
+            });
+            require(found != inference.requests.end(), "host fixture did not reach planning");
+            return found->messages.back().content.size();
+        };
+        const auto small_host_prompt = host_planner_size(2000, "blueprint-small-context");
+        const auto large_host_prompt = host_planner_size(10000, "blueprint-large-context");
+        require(small_host_prompt < large_host_prompt,
+            "runtime host did not forward fitted capacity to planner");
     }
     return 0;
 }

@@ -329,6 +329,12 @@ inline common_agent_generated_text_result common_agent_generated_text_result_fro
 class common_agent_inference {
 public:
     virtual ~common_agent_inference() = default;
+    // The usable context for one generation after model fitting. Backends
+    // without a resident context report zero (unknown).
+    virtual size_t context_capacity_tokens() const { return 0; }
+    // Count standalone text for budgeting. Chat-template overhead is added
+    // by the caller; complete prompts are still validated after rendering.
+    virtual std::optional<size_t> count_context_text_tokens(const std::string &) const { return std::nullopt; }
     virtual bool generate(
         const common_agent_generation_request & request,
         common_agent_generation_result & result) = 0;
