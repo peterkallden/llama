@@ -704,5 +704,66 @@ int main() {
         require(!run_agent_runtime_host(empty_execution, result, error) && inference.requests.empty(),
             "empty catalog bypassed a host-bound content read");
     }
+    {
+        // A standalone blueprint reserves a task ID but leaves planning to
+        // the model. It must use the same family preflight as normal plans.
+        common_plan_state blueprint;
+        blueprint.id = "test-blueprint";
+        blueprint.kind = common_plan_kind::blueprint;
+        blueprint.scope = common_plan_scope::global;
+        blueprint.namespace_id = "test";
+        blueprint.session_id = "session";
+        blueprint.goal = "Inspect evidence";
+        blueprint.success_criteria = "Answer from evidence";
+        blueprint.steps = {{"orient", "Orient", "Inspect evidence"}};
+        require(plans.create(blueprint, error), "blueprint fixture could not be stored: " + error);
+        common_blueprint_candidate candidate;
+        candidate.logical_id = "test-method";
+        candidate.persisted_id = blueprint.id;
+        candidate.description = "Inspect evidence";
+        std::vector<common_blueprint_candidate> methods{candidate};
+        auto blueprint_turn = turn;
+        blueprint_turn.orchestration_config.agent_blueprint = candidate.logical_id;
+        blueprint_turn.scope.turn_id = "blueprint-turn";
+        blueprint_turn.request.require_tool_execution = false;
+        std::string blueprint_plan;
+        common_agent_runtime_host_build_context blueprint_context{memories, &plans, blueprint_turn,
+            &blueprint_plan, &methods, memories_found, tooling};
+        auto blueprint_inputs = make_agent_runtime_host_agent_inputs(blueprint_context, blueprint_turn.orchestration_config);
+        auto blueprint_execution = make_agent_runtime_host_execution(blueprint_inputs, inference);
+        inference.fail_conversation = false;
+        inference.selection = "NO_TOOLS";
+        inference.requests.clear();
+        const bool blueprint_ok = run_agent_runtime_host(blueprint_execution, result, error);
+        require(blueprint_ok, "standalone blueprint tool-free route failed: " + error);
+        require(inference.requests.size() == 2 &&
+            inference.requests.front().purpose == common_agent_generation_purpose::tool_family_selection &&
+            inference.requests.back().purpose == common_agent_generation_purpose::conversation &&
+            inference.requests.back().tools.empty(),
+            "standalone blueprint did not offer a tool-free family decision");
+        require(blueprint_plan.empty(), "tool-free blueprint left a nonexistent active plan");
+        blueprint_turn.scope.turn_id = "blueprint-tool-turn";
+        auto bounded_tooling = tooling;
+        bounded_tooling.tools.front().parameters =
+            R"({"type":"object","required":["dataset"],"properties":{"dataset":{"type":"string"}}})";
+        std::string bounded_plan;
+        common_agent_runtime_host_build_context bounded_context{memories, &plans, blueprint_turn,
+            &bounded_plan, &methods, memories_found, bounded_tooling};
+        auto bounded_inputs = make_agent_runtime_host_agent_inputs(bounded_context, blueprint_turn.orchestration_config);
+        auto bounded_execution = make_agent_runtime_host_execution(bounded_inputs, inference);
+        inference.selection = "TOOLS: dataset";
+        inference.requests.clear();
+        require(!run_agent_runtime_host(bounded_execution, result, error), "synthetic planner unexpectedly completed");
+        require(inference.requests.size() >= 2 &&
+            inference.requests.front().purpose == common_agent_generation_purpose::tool_family_selection,
+            "standalone blueprint skipped family selection for a tool task");
+        const auto & planner_request = inference.requests[1];
+        std::string planner_prompt;
+        for (const auto & message : planner_request.messages) planner_prompt += message.content;
+        require(planner_prompt.find("dataset.schema") != std::string::npos &&
+            planner_prompt.find("web.search") == std::string::npos,
+            "blueprint planner received tools outside its selected family");
+        require(bounded_plan.empty(), "failed blueprint planning left a nonexistent active plan");
+    }
     return 0;
 }

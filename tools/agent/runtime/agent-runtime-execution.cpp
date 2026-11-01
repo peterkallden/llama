@@ -337,7 +337,19 @@ bool select_model_tool_families(
         return run_agent_chat_runtime(chat_execution, execution.family_chat_result, error);
     };
     if (!execution.current_plan_id.empty() && !request.resource_read_binding) {
-        return true;
+        // A standalone blueprint reserves the task ID before the ordinary
+        // planner has created the plan. A reserved ID is not a resumed plan.
+        if (!execution.route_selected ||
+                execution.selected_route.kind != common_agent_route_kind::blueprint) {
+            return true;
+        }
+        std::string plan_error;
+        const auto plan = execution.plan_store.get(execution.current_plan_id, plan_error);
+        if (!plan_error.empty()) {
+            error = plan_error;
+            return false;
+        }
+        if (plan) return true;
     }
     if (execution.tooling.tools.empty()) {
         if (caller_requires_tool_execution || request.tool_call ||
@@ -1816,6 +1828,14 @@ bool run_agent_runtime_driver(
         result = std::move(aggregate);
         result.events.insert(result.events.begin(), execution.pre_turn_events.begin(), execution.pre_turn_events.end());
         result.trace.insert(result.trace.begin(), execution.pre_turn_trace.begin(), execution.pre_turn_trace.end());
+        // Do not leave a reserved blueprint task ID as the session's active
+        // plan when planning failed or the model answered without tools.
+        if (execution.route_selected && execution.selected_route.kind == common_agent_route_kind::blueprint &&
+                !execution.current_plan_id.empty()) {
+            std::string plan_error;
+            const auto plan = execution.plan_store.get(execution.current_plan_id, plan_error);
+            if (!plan && plan_error.empty()) execution.current_plan_id.clear();
+        }
     };
     const auto fail_with_partial_result = [&](const std::string & failure) {
         preserve_partial_result();
@@ -1874,7 +1894,7 @@ bool run_agent_runtime_driver(
     }
 
     if (!execution.route_selected ||
-            execution.selected_route.kind == common_agent_route_kind::normal_plan) {
+            execution.selected_route.kind != common_agent_route_kind::blueprint_workflow) {
         const common_agent_request routed_request = make_agent_runtime_driver_request(execution);
         if (!select_model_tool_families(execution, routed_request, error)) {
             if (execution.family_chat_routed) aggregate = std::move(execution.family_chat_result);
