@@ -997,6 +997,12 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-hypothesis-workflow-smoke)
+add_executable(${TARGET} smoke/runtime/agent-hypothesis-workflow-smoke.cpp)
+target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-resource-store-smoke)
 add_executable(${TARGET}
     smoke/resource/agent-resource-store-smoke.cpp

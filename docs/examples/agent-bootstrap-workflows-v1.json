@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v40",
+  "version": "v41",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -197,6 +197,13 @@
       "summary": "project graph maintenance",
       "content": "First look for existing entities and relationships. Propose a sourced description, relation, additional assertion or retraction only when it is useful and authorized. Preserve source revision and distinguish proposals from verified facts; do not make updates merely because a graph was read.",
       "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "hypothesis-evidence-discipline-v1",
+      "summary": "test a hypothesis from different perspectives",
+      "content": "State the hypothesis and scope neutrally. Search for material that could support it and separately for material that could contradict, qualify or offer an alternative explanation. Search results and article metadata are discovery leads, not evidence of what a source concludes. Inspect relevant source content or dataset results before assigning a stance; preserve source references, uncertainty and study or coverage limits. Do not assume that a successful read supports the hypothesis. Report when a perspective could not be searched or evaluated; absence of a contrary result is not proof of absence.",
+      "importance": 0.95,
       "confidence": 1.0
     }
   ],
@@ -1476,6 +1483,150 @@
           "arguments": "{}",
           "model_supplies_arguments": true,
           "model_instruction": "Use an edge ID and its version from the preceding graph.search result; do not invent either."
+        }
+      ]
+    },
+    {
+      "id": "hypothesis-inquiry-path-v1",
+      "source_revision": "agent-workflows-starter@v41",
+      "workflow_ref": "workflow://research/hypothesis-inquiry",
+      "workflow_revision": "v1",
+      "family": "research",
+      "graph_revision": "hypothesis-inquiry@v1",
+      "preferred_thinking_mode": "research",
+      "optional_capabilities": [
+        "web.search",
+        "web.fetch",
+        "resource.read",
+        "dataset.sample",
+        "data.query",
+        "openapi.read",
+        "artifact.export"
+      ],
+      "start_state": "investigate",
+      "terminal_states": [
+        "searched"
+      ],
+      "transitions": [
+        {
+          "id": "support-web",
+          "from": "investigate",
+          "to": "web-challenge",
+          "tool": "web.search",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-web",
+          "from": "web-challenge",
+          "to": "searched",
+          "tool": "web.search",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-document",
+          "from": "investigate",
+          "to": "document-challenge",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-document",
+          "from": "document-challenge",
+          "to": "searched",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-dataset",
+          "from": "investigate",
+          "to": "dataset-challenge",
+          "tool": "dataset.sample",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-dataset",
+          "from": "dataset-challenge",
+          "to": "searched",
+          "tool": "dataset.sample",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-query",
+          "from": "investigate",
+          "to": "query-challenge",
+          "tool": "data.query",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-query",
+          "from": "query-challenge",
+          "to": "searched",
+          "tool": "data.query",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-openalex",
+          "from": "investigate",
+          "to": "openalex-challenge",
+          "tool": "openalex.listWorks",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-openalex",
+          "from": "openalex-challenge",
+          "to": "searched",
+          "tool": "openalex.listWorks",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-eurostat",
+          "from": "investigate",
+          "to": "eurostat-challenge",
+          "tool": "eurostat.getData",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-eurostat",
+          "from": "eurostat-challenge",
+          "to": "searched",
+          "tool": "eurostat.getData",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
         }
       ]
     }
@@ -3154,6 +3305,77 @@
           ]
         }
       ]
+    },
+    {
+      "id": "hypothesis-inquiry-v1",
+      "source_revision": "agent-workflows-starter@v41",
+      "selection_description": "Test a user hypothesis using available sources, looking for support and alternative or conflicting evidence.",
+      "purpose": "Assess a testable hypothesis fairly using the source types available to the host.",
+      "goal": "Investigate the hypothesis using both supporting and challenging searches, then explain the evidence and remaining uncertainty.",
+      "success_criteria": "The two searches are accounted for; conclusions are tied to inspected sources and any missing perspectives, unavailable sources or incomplete coverage are explicit.",
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "hypothesis-evidence-discipline-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://research/hypothesis-inquiry",
+          "workflow_revision": "v1"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "source-content",
+          "description": "Discovery hits and metadata are not proof of a source conclusion. Identify what has actually been read or measured.",
+          "hard": true
+        },
+        {
+          "id": "alternative-perspective",
+          "description": "Search for material that could challenge or qualify the hypothesis, and disclose unavailable checks or incomplete coverage.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "frame",
+          "title": "Frame the hypothesis",
+          "objective": "State the hypothesis, scope, alternative explanations and what evidence could distinguish them."
+        },
+        {
+          "id": "support",
+          "title": "Search for support",
+          "objective": "Search or inspect available material that might support the hypothesis.",
+          "depends_on": [
+            "frame"
+          ]
+        },
+        {
+          "id": "challenge",
+          "title": "Search for challenges",
+          "objective": "Search or inspect material that might contradict or qualify it or support an alternative.",
+          "depends_on": [
+            "support"
+          ]
+        },
+        {
+          "id": "compare",
+          "title": "Compare the evidence",
+          "objective": "Compare inspected sources and results, source independence and limitations without treating successful retrieval as proof.",
+          "depends_on": [
+            "challenge"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Report the assessment",
+          "objective": "Explain support, challenges and unresolved gaps with source references.",
+          "depends_on": [
+            "compare"
+          ]
+        }
+      ],
+      "next_action": "frame"
     }
   ]
 }

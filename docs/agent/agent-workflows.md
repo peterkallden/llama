@@ -28,6 +28,31 @@ still be requested as needed.
 
 This page describes runtime workflows (not GitHub Actions workflows).
 
+## Hypothesis inquiry
+
+The starter package includes `hypothesis-inquiry-v1` and
+`workflow://research/hypothesis-inquiry@v1`. The host selects an available
+source type for an initial search or inspection, then executes a separate
+challenge transition using that same source type. Declared paths cover web
+search, resources, datasets, OpenAlex and Eurostat when the corresponding
+tools are available and authorized. The blueprint asks for alternative
+explanations, source inspection and explicit limitations. Search hits and
+metadata are discovery leads, not evidence of a source's conclusions.
+
+The two transitions establish that both searches were attempted; they do not
+prove that returned material supports or contradicts the hypothesis, or that
+the model read and compared it correctly. A failed or unavailable transition
+does not establish absence of contrary evidence. The graph does not yet choose
+different source types for the two transitions or provide a complete
+cross-source evidence assessment. In particular, the current research adapter
+can label some successful reads as `supports` without a semantic assessment;
+that limitation applies to this workflow too.
+
+`scripts/test-agent-hypothesis-workflow-smoke.sh` exercises package import,
+route eligibility and the support-to-challenge continuation with simulated
+observations. It is model-free and does not verify real provider access or the
+quality of a model's assessment.
+
 ## Contracts
 
 - A **blueprint** describes a task goal, constraints, assumptions and success

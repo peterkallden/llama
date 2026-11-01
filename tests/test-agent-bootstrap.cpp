@@ -264,12 +264,25 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v40");
+        checked_in_starter.version == "v41");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
     };
     assert(has_workflow("workflow://graph/investigate") && has_workflow("workflow://graph/maintain"));
+    assert(has_workflow("workflow://research/hypothesis-inquiry"));
+    const auto hypothesis = std::find_if(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) { return workflow.definition.workflow_ref == "workflow://research/hypothesis-inquiry"; });
+    assert(hypothesis != checked_in_starter.workflows.end());
+    assert(hypothesis->definition.transitions.size() == 12);
+    for (const auto & entry : hypothesis->definition.transitions) {
+        if (entry.from_state != hypothesis->definition.start_state) continue;
+        assert(entry.optional_availability && entry.model_supplies_arguments);
+        const auto challenge = std::find_if(hypothesis->definition.transitions.begin(), hypothesis->definition.transitions.end(),
+            [&](const auto & next) { return next.from_state == entry.to_state && next.tool_name == entry.tool_name; });
+        assert(challenge != hypothesis->definition.transitions.end() && challenge->optional_availability &&
+            challenge->model_supplies_arguments && challenge->to_state == "searched");
+    }
     assert(has_workflow("workflow://eurostat/catalog-discovery"));
     assert(has_workflow("workflow://eurostat/metadata-resolution"));
     assert(has_workflow("workflow://eurostat/data-retrieval"));
@@ -502,9 +515,9 @@ int main() {
         std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
     assert(!common_agent_package_parse_json(
         overflowing_page_package, over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 28 &&
-        checked_in_starter.blueprints.size() == 21);
-    assert(checked_in_starter.workflows.size() == 22);
+    assert(checked_in_starter.procedures.size() == 29 &&
+        checked_in_starter.blueprints.size() == 22);
+    assert(checked_in_starter.workflows.size() == 23);
     const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
             return blueprint.id == "code-overview-v2";
@@ -880,7 +893,7 @@ int main() {
     assert(reparsed_eurostat_metadata != reparsed_starter.workflows.end() &&
         reparsed_eurostat_metadata->definition.transitions.front().model_instruction ==
             eurostat_metadata_workflow->definition.transitions.front().model_instruction);
-    assert(reparsed_starter.workflows.size() == 22 &&
+    assert(reparsed_starter.workflows.size() == 23 &&
         reparsed_dataset_blueprint->workflow_bindings.size() == 3 &&
         reparsed_starter.workflows[0].definition.required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&
