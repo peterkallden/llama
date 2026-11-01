@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v38",
+  "version": "v39",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -182,6 +182,20 @@
       "id": "document-phase-handoff-v1",
       "summary": "Bounded document evidence handoff.",
       "content": "Carry forward the selected resource version, representation, question, verified text or table references, inspected coverage and extraction limits. Reuse adequate evidence from that version. Read text for narrative questions and use structured tables only when needed; no tables is a valid outcome, not a failed phase. Keep quoted text, interpretation and OCR limitations distinct. Do not infer a forensic investigation or external research from upload alone.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "graph-investigation-v1",
+      "summary": "project graph investigation",
+      "content": "Search the scoped graph for relevant entities or relations. Browse only useful neighbors and verify consequential proposals or old observations against their sources. Missing graph data is not evidence of absence. Continue with other available sources if the graph is unavailable.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "graph-maintenance-v1",
+      "summary": "project graph maintenance",
+      "content": "First look for existing entities and relationships. Propose a sourced description, relation, additional assertion or retraction only when it is useful and authorized. Preserve source revision and distinguish proposals from verified facts; do not make updates merely because a graph was read.",
       "importance": 0.9,
       "confidence": 1.0
     }
@@ -1175,6 +1189,204 @@
           "kind": "tool",
           "tool": "artifact.export",
           "arguments": "{\"format\":\"markdown\",\"name\":\"research-report\"}"
+        }
+      ]
+    },
+    {
+      "id": "project-graph-investigation-path-v1",
+      "source_revision": "agent-workflows-starter@v39",
+      "workflow_ref": "workflow://graph/investigate",
+      "workflow_revision": "v1",
+      "family": "graph",
+      "graph_revision": "graph-investigation@v1",
+      "required_capabilities": [
+        "graph.find",
+        "graph.expand"
+      ],
+      "optional_capabilities": [
+        "graph.get",
+        "graph.search",
+        "graph.source"
+      ],
+      "required_context": [
+        "context.graph.project"
+      ],
+      "start_state": "search",
+      "terminal_states": [
+        "complete"
+      ],
+      "transitions": [
+        {
+          "id": "find-nodes",
+          "from": "search",
+          "to": "found",
+          "tool": "graph.find",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-expansion",
+          "from": "found",
+          "to": "expand",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "Finish when there are no relevant nodes or expansion is unnecessary.",
+              "to": "complete"
+            },
+            {
+              "id": "expand",
+              "description": "Explore a relevant returned node.",
+              "to": "expand",
+              "requires": [
+                "/result/nodes/0/id"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "expand-node",
+          "from": "expand",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/0/id"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "project-graph-maintenance-path-v1",
+      "source_revision": "agent-workflows-starter@v39",
+      "workflow_ref": "workflow://graph/maintain",
+      "workflow_revision": "v1",
+      "family": "graph",
+      "graph_revision": "graph-maintenance@v1",
+      "required_capabilities": [
+        "graph.find",
+        "graph.link.propose",
+        "graph.describe.propose",
+        "graph.retract.propose",
+        "graph.search"
+      ],
+      "optional_capabilities": [
+        "graph.get",
+        "graph.expand"
+      ],
+      "required_context": [
+        "context.graph.project"
+      ],
+      "start_state": "search",
+      "terminal_states": [
+        "complete"
+      ],
+      "transitions": [
+        {
+          "id": "find-existing",
+          "from": "search",
+          "to": "found",
+          "tool": "graph.find",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-action",
+          "from": "found",
+          "to": "describe",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "Finish without a proposal when no supported update is needed.",
+              "to": "complete"
+            },
+            {
+              "id": "describe",
+              "description": "Propose a sourced description for a returned node.",
+              "to": "describe",
+              "requires": [
+                "/result/nodes/0/id"
+              ]
+            },
+            {
+              "id": "link",
+              "description": "Propose a supported relationship or an additional assertion.",
+              "to": "link"
+            },
+            {
+              "id": "retract",
+              "description": "Search existing relations before proposing a withdrawal.",
+              "to": "search-edges"
+            }
+          ]
+        },
+        {
+          "id": "describe-node",
+          "from": "describe",
+          "to": "complete",
+          "tool": "graph.describe.propose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use a returned node ID and a source-grounded description. Do not invent evidence.",
+          "bindings": [
+            {
+              "target": "/expected_revision",
+              "from": "$previous",
+              "source": "/result/revision"
+            }
+          ]
+        },
+        {
+          "id": "link-nodes",
+          "from": "link",
+          "to": "complete",
+          "tool": "graph.link.propose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use existing entities where possible and include supported rationale and evidence."
+        },
+        {
+          "id": "find-edges",
+          "from": "search-edges",
+          "to": "edges-found",
+          "tool": "graph.search",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Search saved edges relevant to the proposed withdrawal using at least one supported filter."
+        },
+        {
+          "id": "choose-withdrawal",
+          "from": "edges-found",
+          "to": "retract",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "Finish when no supported withdrawal is needed.",
+              "to": "complete"
+            },
+            {
+              "id": "retract",
+              "description": "Propose withdrawal of an edge in the search result.",
+              "to": "retract",
+              "requires": [
+                "/result/edges/0/id"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "retract-edge",
+          "from": "retract",
+          "to": "complete",
+          "tool": "graph.retract.propose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an edge ID and its version from the preceding graph.search result; do not invent either."
         }
       ]
     }
@@ -2777,6 +2989,80 @@
           "id": "compose",
           "title": "Compose report",
           "objective": "Compose report sections from the host-frozen evidence snapshot."
+        }
+      ]
+    },
+    {
+      "id": "project-graph-investigation-v1",
+      "source_revision": "agent-workflows-starter@v39",
+      "selection_description": "Investigate entities and relations in the project context graph.",
+      "purpose": "Investigate entities and relations in the project context graph.",
+      "goal": "Use graph knowledge to support a question, checking sources as needed.",
+      "success_criteria": "Report the result and its source, status and limitations without inventing information.",
+      "required_capabilities": [
+        "graph.find"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "graph-investigation-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://graph/investigate",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "inspect",
+      "steps": [
+        {
+          "id": "inspect",
+          "title": "Inspect",
+          "objective": "Find relevant scoped graph entities and determine the next justified action."
+        },
+        {
+          "id": "finish",
+          "title": "Finish",
+          "objective": "Report supported results and limitations.",
+          "depends_on": [
+            "inspect"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "project-graph-maintenance-v1",
+      "source_revision": "agent-workflows-starter@v39",
+      "selection_description": "Propose a sourced update to the project context graph.",
+      "purpose": "Propose a sourced update to the project context graph.",
+      "goal": "Find existing graph knowledge and propose only a supported, authorized update.",
+      "success_criteria": "Report the result and its source, status and limitations without inventing information.",
+      "required_capabilities": [
+        "graph.find"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "graph-maintenance-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://graph/maintain",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "inspect",
+      "steps": [
+        {
+          "id": "inspect",
+          "title": "Inspect",
+          "objective": "Find relevant scoped graph entities and determine the next justified action."
+        },
+        {
+          "id": "finish",
+          "title": "Finish",
+          "objective": "Report supported results and limitations.",
+          "depends_on": [
+            "inspect"
+          ]
         }
       ]
     }

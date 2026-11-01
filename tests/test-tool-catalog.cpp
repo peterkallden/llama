@@ -20,7 +20,7 @@ int main() {
     assert(codex_config_file);
     const auto codex_config = nlohmann::json::parse(codex_config_file);
     const auto & codex_tools = codex_config["tools"]["capabilities"]["codex.audit.tools"];
-    for (const auto * name : {"memory.remember", "graph.link.propose", "graph.retract.propose"}) {
+    for (const auto * name : {"memory.remember", "graph.link.propose", "graph.describe.propose", "graph.retract.propose"}) {
         assert(std::find(codex_tools.begin(), codex_tools.end(), name) != codex_tools.end());
     }
     assert(codex_config["tools"]["profiles"]["codex-tools-audit"]["allow_policy_gated_writes"] == true);
@@ -520,7 +520,7 @@ int main() {
                 definition.name == "document.propose_patch" || definition.name == "document.apply_patch" ||
                 definition.name == "visualize.create") {
             assert(definition.requires_confirmation);
-        } else if (definition.name == "graph.link.propose" || definition.name == "graph.retract.propose") {
+        } else if (definition.name == "graph.link.propose" || definition.name == "graph.describe.propose" || definition.name == "graph.retract.propose") {
             assert(definition.risk_class == common_tool_risk_class::memory_proposal);
             assert(definition.requires_confirmation);
         } else {
@@ -556,7 +556,7 @@ int main() {
         return definition.name == "graph.search" && definition.risk_class == common_tool_risk_class::local_read && !definition.requires_confirmation;
     }));
     assert(std::none_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
-        return definition.name == "graph.link.propose" || definition.name == "graph.retract.propose";
+        return definition.name == "graph.link.propose" || definition.name == "graph.describe.propose" || definition.name == "graph.retract.propose";
     }));
     assert(std::none_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
         return definition.name == "diagnostics.call_hierarchy";

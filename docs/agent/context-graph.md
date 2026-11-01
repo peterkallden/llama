@@ -59,6 +59,12 @@ status is specified. Results contain the edges and their endpoints, and mark
 truncation. For example, `{ "from": "<alice-id>", "relation": "authored" }`
 finds Alice's saved authorship proposals. Use the paper ID as `to` to search
 in the other direction, or `graph.expand` to browse its other relationships.
+`graph.describe.propose` adds a sourced description to an existing node using
+the graph revision from a read as `expected_revision`. Descriptions are model
+proposals, not verified facts. The node ID does not change; prior descriptions
+are retained. The latest proposal participates in `graph.find` and bounded
+planning projection. Use `graph.get` with `description_offset` to page through
+description history. Existing nodes without descriptions remain valid.
 The current adapter still loads the bounded project graph before applying
 endpoint-kind and status filters; the indexes narrow candidate edges but do
 not yet eliminate that graph load.
@@ -129,6 +135,14 @@ host-side search and includes a small projection as untrusted context. It never
 turns a proposal into verified evidence or grants new tools. Graph tool results
 also travel through the existing plan-observation path. A missing project or
 unavailable graph does not prevent ordinary planning.
+
+The general starter package includes separate project graph investigation and
+maintenance blueprints and workflows. Investigation starts with `graph.find`
+and can finish without a match or expand a relevant node. Maintenance searches
+first and can finish without writing or propose a description, relation or
+retraction through the existing host tool policy. These definitions do not
+grant tools or turn proposals into verified facts; availability depends on the
+active project scope and authorized tool view.
 
 `llama-agent-context-graph-smoke --no-model` exercises proposals and lookup
 through the native tool view. Pass `--model PATH` to exercise the same lookup

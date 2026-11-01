@@ -127,6 +127,19 @@ int main() {
     altered_assertion.edges[0].assertions[0].rationale = "tampered";
     TEST_ASSERT(store.publish_context_graph(assertion_scope, 2, altered_assertion, published_graph, error) == common_agent_publication_status::invalid);
     TEST_ASSERT(store.get_context_graph(assertion_scope, published_graph, error) && published_graph.edges[0].assertions.size() == 2);
+    auto described_graph = assertion_graph;
+    described_graph.revision = 3;
+    described_graph.nodes[0].descriptions.push_back({"first description", "model", "r1", {"source:one"}});
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 2, described_graph, published_graph, error) == common_agent_publication_status::published);
+    described_graph.revision = 4;
+    described_graph.nodes[0].descriptions.push_back({"revised description", "model", "r2", {"source:two"}});
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 3, described_graph, published_graph, error) == common_agent_publication_status::published);
+    auto tampered_description = described_graph;
+    tampered_description.revision = 5;
+    tampered_description.nodes[0].descriptions[0].text = "tampered";
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 4, tampered_description, published_graph, error) == common_agent_publication_status::invalid);
+    TEST_ASSERT(store.get_context_graph(assertion_scope, published_graph, error) &&
+        published_graph.nodes[0].descriptions.size() == 2 && published_graph.nodes[0].descriptions[0].text == "first description");
     common_agent_scope symbol_scope = graph_scope;
     symbol_scope.project_id = "symbol-observation-test";
     common_context_graph_state symbols;
@@ -532,9 +545,10 @@ int main() {
         reloaded_symbols.nodes.size() == 1 && reloaded_symbols.nodes[0].symbol_key == "clang:usr:f-int" &&
         reloaded_symbols.nodes[0].observations.size() == 2 && reloaded_symbols.nodes[0].observations[1].line == 20);
     common_context_graph_state reloaded_assertions;
-    TEST_ASSERT(store.get_context_graph(assertion_scope, reloaded_assertions, error) && reloaded_assertions.revision == 2 &&
+    TEST_ASSERT(store.get_context_graph(assertion_scope, reloaded_assertions, error) && reloaded_assertions.revision == 4 &&
         reloaded_assertions.edges.size() == 1 && reloaded_assertions.edges[0].assertions.size() == 2 &&
-        reloaded_assertions.edges[0].assertions[1].evidence_refs == std::vector<std::string>{"source:two"});
+        reloaded_assertions.edges[0].assertions[1].evidence_refs == std::vector<std::string>{"source:two"} &&
+        reloaded_assertions.nodes[0].descriptions.size() == 2 && reloaded_assertions.nodes[0].descriptions[1].text == "revised description");
     TEST_ASSERT(std::any_of(published_graph.nodes.begin(), published_graph.nodes.end(), [](const auto & node) {
         return node.kind == "actor" && node.source_ref == "case:a/entity:alice";
     }));

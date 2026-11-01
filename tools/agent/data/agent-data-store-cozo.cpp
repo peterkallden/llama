@@ -798,9 +798,12 @@ json context_graph_node_json(const common_context_graph_node & node) {
     json observations = json::array();
     for (const auto & o : node.observations) observations.push_back({{"path", o.path}, {"line", o.line},
         {"source_revision", o.source_revision}, {"source_ref", o.source_ref}});
+    json descriptions = json::array();
+    for (const auto & d : node.descriptions) descriptions.push_back({{"text", d.text}, {"source", d.source},
+        {"source_revision", d.source_revision}, {"evidence_refs", d.evidence_refs}});
     return {{"id", node.id}, {"kind", node.kind}, {"name", node.name}, {"path", node.path},
         {"line", node.line}, {"source_revision", node.source_revision}, {"source_ref", node.source_ref},
-        {"symbol_key", node.symbol_key}, {"observations", observations}};
+        {"symbol_key", node.symbol_key}, {"observations", observations}, {"descriptions", descriptions}};
 }
 json context_graph_edge_json(const common_context_graph_edge & edge) {
     json assertions = json::array();
@@ -845,6 +848,9 @@ bool common_agent_cozo_data_store::load_context_graph(const common_agent_scope &
                     if (item.contains("observations")) for (const auto & o : item.at("observations"))
                         node.observations.push_back({o.at("path").get<std::string>(), o.at("line").get<int64_t>(),
                             o.at("source_revision").get<std::string>(), o.at("source_ref").get<std::string>()});
+                    if (item.contains("descriptions")) for (const auto & d : item.at("descriptions"))
+                        node.descriptions.push_back({d.at("text").get<std::string>(), d.at("source").get<std::string>(),
+                            d.at("source_revision").get<std::string>(), d.at("evidence_refs").get<std::vector<std::string>>()});
                     out.nodes.push_back(std::move(node));
                 } else {
                     common_context_graph_edge edge;
@@ -931,6 +937,16 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
         for (const auto & o : node.observations) if (o.path.size() > 512 || o.line < 0 || o.source_revision.size() > 256 || o.source_ref.size() > 512) {
             error = "context graph observation is invalid"; return common_agent_publication_status::invalid;
         }
+        if (node.descriptions.size() > 64) { error = "too many graph descriptions"; return common_agent_publication_status::invalid; }
+        for (const auto & d : node.descriptions) {
+            if (d.text.empty() || d.text.size() > 512 || d.text.find('\0') != std::string::npos || d.source != "model" ||
+                    d.source_revision.size() > 256 || d.evidence_refs.size() > 16) {
+                error = "context graph description is invalid"; return common_agent_publication_status::invalid;
+            }
+            for (const auto & ref : d.evidence_refs) if (ref.empty() || ref.size() > 512) {
+                error = "context graph description evidence is invalid"; return common_agent_publication_status::invalid;
+            }
+        }
     }
     for (const auto & previous : current.nodes) {
         const auto found = std::find_if(input.nodes.begin(), input.nodes.end(), [&](const auto & n) { return n.id == previous.id; });
@@ -943,6 +959,11 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
                     return a.path == b.path && a.line == b.line && a.source_revision == b.source_revision && a.source_ref == b.source_ref;
                 })) { error = "graph observations cannot be removed or changed"; return common_agent_publication_status::invalid; }
         allowed.observations = found->observations;
+        if (found->descriptions.size() < previous.descriptions.size() ||
+                !std::equal(previous.descriptions.begin(), previous.descriptions.end(), found->descriptions.begin(), [](const auto & a, const auto & b) {
+                    return a.text == b.text && a.source == b.source && a.source_revision == b.source_revision && a.evidence_refs == b.evidence_refs;
+                })) { error = "graph descriptions cannot be removed or changed"; return common_agent_publication_status::invalid; }
+        allowed.descriptions = found->descriptions;
         if (context_graph_node_json(*found) != context_graph_node_json(allowed)) {
             error = "existing graph node identity cannot be changed"; return common_agent_publication_status::invalid;
         }

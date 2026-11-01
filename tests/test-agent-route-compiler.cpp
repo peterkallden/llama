@@ -936,5 +936,89 @@ int main() {
     assert(compile_agent_route_catalog(request, package_plans, scope, eurostat_candidates,
         eurostat_tools, "", catalog, error));
     assert(catalog.candidates.size() == 2); // OpenAlex cannot substitute for Eurostat.
+    std::vector<common_blueprint_candidate> graph_candidates;
+    for (const auto & id : installed.installed_blueprint_ids) {
+        if (id.find("project-graph-") == std::string::npos) continue;
+        common_blueprint_candidate candidate;
+        candidate.logical_id = id; candidate.persisted_id = id;
+        graph_candidates.push_back(std::move(candidate));
+    }
+    assert(graph_candidates.size() == 2);
+    common_agent_runtime_tooling graph_tools;
+    graph_tools.profile_tools_active = true;
+    for (const auto & name : {"graph.find", "graph.get", "graph.expand", "graph.search", "graph.source",
+            "graph.link.propose", "graph.describe.propose", "graph.retract.propose"}) {
+        graph_tools.tools.push_back({name, name, R"({"type":"object"})"});
+        graph_tools.capabilities.push_back(name);
+        graph_tools.capability_tools[name].push_back(name);
+    }
+    auto graph_request = request;
+    graph_request.namespace_id = "local"; graph_request.project_id = "project";
+    assert(compile_agent_route_catalog(graph_request, package_plans, scope, graph_candidates, graph_tools, "", catalog, error));
+    assert(std::count_if(catalog.candidates.begin(), catalog.candidates.end(), [](const auto & c) {
+        return c.kind == common_agent_route_kind::blueprint_workflow && c.workflow &&
+            (c.workflow->workflow_ref == "workflow://graph/investigate" || c.workflow->workflow_ref == "workflow://graph/maintain");
+    }) == 2);
+    graph_request.project_id.clear();
+    assert(compile_agent_route_catalog(graph_request, package_plans, scope, graph_candidates, graph_tools, "", catalog, error));
+    assert(std::none_of(catalog.candidates.begin(), catalog.candidates.end(), [](const auto & c) {
+        return c.kind == common_agent_route_kind::blueprint_workflow && c.workflow &&
+            (c.workflow->workflow_ref == "workflow://graph/investigate" || c.workflow->workflow_ref == "workflow://graph/maintain");
+    }));
+    const auto graph_workflow = std::find_if(package.workflows.begin(), package.workflows.end(), [](const auto & w) {
+        return w.definition.workflow_ref == "workflow://graph/investigate";
+    });
+    assert(graph_workflow != package.workflows.end());
+    common_agent_route_candidate saved_graph_route;
+    saved_graph_route.id = "route:project-graph-test";
+    saved_graph_route.workflow_definition = graph_workflow->definition;
+    saved_graph_route.resolved_tools = {"graph.find", "graph.expand"};
+    common_plan_state saved_graph_plan;
+    saved_graph_plan.id = "project-graph-plan";
+    saved_graph_plan.workflow_definition = graph_workflow->definition;
+    saved_graph_plan.route_binding = common_plan_route_binding{saved_graph_route.id, "project-graph-investigation-v1", "v1",
+        graph_workflow->definition.workflow_ref, graph_workflow->definition.workflow_revision,
+        graph_workflow->definition.graph_revision, "env", "policy"};
+    common_plan_step found_graph_step{"find", "Find", "Find graph nodes"};
+    found_graph_step.status = common_plan_step_status::completed;
+    found_graph_step.semantic_alias = "workflow-transition:find-nodes";
+    saved_graph_plan.steps = {found_graph_step};
+    common_plan_observation graph_observation;
+    graph_observation.source = "graph.find";
+    graph_observation.summary = R"({"result":{"revision":1,"nodes":[]}})";
+    auto finish_graph = make_agent_workflow_graph_continuation(saved_graph_route,
+        [](const auto &, const auto &, std::string & choice, std::string & e) { choice = "finish"; e.clear(); return true; });
+    continuation_steps.clear(); error.clear();
+    assert(finish_graph(saved_graph_plan, "find", graph_observation, continuation_steps, error) && continuation_steps.empty());
+    graph_observation.summary = R"({"result":{"revision":1,"nodes":[{"id":"node:a"}]}})";
+    auto expand_graph = make_agent_workflow_graph_continuation(saved_graph_route,
+        [](const auto &, const auto &, std::string & choice, std::string & e) { choice = "expand"; e.clear(); return true; },
+        [](const auto &, const auto &, const auto &, const auto &, std::string & output, std::string & e) {
+            output = R"({"id":"node:a"})"; e.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(expand_graph(saved_graph_plan, "find", graph_observation, continuation_steps, error) &&
+        continuation_steps.size() == 1 && continuation_steps[0].tool_call->name == "graph.expand");
+    const auto maintenance = std::find_if(package.workflows.begin(), package.workflows.end(), [](const auto & w) {
+        return w.definition.workflow_ref == "workflow://graph/maintain";
+    });
+    assert(maintenance != package.workflows.end());
+    auto maintenance_route = saved_graph_route;
+    maintenance_route.workflow_definition = maintenance->definition;
+    maintenance_route.resolved_tools = {"graph.find", "graph.search", "graph.describe.propose", "graph.link.propose", "graph.retract.propose"};
+    auto maintenance_plan = saved_graph_plan;
+    maintenance_plan.workflow_definition = maintenance->definition;
+    maintenance_plan.steps[0].semantic_alias = "workflow-transition:find-existing";
+    auto describe_graph = make_agent_workflow_graph_continuation(maintenance_route,
+        [](const auto &, const auto &, std::string & choice, std::string & e) { choice = "describe"; e.clear(); return true; },
+        [](const auto &, const auto &, const auto &, const std::string & seed, std::string & output, std::string & e) {
+            auto arguments = nlohmann::json::parse(seed);
+            arguments["id"] = "node:a"; arguments["description"] = "Example";
+            output = arguments.dump(); e.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(describe_graph(maintenance_plan, "find", graph_observation, continuation_steps, error) && continuation_steps.size() == 1);
+    assert(continuation_steps[0].tool_call->name == "graph.describe.propose" &&
+        nlohmann::json::parse(continuation_steps[0].tool_call->arguments_json)["expected_revision"] == 1);
     return 0;
 }

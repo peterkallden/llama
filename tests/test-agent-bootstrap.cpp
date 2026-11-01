@@ -264,11 +264,12 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v38");
+        checked_in_starter.version == "v39");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
     };
+    assert(has_workflow("workflow://graph/investigate") && has_workflow("workflow://graph/maintain"));
     assert(has_workflow("workflow://eurostat/catalog-discovery"));
     assert(has_workflow("workflow://eurostat/metadata-resolution"));
     assert(has_workflow("workflow://eurostat/data-retrieval"));
@@ -501,9 +502,9 @@ int main() {
         std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
     assert(!common_agent_package_parse_json(
         overflowing_page_package, over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 26 &&
-        checked_in_starter.blueprints.size() == 19);
-    assert(checked_in_starter.workflows.size() == 20);
+    assert(checked_in_starter.procedures.size() == 28 &&
+        checked_in_starter.blueprints.size() == 21);
+    assert(checked_in_starter.workflows.size() == 22);
     const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
             return blueprint.id == "code-overview-v2";
@@ -879,7 +880,7 @@ int main() {
     assert(reparsed_eurostat_metadata != reparsed_starter.workflows.end() &&
         reparsed_eurostat_metadata->definition.transitions.front().model_instruction ==
             eurostat_metadata_workflow->definition.transitions.front().model_instruction);
-    assert(reparsed_starter.workflows.size() == 20 &&
+    assert(reparsed_starter.workflows.size() == 22 &&
         reparsed_dataset_blueprint->workflow_bindings.size() == 3 &&
         reparsed_starter.workflows[0].definition.required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&

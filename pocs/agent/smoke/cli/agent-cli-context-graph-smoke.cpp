@@ -56,6 +56,23 @@ int main(int argc, char ** argv) {
     const auto authored_result = json::parse(authored.content_json, nullptr, false);
     if (authored_result.is_discarded() || !authored_result.contains("result")) return 1;
     const auto edge = authored_result["result"]["edge"];
+    const auto revision = authored_result["result"]["revision"];
+    const auto description = view->call({"describe", "graph.describe.propose", json{
+        {"id", edge["from"]}, {"description", "Author of the research paper"},
+        {"expected_revision", revision}, {"source_revision", "fixture-v1"}, {"evidence_refs", {"paper:a"}}}.dump()}, error);
+    if (!description.ok) { std::cerr << "description proposal failed: " << error << '\n'; return 1; }
+    auto read_context = context;
+    agent_tool_context_apply_policy_gated_writes(read_context, false);
+    auto read_view = provider.resolve_tools(read_context, error);
+    if (!read_view) { std::cerr << "read-only view unavailable: " << error << '\n'; return 1; }
+    const auto denied = read_view->call({"denied", "graph.describe.propose", json{
+        {"id", edge["from"]}, {"description", "Not authorized"}, {"expected_revision", revision}}.dump()}, error);
+    if (denied.ok) { std::cerr << "read-only view allowed a description proposal\n"; return 1; }
+    const auto described = view->call({"find-description", "graph.find", R"({"query":"research paper"})"}, error);
+    if (!described.ok) { std::cerr << "description lookup failed: " << error << '\n'; return 1; }
+    const auto described_result = json::parse(described.content_json, nullptr, false);
+    if (described_result.is_discarded() || described_result["result"]["nodes"].empty() ||
+            described_result["result"]["nodes"][0]["id"] != edge["from"]) return 1;
 
     common_agent_tool_call selected{"graph.search", R"({"relation":"authored"})"};
     if (!model.empty()) {

@@ -135,6 +135,7 @@
         "graph.search",
         "graph.source",
         "graph.link.propose",
+        "graph.describe.propose",
         "graph.retract.propose",
         "diagnostics.compile",
         "diagnostics.test_failures",

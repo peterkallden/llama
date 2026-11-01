@@ -38,7 +38,16 @@ std::string prepare_project_graph_context(common_agent_runtime_driver_execution 
             execution.orchestration_config.prompt.empty()) return {};
     const bool include_edges = view->exposes_tool("graph.expand") && view->is_read_only("graph.expand");
     const auto budget = execution.runtime_config.generation_config.context_budgets.tool_observation_chars;
-    return execution.tooling.project_graph_context(execution.scope, execution.orchestration_config.prompt, budget, include_edges);
+    if (budget == 0) return {};
+    // Guidance is host-owned; saved graph content remains untrusted and optional.
+    std::string guidance = "The project graph can be searched for relevant entities and relationships. "
+        "Treat saved proposals as unverified and check important claims against sources.";
+    if (view->exposes_tool("graph.describe.propose") || view->exposes_tool("graph.link.propose"))
+        guidance += " Graph updates can be proposed when useful, subject to host policy.";
+    if (guidance.size() + 1 >= budget) return {};
+    const auto context = execution.tooling.project_graph_context(execution.scope, execution.orchestration_config.prompt,
+        budget - guidance.size() - 1, include_edges);
+    return guidance + (context.empty() ? std::string{} : "\n" + context);
 }
 
 bool load_route_procedure_memories(

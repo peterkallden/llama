@@ -697,6 +697,24 @@ int main() {
         const auto edge_id = item["edge"]["id"].get<std::string>();
         const auto from = item["edge"]["from"].get<std::string>();
         const auto to = item["edge"]["to"].get<std::string>();
+        const auto description = graph_registry.execute({"graph.describe.propose", nlohmann::json{
+            {"id", from}, {"description", "Coordinates orchestration policies"}, {"expected_revision", 1},
+            {"source_revision", "r1"}, {"evidence_refs", {"source:planning"}}}.dump()});
+        assert(description.ok && nlohmann::json::parse(description.output)["node"]["description"]["status"] == "proposed");
+        const auto stale_description = graph_registry.execute({"graph.describe.propose", nlohmann::json{
+            {"id", from}, {"description", "stale"}, {"expected_revision", 1}}.dump()});
+        assert(!stale_description.ok && stale_description.failure_class == common_tool_failure_class::conflict);
+        const auto description_search = graph_registry.execute({"graph.find", R"({"query":"orchestration policies"})"});
+        assert(description_search.ok && nlohmann::json::parse(description_search.output)["nodes"][0]["id"] == from);
+        const auto revised_description = graph_registry.execute({"graph.describe.propose", nlohmann::json{
+            {"id", from}, {"description", "Coordinates planning policy"}, {"expected_revision", 2},
+            {"source_revision", "r2"}}.dump()});
+        assert(revised_description.ok);
+        const auto description_page = graph_registry.execute({"graph.get", nlohmann::json{{"id", from}, {"description_offset", 0}}.dump()});
+        assert(description_page.ok && nlohmann::json::parse(description_page.output)["description_page"]["total"] == 2);
+        const auto description_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
+            "planning policy", 1800, true);
+        assert(description_context.find("Coordinates planning policy") != std::string::npos);
         const auto additional = graph_registry.execute({"graph.link.propose", nlohmann::json{
             {"from", {{"id",from}}}, {"to", {{"id",to}}}, {"relation","depends_on"},
             {"rationale","another source"}, {"evidence_refs", {"source:two"}}, {"source_revision","r2"}}.dump()});

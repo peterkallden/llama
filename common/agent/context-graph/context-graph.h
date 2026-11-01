@@ -13,6 +13,13 @@ struct common_context_graph_node_observation {
     std::string source_ref;
 };
 
+struct common_context_graph_description {
+    std::string text;
+    std::string source = "model";
+    std::string source_revision;
+    std::vector<std::string> evidence_refs;
+};
+
 struct common_context_graph_node {
     std::string id;
     std::string kind;
@@ -25,6 +32,8 @@ struct common_context_graph_node {
     // An opaque, provider-qualified symbol identifier, not a source location.
     std::string symbol_key;
     std::vector<common_context_graph_node_observation> observations;
+    // Append-only proposed descriptions; the last entry is the current proposal.
+    std::vector<common_context_graph_description> descriptions;
 };
 
 struct common_context_graph_assertion {

@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
     p, rpc, call = start("project-a")
     try:
         names = {tool["name"] for tool in rpc(2, "tools/list", {})["tools"]}
-        assert {"graph.find", "graph.get", "graph.expand", "graph.search", "graph.source", "graph.link.propose", "graph.retract.propose"} <= names, names
+        assert {"graph.find", "graph.get", "graph.expand", "graph.search", "graph.source", "graph.link.propose", "graph.describe.propose", "graph.retract.propose"} <= names, names
         denied = rpc(20, "tools/call", {"name": "graph.source", "arguments": {
             "source": "code", "arguments": {"symbol": "f", "path_hint": "a.cpp", "line": 1}}})
         assert denied.get("isError") or denied.get("structuredContent", {}).get("ok") is False, denied
@@ -66,6 +66,15 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
             "relation": "depends_on", "rationale": "check the runtime boundary"})
         edge = created["edge"]
         assert edge["status"] == "proposed" and edge["source"] == "model"
+        described = call(60, "graph.describe.propose", {"id": edge["from"], "expected_revision": created["revision"],
+                         "description": "Coordinates bounded planner orchestration", "source_revision": "fixture-v1",
+                         "evidence_refs": ["source:planning"]})
+        assert described["node"]["description"]["status"] == "proposed"
+        repeated = call(63, "graph.describe.propose", {"id": edge["from"], "expected_revision": described["revision"],
+                        "description": "Coordinates bounded planner orchestration", "source_revision": "fixture-v1",
+                        "evidence_refs": ["source:planning"]})
+        assert repeated["reused"] and repeated["revision"] == described["revision"]
+        assert call(61, "graph.find", {"query": "bounded planner orchestration"})["nodes"][0]["id"] == edge["from"]
         extra = call(33, "graph.link.propose", {"from": {"id": edge["from"]}, "to": {"id": edge["to"]},
                      "relation": "depends_on", "rationale": "another source", "evidence_refs": ["source:two"]})["edge"]
         assert extra["id"] == edge["id"] and extra["version"] == 2 and len(extra["assertions"]) == 2
@@ -102,6 +111,8 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
     p, rpc, call = start("project-a")
     try:
         assert len(call(5, "graph.find", {"query": "planning"})["nodes"]) == 1
+        saved_description = call(62, "graph.get", {"id": edge["from"], "description_offset": 0})
+        assert saved_description["description_page"]["items"][0]["text"] == "Coordinates bounded planner orchestration"
         assert call(22, "graph.get", {"id": actor_id})["node"]["source_ref"] == "case:a/entity:alice"
         assert len(call(28, "graph.search", {"to": authored["to"], "relation": "authored"})["edges"]) == 1
         saved_symbol = call(31, "graph.get", {"id": symbol_edge["from"], "observation_offset": 0})

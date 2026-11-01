@@ -124,6 +124,9 @@ bool has_context_fact(
         const std::string & requirement) {
     if (std::find(tooling.available_context.begin(), tooling.available_context.end(), requirement) !=
             tooling.available_context.end()) return true;
+    if (requirement == "context.graph.project") {
+        return !request.namespace_id.empty() && !request.project_id.empty();
+    }
     if (requirement == "context.resource.available") {
         return std::any_of(request.input_resources.begin(), request.input_resources.end(),
             [](const auto & resource) { return !resource.resource.uri.empty(); });
