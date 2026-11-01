@@ -113,7 +113,8 @@ int main() {
     incomplete_fetch.arguments_template_json = R"({"accept":"text/plain"})";
     assert(!common_agent_workflow_static_tool_arguments(
         incomplete_fetch, web_fetch_tool, static_arguments, static_error));
-    assert(static_error.empty()); // Model may fill a missing required URL.
+    assert(static_error.empty() && nlohmann::json::parse(static_arguments)["accept"] == "text/plain");
+    // The model may fill a missing required URL but the entry seed stays host-owned.
     incomplete_fetch.arguments_template_json = R"({"accept":5})";
     assert(!common_agent_workflow_static_tool_arguments(
         incomplete_fetch, web_fetch_tool, static_arguments, static_error));
@@ -992,13 +993,37 @@ int main() {
     assert(finish_graph(saved_graph_plan, "find", graph_observation, continuation_steps, error) && continuation_steps.empty());
     graph_observation.summary = R"({"result":{"revision":1,"nodes":[{"id":"node:a"}]}})";
     auto expand_graph = make_agent_workflow_graph_continuation(saved_graph_route,
-        [](const auto &, const auto &, std::string & choice, std::string & e) { choice = "expand"; e.clear(); return true; },
+        [](const auto &, const auto &, std::string & choice, std::string & e) { choice = "result_1"; e.clear(); return true; },
         [](const auto &, const auto &, const auto &, const auto &, std::string & output, std::string & e) {
             output = R"({"id":"node:a"})"; e.clear(); return true;
         });
     continuation_steps.clear(); error.clear();
     assert(expand_graph(saved_graph_plan, "find", graph_observation, continuation_steps, error) &&
         continuation_steps.size() == 1 && continuation_steps[0].tool_call->name == "graph.expand");
+    graph_observation.summary = R"({"result":{"revision":1,"truncated":true,"nodes":[{"id":"node:a"},{"id":"node:b"}]}})";
+    auto select_second_graph = make_agent_workflow_graph_continuation(saved_graph_route,
+        [](const auto &, const auto &, std::string & choice, std::string & e) { choice = "result_2"; e.clear(); return true; },
+        [](const auto &, const auto &, const auto &, const std::string & seed, std::string & output, std::string & e) {
+            output = seed; e.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(select_second_graph(saved_graph_plan, "find", graph_observation, continuation_steps, error) && continuation_steps.size() == 1);
+    assert(nlohmann::json::parse(continuation_steps[0].tool_call->arguments_json)["id"] == "node:b");
+    graph_observation.summary = R"({"result":{"revision":1,"nodes":[{"id":"node:a"}]}})";
+    auto select_missing_graph = make_agent_workflow_graph_continuation(saved_graph_route,
+        [](const auto &, const auto &, std::string & choice, std::string & e) { choice = "result_5"; e.clear(); return true; });
+    continuation_steps.clear(); error.clear();
+    assert(!select_missing_graph(saved_graph_plan, "find", graph_observation, continuation_steps, error));
+    graph_observation.summary = R"({"result":{"revision":1,"nodes":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"}],"truncated":true}})";
+    auto select_fifth_graph = make_agent_workflow_graph_continuation(saved_graph_route,
+        [](const auto &, const auto &, std::string & choice, std::string & e) { choice = "result_5"; e.clear(); return true; },
+        [](const auto &, const auto &, const auto &, const std::string & seed, std::string & output, std::string & e) {
+            output = seed; e.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(select_fifth_graph(saved_graph_plan, "find", graph_observation, continuation_steps, error) && continuation_steps.size() == 1 &&
+        nlohmann::json::parse(continuation_steps[0].tool_call->arguments_json)["id"] == "e");
+    graph_observation.summary = R"({"result":{"revision":1,"nodes":[{"id":"node:a"}]}})";
     const auto maintenance = std::find_if(package.workflows.begin(), package.workflows.end(), [](const auto & w) {
         return w.definition.workflow_ref == "workflow://graph/maintain";
     });

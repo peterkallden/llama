@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v39",
+  "version": "v40",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -188,7 +188,7 @@
     {
       "id": "graph-investigation-v1",
       "summary": "project graph investigation",
-      "content": "Search the scoped graph for relevant entities or relations. Browse only useful neighbors and verify consequential proposals or old observations against their sources. Missing graph data is not evidence of absence. Continue with other available sources if the graph is unavailable.",
+      "content": "Search the scoped graph for relevant entities or relations. Browse only useful neighbors and verify consequential proposals or old observations against their sources. When graph.find reports truncated, tell the user that more matching nodes exist beyond the five shown. Missing graph data is not evidence of absence. Continue with other available sources if the graph is unavailable.",
       "importance": 0.9,
       "confidence": 1.0
     },
@@ -1194,11 +1194,11 @@
     },
     {
       "id": "project-graph-investigation-path-v1",
-      "source_revision": "agent-workflows-starter@v39",
+      "source_revision": "agent-workflows-starter@v40",
       "workflow_ref": "workflow://graph/investigate",
-      "workflow_revision": "v1",
+      "workflow_revision": "v2",
       "family": "graph",
-      "graph_revision": "graph-investigation@v1",
+      "graph_revision": "graph-investigation@v2",
       "required_capabilities": [
         "graph.find",
         "graph.expand"
@@ -1221,32 +1221,65 @@
           "from": "search",
           "to": "found",
           "tool": "graph.find",
-          "arguments": "{}"
+          "arguments": "{\"limit\":5}"
         },
         {
           "id": "choose-expansion",
           "from": "found",
-          "to": "expand",
+          "to": "expand-1",
           "kind": "model_choice",
           "choices": [
             {
               "id": "finish",
-              "description": "Finish when there are no relevant nodes or expansion is unnecessary.",
+              "description": "Finish without expansion.",
               "to": "complete"
             },
             {
-              "id": "expand",
-              "description": "Explore a relevant returned node.",
-              "to": "expand",
+              "id": "result_1",
+              "description": "Expand search result 1 from the observed node list.",
+              "to": "expand-1",
               "requires": [
                 "/result/nodes/0/id"
               ]
+            },
+            {
+              "id": "result_2",
+              "description": "Expand search result 2 from the observed node list.",
+              "to": "expand-2",
+              "requires": [
+                "/result/nodes/1/id"
+              ]
+            },
+            {
+              "id": "result_3",
+              "description": "Expand search result 3 from the observed node list.",
+              "to": "expand-3",
+              "requires": [
+                "/result/nodes/2/id"
+              ]
+            },
+            {
+              "id": "result_4",
+              "description": "Expand search result 4 from the observed node list.",
+              "to": "expand-4",
+              "requires": [
+                "/result/nodes/3/id"
+              ]
+            },
+            {
+              "id": "result_5",
+              "description": "Expand search result 5 from the observed node list.",
+              "to": "expand-5",
+              "requires": [
+                "/result/nodes/4/id"
+              ]
             }
-          ]
+          ],
+          "model_instruction": "Choose the best numbered result for the task or finish. The observed nodes are in the same order as the numbered choices. If truncated is true, more matches exist than the five shown; select only a displayed result or finish."
         },
         {
-          "id": "expand-node",
-          "from": "expand",
+          "id": "expand-node-1",
+          "from": "expand-1",
           "to": "complete",
           "tool": "graph.expand",
           "arguments": "{}",
@@ -1255,6 +1288,62 @@
               "target": "/id",
               "from": "$previous",
               "source": "/result/nodes/0/id"
+            }
+          ]
+        },
+        {
+          "id": "expand-node-2",
+          "from": "expand-2",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/1/id"
+            }
+          ]
+        },
+        {
+          "id": "expand-node-3",
+          "from": "expand-3",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/2/id"
+            }
+          ]
+        },
+        {
+          "id": "expand-node-4",
+          "from": "expand-4",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/3/id"
+            }
+          ]
+        },
+        {
+          "id": "expand-node-5",
+          "from": "expand-5",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/4/id"
             }
           ]
         }
@@ -2994,7 +3083,7 @@
     },
     {
       "id": "project-graph-investigation-v1",
-      "source_revision": "agent-workflows-starter@v39",
+      "source_revision": "agent-workflows-starter@v40",
       "selection_description": "Investigate entities and relations in the project context graph.",
       "purpose": "Investigate entities and relations in the project context graph.",
       "goal": "Use graph knowledge to support a question, checking sources as needed.",
@@ -3009,7 +3098,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://graph/investigate",
-          "workflow_revision": "v1"
+          "workflow_revision": "v2"
         }
       ],
       "next_action": "inspect",

@@ -226,6 +226,9 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             return common_adapter_execution_failure("tool.graph.unavailable", error, "The project graph is unavailable.");
         if (operation == "graph.find") {
             if (!text_value(args, "query", 512)) return common_adapter_validation_failure("tool.graph.invalid_arguments", "query is required");
+            if (args.contains("limit") && (!args["limit"].is_number_integer() || args["limit"] < 1 || args["limit"] > 32))
+                return common_adapter_validation_failure("tool.graph.invalid_arguments", "limit must be between one and 32");
+            const size_t limit = args.value("limit", size_t(32));
             const auto query = lower(args["query"].get<std::string>());
             std::vector<std::string> terms;
             std::string term;
@@ -242,9 +245,11 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                 if (score) matches.push_back({score, &node});
             }
             std::stable_sort(matches.begin(), matches.end(), [](const auto & a, const auto & b) { return a.first > b.first; });
-            json nodes = json::array(); const bool truncated = matches.size() > 32;
-            for (size_t i = 0; i < std::min<size_t>(32, matches.size()); ++i) nodes.push_back(node_json(*matches[i].second));
-            return common_adapter_success_json({{"revision", graph.revision}, {"nodes", nodes}, {"truncated", truncated}});
+            json nodes = json::array(); const bool truncated = matches.size() > limit;
+            for (size_t i = 0; i < std::min(limit, matches.size()); ++i) nodes.push_back(node_json(*matches[i].second));
+            json result = {{"revision", graph.revision}, {"nodes", nodes}, {"truncated", truncated}};
+            if (truncated) result["notice"] = "More matching nodes exist; this result is limited.";
+            return common_adapter_success_json(result);
         }
         if (operation == "graph.get") {
             if (!text_value(args, "id", 256)) return common_adapter_validation_failure("tool.graph.invalid_arguments", "id is required");

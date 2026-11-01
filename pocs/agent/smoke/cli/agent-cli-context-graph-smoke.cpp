@@ -46,7 +46,7 @@ int main(int argc, char ** argv) {
         bindings.data_store = &store; bindings.tool_scope = context.scope; return true;
     });
     agent_tool_context context; context.profile_id = "graph-project"; context.scope.namespace_id = "smoke";
-    context.scope.project_id = "project"; context.max_calls = 8; agent_tool_context_apply_policy_gated_writes(context, true);
+    context.scope.project_id = "project"; context.max_calls = 16; agent_tool_context_apply_policy_gated_writes(context, true);
     auto view = provider.resolve_tools(context, error);
     if (!view) { std::cerr << error << '\n'; return 1; }
     const auto setup = view->call({"setup", "graph.link.propose", R"({"from":{"kind":"component","name":"planning"},"to":{"kind":"file","name":"selection","path":"src/selection.cpp"},"relation":"depends_on","rationale":"inspect selection"})"}, error);
@@ -121,6 +121,18 @@ int main(int argc, char ** argv) {
     }
     const auto expanded = view->call({"paper", "graph.expand", json{{"id",edge["to"]}}.dump()}, error);
     if (!expanded.ok) { std::cerr << "paper expansion failed: " << error << '\n'; return 1; }
+    for (int i = 0; i < 6; ++i) {
+        const auto added = view->call({"candidate", "graph.link.propose", json{
+            {"from", {{"kind", "component"}, {"name", "fixture-candidate-" + std::to_string(i)}}},
+            {"to", {{"id", edge["to"]}}}, {"relation", "related_to"}, {"rationale", "selection fixture"}}.dump()}, error);
+        if (!added.ok) { std::cerr << "candidate setup failed: " << error << '\n'; return 1; }
+    }
+    const auto limited = view->call({"limited", "graph.find", R"({"query":"fixture-candidate","limit":5})"}, error);
+    const auto limited_result = json::parse(limited.content_json, nullptr, false);
+    if (!limited.ok || limited_result.is_discarded() || limited_result["result"]["nodes"].size() != 5 ||
+            limited_result["result"]["truncated"] != true) {
+        std::cerr << "bounded graph lookup did not report further matches: " << error << '\n'; return 1;
+    }
     std::cout << "context graph smoke passed; mode=" << (model.empty() ? "no-model" : "model") << '\n';
     return 0;
 }

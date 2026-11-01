@@ -59,6 +59,10 @@ status is specified. Results contain the edges and their endpoints, and mark
 truncation. For example, `{ "from": "<alice-id>", "relation": "authored" }`
 finds Alice's saved authorship proposals. Use the paper ID as `to` to search
 in the other direction, or `graph.expand` to browse its other relationships.
+`graph.find` also accepts a `limit` from 1 to 32 (default 32); its `truncated`
+flag indicates that further matching nodes exist. The graph investigation
+workflow requests five, offers those returned nodes or an option to finish,
+and binds the selected node ID from the host observation before expansion.
 `graph.describe.propose` adds a sourced description to an existing node using
 the graph revision from a read as `expected_revision`. Descriptions are model
 proposals, not verified facts. The node ID does not change; prior descriptions

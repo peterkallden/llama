@@ -682,9 +682,17 @@ bool maybe_select_agent_route(
                         request.prompt += "\n[Entry " + transition.tool_name + "]\n" + transition.model_instruction;
                 }
             }
+            auto entry_bindings = request.tool_argument_bindings;
+            // A partial entry template is still host-owned. The model may
+            // fill missing fields but must not replace its fixed values.
+            if (graph_entry_tools.size() == 1 && !deterministic_entry_arguments.empty() &&
+                    deterministic_entry_arguments != "{}") {
+                entry_bindings.push_back({graph_entry_tools.front().name, deterministic_entry_arguments,
+                    "workflow-graph-entry-template", false});
+            }
             const auto action = select_agent_planning_workflow_action(
                 context.inference, context.generation_config, request, selected_tools,
-                request.tool_argument_bindings, host_resolved_dataset_tools,
+                entry_bindings, host_resolved_dataset_tools,
                 context.tool_output_format, action_error);
             if (!action.action) {
                 error = "workflow action selection failed: " + action_error;

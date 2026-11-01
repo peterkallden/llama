@@ -761,6 +761,14 @@ int main() {
         const auto actor_a = domain_link("case:a/entity:alice");
         const auto actor_b = domain_link("case:b/entity:alice");
         assert(actor_a.ok && actor_b.ok);
+        for (int i = 0; i < 4; ++i) assert(domain_link("case:extra-" + std::to_string(i)).ok);
+        const auto first_five = graph_registry.execute({"graph.find", R"({"query":"Alice","limit":5})"});
+        assert(first_five.ok && nlohmann::json::parse(first_five.output)["nodes"].size() == 5 &&
+            nlohmann::json::parse(first_five.output)["truncated"] == true);
+        const auto all_alice = graph_registry.execute({"graph.find", R"({"query":"Alice"})"});
+        assert(all_alice.ok && nlohmann::json::parse(all_alice.output)["nodes"].size() == 6 &&
+            nlohmann::json::parse(all_alice.output)["truncated"] == false);
+        assert(!graph_registry.execute({"graph.find", R"({"query":"Alice","limit":0})"}).ok);
         const auto id_a = nlohmann::json::parse(actor_a.output)["edge"]["from"].get<std::string>();
         const auto id_b = nlohmann::json::parse(actor_b.output)["edge"]["from"].get<std::string>();
         assert(id_a != id_b);

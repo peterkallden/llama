@@ -89,6 +89,31 @@ void selection_formats() {
     observation.summary = R"({"ok":false,"count":0,"items":[],"complete":false})";
     require(!common_plan_workflow_choice_available(observation, transition.choices.front()),
         "failed observations enabled a choice");
+
+    common_plan_workflow_transition graph_choice;
+    graph_choice.model_instruction = "If truncated is true, report that more matches exist.";
+    graph_choice.choices.push_back({"finish", "Finish without expansion", "done", {}});
+    for (int i = 0; i < 5; ++i) graph_choice.choices.push_back({"result_" + std::to_string(i + 1),
+        "Expand result " + std::to_string(i + 1), "expand", {"/result/nodes/" + std::to_string(i) + "/id"}});
+    common_plan_observation graph_matches{"graph-search", "graph.find",
+        R"({"result":{"nodes":[{"id":"a","name":"First"},{"id":"b","name":"Second"},{"id":"c","name":"Third"},{"id":"d","name":"Fourth"},{"id":"e","name":"Fifth"}],"truncated":true}})", 1.0f};
+    scripted_inference graph_selector;
+    graph_selector.replies = {"open! selection.candidate\nid: result_2"};
+    require(select_agent_planning_workflow_candidate(graph_selector, config, request, graph_matches, graph_choice, selected, error), error);
+    require(selected == "result_2" && graph_selector.requests.front().messages.back().content.find("Fifth") != std::string::npos &&
+        graph_selector.requests.front().messages.back().content.find("\"truncated\":true") != std::string::npos &&
+        std::any_of(graph_selector.requests.front().messages.begin(), graph_selector.requests.front().messages.end(),
+            [](const auto & message) { return message.content.find("more matches") != std::string::npos; }),
+        "graph choice did not expose five results and the truncation notice");
+    common_chat_tool graph_find{"graph.find", "Find graph nodes",
+        R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":32}}})"};
+    scripted_inference graph_arguments;
+    graph_arguments.replies = {"open! graph.find\nquery: Alice"};
+    const auto bounded_action = select_agent_planning_workflow_action(graph_arguments, config, request, {graph_find},
+        {{"graph.find", R"({"limit":5})", "workflow-graph-entry-template", false}}, {},
+        common_agent_tool_output_format::compact_dsl, error);
+    require(error.empty() && bounded_action.action && json::parse(bounded_action.action->arguments_json)["limit"] == 5 &&
+        json::parse(bounded_action.action->arguments_json)["query"] == "Alice", "host entry limit was not retained: " + error);
 }
 
 void result_requirement_selection() {

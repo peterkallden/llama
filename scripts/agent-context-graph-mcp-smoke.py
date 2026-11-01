@@ -106,6 +106,11 @@ with tempfile.TemporaryDirectory(prefix="agent-context-graph-") as temporary:
             symbol.update({"line": 21 + i, "source_revision": f"r{i + 3}"})
             call(40 + i, "graph.link.propose", {"from": symbol, "to": {"id": edge["from"]},
                  "relation": "references", "rationale": "inspect symbol"})
+        for i in range(6):
+            call(70 + i, "graph.link.propose", {"from": {"kind": "component", "name": f"fixture-candidate-{i}"},
+                 "to": {"id": edge["from"]}, "relation": "related_to", "rationale": "selection fixture"})
+        limited = call(76, "graph.find", {"query": "fixture-candidate", "limit": 5})
+        assert len(limited["nodes"]) == 5 and limited["truncated"] and limited["notice"]
     finally:
         stop(p)
     p, rpc, call = start("project-a")
