@@ -47,6 +47,10 @@ if (!window.__investigationWorkspace) {
   let eventQuery: Json = {};
   let snapshotPending = false;
   let renderedVisualizationUri = "";
+  let inquiryIntent: "question" | "hypothesis" = "question";
+  let caseFormMode: "create" | "open" = "create";
+  let caseFormGeneration = 0;
+  const inquiryDrafts = { question: "", hypothesis: "" };
   for (const selector of ["#filter-start", "#filter-end", "#apply-filter"])
     q<HTMLInputElement | HTMLButtonElement>(selector).disabled = true;
 
@@ -58,6 +62,68 @@ if (!window.__investigationWorkspace) {
   function setStatus(message: string, failed = false) {
     status.textContent = message;
     status.classList.toggle("error", failed);
+  }
+  function showWorkspace() {
+    q("#analysis-start").hidden = true;
+    q("#analysis-workspace").hidden = false;
+    q("#case-actions").hidden = false;
+    q("#change-start").hidden = false;
+    q("#case-form").hidden = true;
+    q("#case-list").hidden = true;
+  }
+  function showStart(intent = "") {
+    ++caseFormGeneration;
+    inquiryDrafts[inquiryIntent] = q<HTMLTextAreaElement>("#inquiry-text").value;
+    q("#analysis-start").hidden = false;
+    q("#analysis-workspace").hidden = true;
+    q("#case-actions").hidden = true;
+    q("#change-start").hidden = true;
+    q("#case-form").hidden = true;
+    q("#case-list").hidden = true;
+    q("#start-inquiry-form").hidden = intent !== "question" && intent !== "hypothesis";
+    q("#material-start").hidden = intent !== "material";
+    q("#resume-start").hidden = intent !== "resume";
+    q("#return-analysis").hidden = !currentCase && !(graph && graph.counts().nodes > 0);
+    q("#start-guidance").textContent = "";
+    for (const name of ["question", "hypothesis", "material", "entity", "resume"])
+      q(`#start-${name}`).setAttribute("aria-pressed", String(name === intent));
+    if (intent === "question" || intent === "hypothesis") {
+      inquiryIntent = intent;
+      q<HTMLTextAreaElement>("#inquiry-text").value = inquiryDrafts[intent];
+      q("#inquiry-title").textContent = intent === "question" ? "What would you like to find out?" : "What hypothesis would you like to test?";
+      q("#inquiry-label").textContent = intent === "question" ? "Your question" : "Your hypothesis";
+      q<HTMLTextAreaElement>("#inquiry-text").placeholder = intent === "question"
+        ? "Describe your question and what you want to learn." : "State the hypothesis and when or where you expect it to hold.";
+      q("#inquiry-help").textContent = intent === "question"
+        ? "Continue in chat to refine the question and choose relevant sources."
+        : "The inquiry will look for support, contrary evidence and alternative explanations. Describe the scope or conditions that matter.";
+      q<HTMLTextAreaElement>("#inquiry-text").focus();
+    }
+  }
+  function beginCase(title = "Investigation", profile = "identity_analysis") {
+    ++caseFormGeneration;
+    caseFormMode = "create";
+    q("#case-form").hidden = false;
+    q("#case-create-fields").hidden = false;
+    q("#case-open-fields").hidden = true;
+    q("#case-submit").textContent = "Create case";
+    q<HTMLInputElement>("#case-id").value = "";
+    q<HTMLInputElement>("#case-title").value = title;
+    q<HTMLInputElement>("#case-question").value = "";
+    for (const selector of ["#source-id", "#window-start", "#window-end"])
+      q<HTMLInputElement | HTMLSelectElement>(selector).value = "";
+    q<HTMLSelectElement>("#analysis-profile").value = profile;
+    void populateCaseResources().catch((error) => setStatus(error instanceof Error ? error.message : String(error), true));
+    void populateConfiguredSources().catch((error) => setStatus(error instanceof Error ? error.message : String(error), true));
+  }
+  function beginOpenCase() {
+    ++caseFormGeneration;
+    caseFormMode = "open";
+    q("#case-form").hidden = false;
+    q("#case-create-fields").hidden = true;
+    q("#case-open-fields").hidden = false;
+    q("#case-submit").textContent = "Open case";
+    q<HTMLInputElement>("#case-id").focus();
   }
   function content(response: any): Json {
     if (response?.isError) throw new Error(response.content?.map((item: any) => item.text ?? "").join("\n") || "Host tool call failed.");
@@ -95,6 +161,7 @@ if (!window.__investigationWorkspace) {
     q<HTMLButtonElement>("#events-more").disabled = false;
   }
   function showCase(value: Json) {
+    showWorkspace();
     currentCase = value;
     caseSources = [];
     selectedActors.clear(); actorCandidates.clear(); sourceStatements.clear(); actorMentions.clear(); actorGroups.clear(); actorRelationships.clear();
@@ -612,6 +679,7 @@ if (!window.__investigationWorkspace) {
       complete: !truncated, truncated, limitations,
     }, { replace });
     const counts = graph.counts();
+    q("#analysis-workspace").classList.toggle("has-relations", counts.nodes > 0);
     q("#graph-status").textContent = `${counts.nodes} objects · ${counts.edges} relations${counts.truncated ? " · truncated by bounds" : !counts.complete ? " · incomplete projection" : ""}${counts.limitations.length ? ` · ${counts.limitations.join(" ")}` : ""}`;
     q<HTMLButtonElement>("#save-snapshot").disabled = snapshotPending || counts.nodes === 0;
   }
@@ -619,6 +687,7 @@ if (!window.__investigationWorkspace) {
     const visualization = parseRelationshipVisualization(result.visualization);
     // Keep the current case intact unless both validation and rendering succeed.
     renderGraph(visualization, true);
+    showWorkspace();
     ++generation;
     currentCase = null;
     q("#source-panel").setAttribute("hidden", "");
@@ -795,6 +864,7 @@ if (!window.__investigationWorkspace) {
   }
   async function createOrOpen() {
     const caseId = q<HTMLInputElement>("#case-id").value.trim();
+    if (caseFormMode === "open" && !caseId) { setStatus("Enter the case ID to open.", true); return; }
     if (caseId) { q("#case-form").setAttribute("hidden", ""); await openCase(caseId); return; }
     const start = msValue("#window-start"), end = msValue("#window-end");
     const sourceId = q<HTMLSelectElement>("#source-id").value.trim();
@@ -813,10 +883,60 @@ if (!window.__investigationWorkspace) {
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error), true); }
   }
 
-  q("#create-case").addEventListener("click", () => {
-    q("#case-form").removeAttribute("hidden"); q<HTMLInputElement>("#case-id").value = "";
-    void populateCaseResources().catch((error) => setStatus(error instanceof Error ? error.message : String(error), true));
-    void populateConfiguredSources().catch((error) => setStatus(error instanceof Error ? error.message : String(error), true));
+  q("#create-case").addEventListener("click", () => beginCase());
+  q<HTMLInputElement>("#case-upload").addEventListener("change", async (event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    const token = generation, form = caseFormGeneration;
+    input.disabled = true;
+    try {
+      if (file.size === 0 || file.size > 4 * 1024 * 1024) throw new Error("Choose a non-empty file no larger than 4 MiB.");
+      const uploaded = await rpc("ui/llama-agent/upload-investigation-resource", { file });
+      if (token !== generation || form !== caseFormGeneration) return;
+      if (!uploaded?.resource_uri) throw new Error("The upload did not produce a source reference.");
+      await populateCaseResources();
+      if (token !== generation || form !== caseFormGeneration) return;
+      const selector = q<HTMLSelectElement>("#case-resource");
+      selector.add(new Option(file.name, String(uploaded.resource_uri)));
+      selector.value = String(uploaded.resource_uri);
+      setStatus("Source uploaded and selected. Create the case when ready; analysis has not started.");
+    } catch (error) { if (token === generation && form === caseFormGeneration) setStatus(error instanceof Error ? error.message : String(error), true); }
+    finally { input.value = ""; input.disabled = false; }
+  });
+  q("#change-start").addEventListener("click", () => showStart());
+  q("#return-analysis").addEventListener("click", () => showWorkspace());
+  q("#start-question").addEventListener("click", () => showStart("question"));
+  q("#start-hypothesis").addEventListener("click", () => showStart("hypothesis"));
+  q("#start-material").addEventListener("click", () => showStart("material"));
+  q("#start-entity").addEventListener("click", () => {
+    showStart("entity");
+    q("#start-guidance").textContent = "Describe the actor or event and the question to investigate, then choose sources for the case.";
+    beginCase("Actor or event investigation", "actor_relationship");
+  });
+  q("#start-resume").addEventListener("click", () => {
+    showStart("resume");
+    q("#start-guidance").textContent = "Reports and earlier findings are available after opening a case.";
+    void listCases();
+  });
+  q("#start-material-case").addEventListener("click", () => beginCase("Document or log analysis", "document_provenance"));
+  q("#resume-open-id").addEventListener("click", () => beginOpenCase());
+  for (const [selector, destination] of [["#browse-start-resources", "resources"], ["#browse-start-data", "data"]]) {
+    q(selector).addEventListener("click", () => {
+      void rpc("ui/message", { action: "browse-analysis-material", destination }).catch((error) =>
+        setStatus(error instanceof Error ? error.message : String(error), true));
+    });
+  }
+  q("#send-inquiry").addEventListener("click", async () => {
+    const text = q<HTMLTextAreaElement>("#inquiry-text").value.trim();
+    if (!text) { setStatus("Enter a question or hypothesis first.", true); return; }
+    const prompt = inquiryIntent === "hypothesis"
+      ? `Test the following hypothesis. Look for supporting evidence, contrary evidence and alternative explanations. Distinguish inspected sources from search leads and report uncertainty and missing checks.\n\n${text}` : text;
+    const button = q<HTMLButtonElement>("#send-inquiry");
+    button.disabled = true;
+    try { await rpc("ui/message", { action: "start-inquiry", content: { type: "text", text: prompt } }); }
+    catch (error) { setStatus(error instanceof Error ? error.message : String(error), true); }
+    finally { button.disabled = false; }
   });
   q("#browse-cases").addEventListener("click", () => void listCases());
   q("#open-visualization").addEventListener("click", async () => {
@@ -866,7 +986,7 @@ if (!window.__investigationWorkspace) {
     }
   });
   q("#case-list-more").addEventListener("click", () => { if (caseListCursor) void listCases(caseListCursor); });
-  q("#open-case").addEventListener("click", () => { q("#case-form").removeAttribute("hidden"); q<HTMLInputElement>("#case-id").focus(); });
+  q("#open-case").addEventListener("click", () => beginOpenCase());
   q("#case-submit").addEventListener("click", () => void createOrOpen());
   q("#case-cancel").addEventListener("click", () => q("#case-form").setAttribute("hidden", ""));
   q("#apply-filter").addEventListener("click", () => {
@@ -961,7 +1081,7 @@ if (!window.__investigationWorkspace) {
       const page = await rpc("ui/llama-agent/list-investigation-resources", { scope: "session", limit: 1 });
       const projectOption = q<HTMLSelectElement>("#resource-scope").querySelector<HTMLOptionElement>('option[value="project"]');
       if (projectOption) projectOption.disabled = !page?.project_available;
-      setStatus("Ready. Open or create a case, then select sources and an analysis.");
+      setStatus("Ready. Choose a question, hypothesis, material, actor or earlier case to begin.");
     })
     .catch((error) => setStatus(error instanceof Error ? error.message : String(error), true));
 }

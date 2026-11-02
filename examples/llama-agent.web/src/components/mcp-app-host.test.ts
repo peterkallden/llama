@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, mcpAppAutoSizeScript, mcpAppHeight, sandboxProxyDocument } from "./mcp-app-host";
+import { analysisWorkspaceRequest, authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, mcpAppAutoSizeScript, mcpAppHeight, sandboxProxyDocument } from "./mcp-app-host";
 
 describe("MCP App sandbox host", () => {
 
@@ -210,4 +210,17 @@ describe("MCP App sandbox host", () => {
     expect(isCurrentAppRequest(request, 5, secondFrame)).toBe(false);
     expect(isCurrentAppRequest(request, 4, secondFrame)).toBe(false);
   });
+});
+
+
+it("limits inquiry and material navigation messages to the analysis workspace", () => {
+  const uri = "ui://llama-agent/apps/investigation-workspace";
+  const inquiry = { action: "start-inquiry", content: { text: "How should we assess this hypothesis?" } };
+  expect(analysisWorkspaceRequest(uri, inquiry)).toEqual({ action: "start-inquiry", text: inquiry.content.text });
+  expect(analysisWorkspaceRequest("ui://llama-agent/apps/document-editor", inquiry)).toBeNull();
+  expect(analysisWorkspaceRequest(uri, { action: "start-inquiry", content: { text: " " } })).toBeNull();
+  expect(analysisWorkspaceRequest(uri, { action: "start-inquiry", content: { text: "x".repeat(2001) } })).toBeNull();
+  expect(analysisWorkspaceRequest(uri, { action: "browse-analysis-material", destination: "data" }))
+    .toEqual({ action: "browse-analysis-material", destination: "data" });
+  expect(analysisWorkspaceRequest(uri, { action: "browse-analysis-material", destination: "https://example.invalid" })).toBeNull();
 });

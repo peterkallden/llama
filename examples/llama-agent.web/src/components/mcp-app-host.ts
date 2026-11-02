@@ -3,6 +3,17 @@ export type McpAppCspDomains = Record<
   string[]
 >;
 
+export function analysisWorkspaceRequest(appUri: string, params: Record<string, unknown>):
+  { action: "start-inquiry"; text: string } | { action: "browse-analysis-material"; destination: "resources" | "data" } | null {
+  if (appUri !== "ui://llama-agent/apps/investigation-workspace") return null;
+  if (params.action === "browse-analysis-material" && (params.destination === "resources" || params.destination === "data"))
+    return { action: "browse-analysis-material", destination: params.destination };
+  const content = params.content && typeof params.content === "object" ? params.content as Record<string, unknown> : {};
+  if (params.action === "start-inquiry" && typeof content.text === "string" && content.text.trim() && content.text.length <= 2000)
+    return { action: "start-inquiry", text: content.text };
+  return null;
+}
+
 function normalizeHttpsDomain(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const match = value.trim().match(/^(?:https:\/\/)?(\*\.)?([a-z0-9.-]+)(?::([0-9]{1,5}))?$/i);

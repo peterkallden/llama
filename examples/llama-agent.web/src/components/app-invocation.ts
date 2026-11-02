@@ -4,7 +4,7 @@ export function mcpAppLabel(tool: DaemonToolStatus): string {
   const uri = tool._meta?.ui?.resourceUri;
   const names: Record<string, string> = {
     "ui://llama-agent/apps/document-editor": "Document editor",
-    "ui://llama-agent/apps/investigation-workspace": "Investigation Workspace",
+    "ui://llama-agent/apps/investigation-workspace": "Analysis",
     "ui://llama-agent/apps/data-explorer": "Data Explorer",
     "ui://llama-agent/apps/workflow-inspector": "Workflow Inspector",
   };

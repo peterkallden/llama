@@ -10,6 +10,7 @@ function workspace() {
   const nodes = new Map<string, Fields>();
   function element(): Fields {
     return { value: "", textContent: "", children: [], handlers: {}, classList: { toggle() {} },
+      focus() {},
       append(...children: Fields[]) { this.children.push(...children); },
       replaceChildren(...children: Fields[]) { this.children = children; },
       add(child: Fields) { this.children.push(child); }, setAttribute() {}, removeAttribute() {},
@@ -162,4 +163,69 @@ it("requires actor selection and sends a user decision without starting a model 
   view.respond(request!.id, { case_id: "case-a", revision: 2 }); await settle();
   expect(view.requests.filter((item) => item.params?.name === "investigate.case.open").map((item) => item.params.arguments.case_id))
     .toEqual(["case-a", "case-b"]);
+});
+
+it("starts a question or hypothesis through chat without opening a case", async () => {
+  const view = workspace(); await settle();
+  view.node("#start-question").handlers.click();
+  view.node("#inquiry-text").value = "What explains the change in the data?";
+  await view.node("#send-inquiry").handlers.click(); await settle();
+  const question = view.requests.find((request) => request.params?.action === "start-inquiry");
+  expect(question?.params.content.text).toBe("What explains the change in the data?");
+  view.node("#start-hypothesis").handlers.click();
+  view.node("#inquiry-text").value = "A change in sampling explains the trend.";
+  await view.node("#send-inquiry").handlers.click(); await settle();
+  const hypothesis = view.requests.filter((request) => request.params?.action === "start-inquiry").at(-1);
+  expect(hypothesis?.params.content.text).toContain("contrary evidence and alternative explanations");
+  expect(hypothesis?.params.content.text).toContain("A change in sampling explains the trend.");
+  expect(view.requests.some((request) => ["investigate.case.open", "investigate.case.create"].includes(request.params?.name))).toBe(false);
+  view.node("#start-question").handlers.click();
+  expect(view.node("#inquiry-text").value).toBe("What explains the change in the data?");
+});
+
+it("routes material to existing explorers and keeps case creation explicit", async () => {
+  const view = workspace(); await settle();
+  view.node("#start-material").handlers.click();
+  view.node("#browse-start-data").handlers.click(); await settle();
+  expect(view.requests.some((request) => request.params?.action === "browse-analysis-material" && request.params.destination === "data")).toBe(true);
+  view.node("#start-entity").handlers.click(); await settle();
+  expect(view.node("#analysis-profile").value).toBe("actor_relationship");
+  expect(view.node("#case-form").hidden).toBe(false);
+  expect(view.requests.some((request) => request.params?.name === "investigate.case.create")).toBe(false);
+});
+
+it("returns to the starting choices without discarding an open case", async () => {
+  const view = workspace();
+  view.open("case-a"); await settle();
+  expect(view.node("#analysis-workspace").hidden).toBe(false);
+  view.node("#change-start").handlers.click();
+  expect(view.node("#analysis-workspace").hidden).toBe(true);
+  expect(view.node("#return-analysis").hidden).toBe(false);
+  view.node("#return-analysis").handlers.click();
+  expect(view.node("#analysis-workspace").hidden).toBe(false);
+  expect(view.requests.filter((request) => request.params?.name === "investigate.case.open")).toHaveLength(1);
+});
+
+it("uploads the first source before case creation and leaves analysis explicit", async () => {
+  const view = workspace(); await settle();
+  view.node("#start-material-case").handlers.click(); await settle();
+  view.defer("ui/llama-agent/upload-investigation-resource");
+  const input = view.node("#case-upload");
+  input.files = [{ name: "brief.txt", size: 42 }];
+  const upload = input.handlers.change({ currentTarget: input }); await settle();
+  const request = view.requests.find((item) => item.method === "ui/llama-agent/upload-investigation-resource");
+  view.respond(request!.id, { resource_uri: "resource://session/brief" });
+  await upload; await settle();
+  expect(view.node("#case-resource").value).toBe("resource://session/brief");
+  expect(view.requests.some((item) => item.params?.name === "investigate.case.create")).toBe(false);
+  expect(view.requests.some((item) => item.params?.action === "start-investigation")).toBe(false);
+});
+
+it("does not create a case when an open-by-ID request is empty", async () => {
+  const view = workspace(); await settle();
+  view.node("#resume-open-id").handlers.click();
+  view.node("#case-id").value = "";
+  await view.node("#case-submit").handlers.click(); await settle();
+  expect(view.node("#status").textContent).toBe("Enter the case ID to open.");
+  expect(view.requests.some((item) => item.params?.name === "investigate.case.create")).toBe(false);
 });

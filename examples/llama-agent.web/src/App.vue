@@ -139,7 +139,7 @@ watch(() => session.events.length, () => {
 
 let sendGeneration = 0;
 function send() { return submitMessage(prompt.value, true); }
-async function submitMessage(draftAtSubmit: string, fromComposer: boolean) {
+async function submitMessage(draftAtSubmit: string, fromComposer: boolean, includeInvestigationContext = true) {
   const value = draftAtSubmit.trim();
   const investigationAppSelected = activeView.value === "app" &&
     activeMcpApp()?._meta?.ui?.resourceUri === "ui://llama-agent/apps/investigation-workspace";
@@ -150,7 +150,7 @@ async function submitMessage(draftAtSubmit: string, fromComposer: boolean) {
   const sendingResources = fromComposer ? [...session.selectedResourceRefs] : [];
   try {
     const workspaceUri = activeMcpApp()?._meta?.ui?.resourceUri;
-    const investigationMode = activeView.value === "app" && workspaceUri === "ui://llama-agent/apps/investigation-workspace";
+    const investigationMode = includeInvestigationContext && activeView.value === "app" && workspaceUri === "ui://llama-agent/apps/investigation-workspace";
     if ((documentMode.value || investigationMode) && !editorHost.value) throw new Error("The active workspace app is not ready. Your message is preserved.");
     const context = documentMode.value ? await editorHost.value!.prepareForChat() : undefined;
     const investigationContext = investigationMode ? await editorHost.value!.prepareInvestigationContext() : undefined;
@@ -163,6 +163,7 @@ async function submitMessage(draftAtSubmit: string, fromComposer: boolean) {
     if (session.messages.some((message) => message.id === `${turnId}-user`)) {
       if (fromComposer && prompt.value === draftAtSubmit) prompt.value = "";
       session.selectedResourceRefs = session.selectedResourceRefs.filter((uri) => !sendingResources.includes(uri));
+      if (!includeInvestigationContext) void navigateWorkspace("chat");
     }
     chatSending.value = false;
     const sent = await response;
@@ -178,6 +179,16 @@ function startInvestigation(promptText: string) {
     return;
   }
   void submitMessage(promptText, false);
+}
+
+function startInquiry(promptText: string) {
+  if (activeView.value !== "app" || activeMcpApp()?._meta?.ui?.resourceUri !== "ui://llama-agent/apps/investigation-workspace") return;
+  void submitMessage(promptText, false, false);
+}
+
+function browseAnalysisMaterial(destination: "resources" | "data") {
+  if (activeView.value !== "app" || activeMcpApp()?._meta?.ui?.resourceUri !== "ui://llama-agent/apps/investigation-workspace") return;
+  void navigateWorkspace(destination);
 }
 
 function enterDocumentMode() {
@@ -501,7 +512,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
         <ResourceBrowser v-if="activeView === 'resources'" :project-id="session.projectId" :session-id="session.sessionId" :tools="session.tools" :list-resources="session.listResources" :call-tool="session.callReadOnlyTool" :read-resource="session.readResourceBlob" @open-data="openSelectedResource" @attach="toggleResourceRef" @open-app="openWorkspaceApp" />
         <DataExplorer v-if="activeView === 'data'" :key="`${session.sessionId}:${selectedExplorerSource}`" :initial-source="selectedExplorerSource || undefined" :initial-kind="selectedExplorerKind" :tools="session.tools" :call-tool="session.callReadOnlyTool" @handoff="handoff" @browse="navigateWorkspace('resources')" />
         <WorkflowInspector v-else-if="activeView === 'workflow'" :events="session.events" />
-        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :project-id="session.projectId" :read-resource="session.readMcpAppResource" :list-resources="session.listResources" :upload-resource="session.upload" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" @open-report="openIndexedReport" @start-investigation="startInvestigation" />
+        <McpAppHost v-else-if="activeView === 'app' && activeMcpApp()" ref="editorHost" :key="JSON.stringify([session.sessionId, mcpAppKey(activeMcpApp()!)])" :tool="activeMcpApp()!" :tools="session.tools" :session-id="session.sessionId" :project-id="session.projectId" :read-resource="session.readMcpAppResource" :list-resources="session.listResources" :upload-resource="session.upload" :call-tool="session.callMcpAppTool" :submit-review="session.submitReview" :invocation="activeAppInvocation" @document-status="onDocumentStatus" @document-closed="onDocumentClosed" @open-report="openIndexedReport" @start-investigation="startInvestigation" @start-inquiry="startInquiry" @browse-analysis-material="browseAnalysisMaterial" />
       </div>
       <div class="primary">
         <section class="card chat chat-panel">

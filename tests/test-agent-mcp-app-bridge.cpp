@@ -130,7 +130,7 @@ int main() {
     assert(app_resource["contents"][0]["text"].get<std::string>().find("dataset.schema") != std::string::npos);
     if (has_investigation_workspace) {
         assert(agent_mcp_read_first_party_app_resource("ui://llama-agent/apps/investigation-workspace", app_resource, error));
-        assert(app_resource["contents"][0]["text"].get<std::string>().find("Investigation workspace") != std::string::npos);
+        assert(app_resource["contents"][0]["text"].get<std::string>().find("id=\"analysis-start\"") != std::string::npos);
     }
     assert(!agent_mcp_read_first_party_app_resource("ui://llama-agent/apps/unknown", app_resource, error));
 

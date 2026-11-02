@@ -257,7 +257,19 @@ research resource does not change an older report's saved evidence. Research ide
 chat drafts and compare-and-swap publication are described in
 [persistent research](../../docs/agent/agent-runtime.md#persistent-research-and-visualization).
 
-The Investigation Workspace accepts documents, retained structured logs and
+The Analysis entry page offers five starting points: question, hypothesis,
+existing material, actor/event investigation, and previous work. Questions and
+hypotheses use the normal chat submission without requiring or implicitly
+attaching a case. Material can open Resources or Data Explorer, or start a
+document/log case. Existing cases and saved graphs remain accessible through
+the previous-work entry. Within a case, sources and the analysis method precede
+optional review/report sections; relation and timeline panels appear when a
+graph has nodes. Changing the starting point preserves the open case.
+Creating a case requires an initial authorized source. The creation form can
+upload that first document/log without starting analysis, or select an existing
+resource or configured search source.
+
+The underlying Investigation Workspace accepts documents, retained structured logs and
 configured search sources in the same case. Users explicitly select sources,
 parser mappings and analysis profiles; uploading does not start forensic
 analysis. Actor mentions remain separate candidates, and the app's analyst

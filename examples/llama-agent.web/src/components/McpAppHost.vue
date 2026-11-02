@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import type { DaemonToolStatus } from "../types/agent";
-import { authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, mcpAppHeight, sandboxProxyDocument } from "./mcp-app-host";
+import { analysisWorkspaceRequest, authorizedInvestigationReportReference, canonicalToolStructuredContent, cloneJsonMessage, invocationNotifications, isCurrentAppRequest, normalizeMcpAppCsp, mcpAppHeight, sandboxProxyDocument } from "./mcp-app-host";
 import { mcpAppLabel } from "./app-invocation";
 import { InvestigationAppAccess } from "./investigation-app-access";
 import { DocumentEditorAccess } from "./document-editor-access";
@@ -23,6 +23,8 @@ const emit = defineEmits<{
   documentClosed: [];
   openReport: [uri: string];
   startInvestigation: [prompt: string];
+  startInquiry: [prompt: string];
+  browseAnalysisMaterial: [destination: "resources" | "data"];
 }>();
 const frame = ref<HTMLIFrameElement | null>(null);
 const proxyUrl = ref("");
@@ -188,6 +190,21 @@ async function onMessage(event: MessageEvent) {
     const content = params.content && typeof params.content === "object" ? params.content as Record<string, unknown> : {};
     appMessage.value = typeof content.text === "string" ? content.text : "App sent a message.";
     const action = String(params.action ?? "");
+    if (action === "start-inquiry" || action === "browse-analysis-material") {
+      const request = analysisWorkspaceRequest(uri.value, params);
+      if (!request) {
+        reply(undefined, "The analysis workspace supplied an invalid request.");
+        return;
+      }
+      if (request.action === "start-inquiry") {
+        reply({ queued: true });
+        emit("startInquiry", request.text);
+      } else {
+        reply({ opened: true });
+        emit("browseAnalysisMaterial", request.destination);
+      }
+      return;
+    }
     if (action === "start-investigation") {
       if (uri.value !== "ui://llama-agent/apps/investigation-workspace" ||
           typeof content.text !== "string" || content.text.length > 2000) {
