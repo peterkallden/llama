@@ -136,19 +136,36 @@ bool parse_assistant_message(
         std::string & error) {
     assistant_message = {};
     assistant_message.role = "assistant";
-    if (generation_result.assistant_message) {
-        assistant_message = *generation_result.assistant_message;
-        if (assistant_message.role.empty()) assistant_message.role = "assistant";
-        error.clear();
-        return true;
-    }
     if (parse_tool_calls && is_textual_tool_output_format(output_format)) {
+        if (generation_result.assistant_message &&
+                !generation_result.assistant_message->tool_calls.empty()) {
+            error = "native tool calls are not allowed for textual tool output";
+            return false;
+        }
         assistant_message.content = generation_result.content;
         common_agent_tool_call call;
         if (!common_parse_model_tool_call(output_format, generation_result.content, tools, call, error)) {
             return false;
         }
         assistant_message.tool_calls.push_back({call.name, call.arguments_json, "textual-tool-1"});
+        error.clear();
+        return true;
+    }
+    if (generation_result.assistant_message) {
+        assistant_message = *generation_result.assistant_message;
+        if (assistant_message.role.empty()) assistant_message.role = "assistant";
+        if (!parse_tool_calls && !assistant_message.tool_calls.empty()) {
+            error = "native tool calls are not allowed for this generation";
+            return false;
+        }
+        for (const auto & call : assistant_message.tool_calls) {
+            if (std::none_of(tools.begin(), tools.end(), [&](const common_chat_tool & tool) {
+                    return tool.name == call.name;
+                })) {
+                error = "tool is not exposed in this generation: " + call.name;
+                return false;
+            }
+        }
         error.clear();
         return true;
     }

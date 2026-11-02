@@ -78,18 +78,30 @@ bool parse_base(const std::string & id, const json & value,
     base.supports_json_schema = value.value("supports_json_schema", false);
     base.supports_native_tool_calls = value.value("supports_native_tool_calls", false);
     const bool http = base.backend == "http";
+    if (http && !valid_http_endpoint(base.endpoint)) {
+        error = "HTTP model base requires a valid http or https endpoint: " + id;
+        return false;
+    }
+    if (http && !bounded(base.model_id)) {
+        error = "HTTP model base requires a bounded model_id: " + id;
+        return false;
+    }
+    if (http && (base.connect_timeout_ms == 0 || base.connect_timeout_ms > 300000 ||
+            base.request_timeout_ms == 0 || base.request_timeout_ms > 3600000)) {
+        error = "HTTP model base has invalid connection or request timeout: " + id;
+        return false;
+    }
+    if (http && !base.token_env.empty() && (base.token_env.size() > 128 ||
+            base.token_env.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos)) {
+        error = "HTTP model base has an invalid token environment variable name: " + id;
+        return false;
+    }
     const bool backend_valid = base.backend == "cli" || base.backend == "server-context" || http;
     const bool local_path_valid = http ? base.path.empty() : valid_relative_model_path(base.path);
     if (!bounded(id) || (base.kind != "generation" && base.kind != "embedding") ||
             !backend_valid || !local_path_valid || !optional_bounded(base.mmproj) ||
             (!http && !base.mmproj.empty() && !valid_relative_model_path(base.mmproj)) ||
-            (http && (base.kind != "generation" || !base.mmproj.empty() ||
-                !valid_http_endpoint(base.endpoint) || !bounded(base.model_id) ||
-                base.model_id.size() > 512 || base.connect_timeout_ms == 0 ||
-                base.request_timeout_ms == 0 || base.connect_timeout_ms > 300000 ||
-                base.request_timeout_ms > 3600000 ||
-                (!base.token_env.empty() && (base.token_env.size() > 128 ||
-                    base.token_env.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos)))) ||
+            (http && (base.kind != "generation" || !base.mmproj.empty())) ||
             (!http && (!base.endpoint.empty() || !base.model_id.empty() || !base.token_env.empty())) ||
             (base.load_policy != "resident" && base.load_policy != "lazy")) {
         error = "model base has invalid identity or load policy: " + id;
@@ -150,9 +162,11 @@ bool parse_profile(const std::string & id, const json & value,
         }
         profile.sidebands.push_back(std::move(sideband));
     }
+    if (profile.context_size_tokens == 0 || profile.context_size_tokens > 1024 * 1024) {
+        error = "model profile requires a valid context_size between 1 and 1048576: " + id;
+        return false;
+    }
     if (!bounded(id) || !bounded(profile.base_model_id) ||
-            profile.context_size_tokens == 0 ||
-            profile.context_size_tokens > 1024 * 1024 ||
             (!profile.load_policy.empty() && profile.load_policy != "resident" && profile.load_policy != "lazy") ||
             profile.adapters.size() > 8 ||
             profile.n_parallel < 1 || profile.n_parallel > 256 ||

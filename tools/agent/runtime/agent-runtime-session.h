@@ -40,7 +40,7 @@ struct common_agent_runtime_loaded_model_state {
     std::vector<float> adapter_scales;
     const common_chat_templates * chat_templates_view = nullptr;
     bool externally_owned = false;
-    std::shared_ptr<void> residency_owner;
+    std::shared_ptr<common_agent_runtime_resident_model> residency_owner;
 
     void reset();
 };

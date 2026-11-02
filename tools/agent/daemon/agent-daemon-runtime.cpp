@@ -138,6 +138,14 @@ bool open_daemon_model_residency(
 
 std::optional<common_memory_policy_pack> make_daemon_policy_pack(
         const daemon_options & options) {
+    std::string inference_backend = "server-context";
+    const auto profile_id = options.model_profile.empty()
+        ? options.model_catalog.default_profile : options.model_profile;
+    const auto profile = options.model_catalog.profiles.find(profile_id);
+    if (profile != options.model_catalog.profiles.end()) {
+        const auto base = options.model_catalog.bases.find(profile->second.base_model_id);
+        if (base != options.model_catalog.bases.end()) inference_backend = base->second.backend;
+    }
     common_memory_policy_pack pack;
     pack.id = "daemon-session-policy";
     pack.purpose = "Run host-owned resident agent turns through the foreground daemon.";
@@ -149,7 +157,7 @@ std::optional<common_memory_policy_pack> make_daemon_policy_pack(
         "Keep tool use within the configured profile and bounded runtime policy.",
     };
     pack.decisions = {
-        "Inference backend: server-context resident host.",
+        "Inference backend: " + inference_backend + " resident host.",
         std::string("Tool profile: ") + (options.tool_profile.empty() ? "none" : options.tool_profile),
     };
     if (options.default_mode == "agent") {

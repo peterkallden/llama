@@ -275,6 +275,16 @@ bool common_agent_server_context_host::build_inference_session(
     session.capabilities.image = meta.chat_params.allow_image;
     session.capabilities.audio = meta.chat_params.allow_audio;
     session.templates = meta.chat_params.tmpls.get();
+    session.capabilities.json_schema = true;
+    session.capabilities.gbnf_grammar = true;
+    // This denotes transport support for model-internal requests; FlyDelta
+    // lifecycle and host bindings are configured separately.
+    session.capabilities.flydelta_internal = true;
+    if (session.templates != nullptr) {
+        const auto caps = common_chat_templates_get_caps(session.templates);
+        const auto tools = caps.find("supports_tool_calls");
+        session.capabilities.native_tool_calls = tools != caps.end() && tools->second;
+    }
     session.inference = make_server_context_agent_inference(
         *instance->server,
         instance->params,

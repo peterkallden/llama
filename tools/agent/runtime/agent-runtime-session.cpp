@@ -51,6 +51,18 @@ bool common_agent_inference_context_key_match(
         common_agent_model_load_key_match(lhs.model_key, rhs.model_key);
 }
 
+void set_local_inference_capabilities(common_agent_inference_session & session) {
+    session.capabilities.json_schema = true;
+    session.capabilities.gbnf_grammar = true;
+    if (session.templates != nullptr) {
+        const auto caps = common_chat_templates_get_caps(session.templates);
+        const auto tools = caps.find("supports_tool_calls");
+        session.capabilities.native_tool_calls = tools != caps.end() && tools->second;
+    }
+    // The CLI adapter only implements a subset of model-internal operations.
+    session.capabilities.flydelta_internal = false;
+}
+
 bool build_agent_inference_session(
         const common_agent_inference_options & options,
         agent_inference_backend backend,
@@ -112,6 +124,7 @@ bool build_agent_inference_session(
 
     session.inference = make_llama_cli_agent_inference(
         model, templates, adapters, adapter_scales, options.context_size_tokens);
+    set_local_inference_capabilities(session);
     error.clear();
     return true;
 }
@@ -192,6 +205,19 @@ bool initialize_agent_runtime_session(
     std::string & error) {
     (void) memory_enabled;
     (void) fallback_reason;
+
+    // The host calls this entry point for every turn, including turns whose
+    // inference was prepared by the residency manager. HTTP has no local
+    // model path from which this function can reconstruct the profile.
+    if (backend == agent_inference_backend::http) {
+        if (!session.loaded_model.residency_owner) {
+            error = "HTTP inference requires a resident host model profile";
+            return false;
+        }
+        auto resident_model = session.loaded_model.residency_owner;
+        return initialize_agent_runtime_session_from_resident_model(
+            options, backend, resident_model, session, error);
+    }
 
     const auto requested_model_key = make_agent_model_load_key(options);
     const auto requested_context_key = make_agent_inference_context_key(options, backend);

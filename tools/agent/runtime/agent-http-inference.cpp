@@ -240,6 +240,10 @@ public:
                         !call.contains("function") || !call["function"].is_object() ||
                         !call["function"].contains("name") || !call["function"]["name"].is_string() ||
                         !call["function"].contains("arguments")) return fail("HTTP inference response contains a malformed tool call");
+                if ((call.contains("type") && call["type"] != "function") ||
+                        call["id"].get<std::string>().empty() ||
+                        call["function"]["name"].get<std::string>().empty())
+                    return fail("HTTP inference response contains an invalid tool-call identity or type");
                 std::string arguments;
                 const auto & args = call["function"]["arguments"];
                 if (args.is_string()) arguments = args.get<std::string>();
@@ -250,6 +254,11 @@ public:
                 assistant.tool_calls.push_back({call["function"]["name"].get<std::string>(), arguments, call["id"].get<std::string>()});
             }
         }
+        if (!assistant.tool_calls.empty() &&
+                (request.tools.empty() || request.tool_choice == COMMON_CHAT_TOOL_CHOICE_NONE))
+            return fail("HTTP inference returned tool calls for a request that did not allow them");
+        if ((!message.contains("content") || message["content"].is_null()) && assistant.tool_calls.empty())
+            return fail("HTTP inference response message is missing content and tool calls");
         if (!request.json_schema.empty() && (!assistant.tool_calls.empty() || result.content.empty()))
             return fail("HTTP inference response rejected by requested JSON schema: expected JSON content without tool calls");
         if (!request.json_schema.empty()) {
@@ -263,11 +272,12 @@ public:
         if (payload.contains("usage") && payload["usage"].is_object() &&
                 payload["usage"].contains("completion_tokens") && payload["usage"]["completion_tokens"].is_number_integer())
             result.decoded_tokens = std::max(0, payload["usage"]["completion_tokens"].get<int>());
-        std::string finish;
-        if (choice.contains("finish_reason") && !choice["finish_reason"].is_null()) {
-            if (!choice["finish_reason"].is_string()) return fail("HTTP inference finish_reason has an invalid type");
-            finish = choice["finish_reason"].get<std::string>();
-        }
+        if (!choice.contains("finish_reason") || !choice["finish_reason"].is_string())
+            return fail("HTTP inference response is missing a valid finish_reason");
+        const std::string finish = choice["finish_reason"].get<std::string>();
+        if (finish == "content_filter") return fail("HTTP inference response was blocked by the remote content filter");
+        if (finish != "stop" && finish != "length" && finish != "tool_calls")
+            return fail("HTTP inference response has an unsupported finish_reason");
         result.status = common_agent_generation_status::completed;
         if (finish == "length") result.stop_reason = common_agent_generation_stop_reason::limit;
         else if (finish == "tool_calls") result.stop_reason = common_agent_generation_stop_reason::eos;
