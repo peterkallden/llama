@@ -136,6 +136,12 @@ bool parse_assistant_message(
         std::string & error) {
     assistant_message = {};
     assistant_message.role = "assistant";
+    if (generation_result.assistant_message) {
+        assistant_message = *generation_result.assistant_message;
+        if (assistant_message.role.empty()) assistant_message.role = "assistant";
+        error.clear();
+        return true;
+    }
     if (parse_tool_calls && is_textual_tool_output_format(output_format)) {
         assistant_message.content = generation_result.content;
         common_agent_tool_call call;

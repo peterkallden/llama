@@ -121,6 +121,17 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-engine)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-http-inference-smoke)
+add_executable(${TARGET}
+    smoke/runtime/agent-http-inference-smoke.cpp
+)
+target_include_directories(${TARGET} PRIVATE
+    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime
+)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib Threads::Threads)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 # Optional model-backed loader smoke. It intentionally is not registered with
 # CTest: operators must provide two explicit GGUF paths before it may load
 # model files.
@@ -1558,7 +1569,9 @@ if (BUILD_TESTING)
 
     add_test(NAME llama-agent-model-residency-ctest
         COMMAND $<TARGET_FILE:llama-agent-model-residency-smoke>)
-    set_property(TEST llama-agent-model-residency-ctest PROPERTY LABELS agent)
+    add_test(NAME llama-agent-http-inference-ctest
+        COMMAND $<TARGET_FILE:llama-agent-http-inference-smoke>)
+    set_property(TEST llama-agent-model-residency-ctest llama-agent-http-inference-ctest PROPERTY LABELS agent)
 
     add_test(NAME llama-agent-adaptation-e2e-ctest
         COMMAND $<TARGET_FILE:llama-agent-adaptation-e2e-smoke>)

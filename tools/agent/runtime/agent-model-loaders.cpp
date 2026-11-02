@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <mutex>
+#include <cstdlib>
 
 namespace {
 
@@ -142,6 +143,36 @@ bool common_agent_runtime_server_context_model_loader::load(
     loaded->model_n_embd = static_cast<size_t>(llama_model_n_embd(loaded_model));
     loaded->model_n_layers = static_cast<size_t>(llama_model_n_layer(loaded_model));
     loaded->server_context_host = std::move(host);
+    model = std::move(loaded);
+    error.clear();
+    return true;
+}
+
+bool common_agent_runtime_http_model_loader::load(
+        const common_agent_model_selection & selection,
+        std::shared_ptr<common_agent_runtime_resident_model> & model,
+        std::string & error) {
+    model.reset();
+    if (selection.backend != "http") {
+        error = "HTTP model loader received a non-HTTP profile";
+        return false;
+    }
+    if (selection.endpoint.empty()) { error = "HTTP model profile is missing endpoint"; return false; }
+    if (selection.model_id.empty()) { error = "HTTP model profile is missing model_id"; return false; }
+    if (selection.context_size_tokens == 0) { error = "HTTP model profile requires context_size"; return false; }
+    if (!selection.token_env.empty()) {
+        const char * token = std::getenv(selection.token_env.c_str());
+        if (token == nullptr || token[0] == '\0') {
+            error = "HTTP model profile bearer-token environment variable is unset";
+            return false;
+        }
+    }
+    if (!selection.adapters.empty() || !selection.sidebands.empty()) {
+        error = "HTTP model profiles do not support local adapter or FlyDelta sideband overlays";
+        return false;
+    }
+    auto loaded = std::make_shared<common_agent_runtime_loaded_model>();
+    loaded->selection = selection;
     model = std::move(loaded);
     error.clear();
     return true;

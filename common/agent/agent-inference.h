@@ -180,6 +180,10 @@ struct common_agent_generation_result {
     common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error;
     std::string error_message;
     std::optional<common_chat_params> chat_params;
+    // Backends with structured native tool-call responses can provide the
+    // normalized assistant message directly. Text-based local parsers remain
+    // the fallback when this is empty.
+    std::optional<common_chat_msg> assistant_message;
     std::shared_ptr<const common_flydelta_hidden_state_capture> flydelta_capture;
     std::shared_ptr<const common_agent_residual_patch_observation> residual_patch_observation;
     std::shared_ptr<const common_flydelta_device_diagnostics_result> flydelta_device_diagnostics;

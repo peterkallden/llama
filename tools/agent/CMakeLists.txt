@@ -122,6 +122,7 @@ set(AGENT_RUNTIME_ENGINE_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-model-residency.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-model-loaders.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-http-inference.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-context-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-generation.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-server-inference.cpp

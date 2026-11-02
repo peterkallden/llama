@@ -1,6 +1,7 @@
 #include "agent/runtime/model-catalog.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <nlohmann/json.hpp>
@@ -29,6 +30,37 @@ bool valid_relative_model_path(const std::string & value) {
     return true;
 }
 
+bool valid_http_endpoint(const std::string & value) {
+    const bool scheme = value.rfind("http://", 0) == 0 || value.rfind("https://", 0) == 0;
+    if (!scheme || value.size() > 2048 || value.find('@') != std::string::npos ||
+            value.find('#') != std::string::npos || value.find('?') != std::string::npos) return false;
+    const size_t start = value.find("://") + 3;
+    const size_t slash = value.find('/', start);
+    const std::string authority = value.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
+    if (authority.empty()) return false;
+    int port = value.rfind("https://", 0) == 0 ? 443 : 80;
+    if (authority.front() == '[') {
+        const size_t close = authority.find(']');
+        if (close == std::string::npos || close == 1) return false;
+        if (close + 1 < authority.size()) {
+            if (authority[close + 1] != ':') return false;
+            const std::string port_text = authority.substr(close + 2);
+            if (port_text.empty() || !std::all_of(port_text.begin(), port_text.end(), [](unsigned char ch) { return std::isdigit(ch); })) return false;
+            try { port = std::stoi(port_text); } catch (...) { return false; }
+        }
+    } else {
+        const size_t colon = authority.rfind(':');
+        if (colon != std::string::npos) {
+            if (authority.find(':') != colon || colon == 0) return false;
+            const std::string port_text = authority.substr(colon + 1);
+            if (port_text.empty() || !std::all_of(port_text.begin(), port_text.end(), [](unsigned char ch) { return std::isdigit(ch); })) return false;
+            try { port = std::stoi(port_text); } catch (...) { return false; }
+        }
+    }
+    if (port < 1 || port > 65535) return false;
+    return std::all_of(value.begin(), value.end(), [](unsigned char ch) { return ch > 0x20 && ch != 0x7f; });
+}
+
 bool parse_base(const std::string & id, const json & value,
         common_agent_model_base_spec & base, std::string & error) {
     if (!value.is_object()) { error = "model base must be an object: " + id; return false; }
@@ -38,10 +70,27 @@ bool parse_base(const std::string & id, const json & value,
     base.path = value.value("path", "");
     base.mmproj = value.value("mmproj", "");
     base.load_policy = value.value("load", value.value("load_policy", "lazy"));
+    base.endpoint = value.value("endpoint", "");
+    base.model_id = value.value("model_id", "");
+    base.token_env = value.value("token_env", "");
+    base.connect_timeout_ms = value.value("connect_timeout_ms", uint32_t{5000});
+    base.request_timeout_ms = value.value("request_timeout_ms", uint32_t{120000});
+    base.supports_json_schema = value.value("supports_json_schema", false);
+    base.supports_native_tool_calls = value.value("supports_native_tool_calls", false);
+    const bool http = base.backend == "http";
+    const bool backend_valid = base.backend == "cli" || base.backend == "server-context" || http;
+    const bool local_path_valid = http ? base.path.empty() : valid_relative_model_path(base.path);
     if (!bounded(id) || (base.kind != "generation" && base.kind != "embedding") ||
-            (base.backend != "cli" && base.backend != "server-context") ||
-            !valid_relative_model_path(base.path) || !optional_bounded(base.mmproj) ||
-            (!base.mmproj.empty() && !valid_relative_model_path(base.mmproj)) ||
+            !backend_valid || !local_path_valid || !optional_bounded(base.mmproj) ||
+            (!http && !base.mmproj.empty() && !valid_relative_model_path(base.mmproj)) ||
+            (http && (base.kind != "generation" || !base.mmproj.empty() ||
+                !valid_http_endpoint(base.endpoint) || !bounded(base.model_id) ||
+                base.model_id.size() > 512 || base.connect_timeout_ms == 0 ||
+                base.request_timeout_ms == 0 || base.connect_timeout_ms > 300000 ||
+                base.request_timeout_ms > 3600000 ||
+                (!base.token_env.empty() && (base.token_env.size() > 128 ||
+                    base.token_env.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") != std::string::npos)))) ||
+            (!http && (!base.endpoint.empty() || !base.model_id.empty() || !base.token_env.empty())) ||
             (base.load_policy != "resident" && base.load_policy != "lazy")) {
         error = "model base has invalid identity or load policy: " + id;
         return false;
@@ -168,7 +217,9 @@ bool common_agent_validate_model_catalog(
         }
         return true;
     }
-    if (catalog.directory.empty()) { error = "model catalog directory is required when bases are configured"; return false; }
+    if (catalog.directory.empty() && std::any_of(catalog.bases.begin(), catalog.bases.end(), [](const auto & entry) {
+            return entry.second.backend != "http";
+        })) { error = "model catalog directory is required for local model bases"; return false; }
     size_t generation_count = 0;
     for (const auto & entry : catalog.bases) {
         if (entry.second.kind == "generation") ++generation_count;
@@ -194,6 +245,11 @@ bool common_agent_validate_model_catalog(
             error = "model profile does not reference a generation base: " + entry.first;
             return false;
         }
+        if (base->second.backend == "http" &&
+                (!entry.second.adapters.empty() || !entry.second.sidebands.empty())) {
+            error = "HTTP model profile does not support local adapter or FlyDelta overlays: " + entry.first;
+            return false;
+        }
     }
     if (!catalog.profiles.empty() && catalog.profiles.find(catalog.default_profile) == catalog.profiles.end()) {
         error = "model catalog default profile is unavailable: " + catalog.default_profile;
@@ -206,13 +262,28 @@ std::string common_agent_model_catalog_to_json(
         const common_agent_model_catalog & catalog) {
     json bases = json::object();
     for (const auto & entry : catalog.bases) {
-        bases[entry.first] = {
-            {"kind", entry.second.kind},
-            {"backend", entry.second.backend},
-            {"path", entry.second.path},
-            {"mmproj", entry.second.mmproj},
-            {"load", entry.second.load_policy},
-        };
+        if (entry.second.backend == "http") {
+            bases[entry.first] = {
+                {"kind", entry.second.kind},
+                {"backend", entry.second.backend},
+                {"load", entry.second.load_policy},
+            };
+            bases[entry.first]["endpoint"] = entry.second.endpoint;
+            bases[entry.first]["model_id"] = entry.second.model_id;
+            if (!entry.second.token_env.empty()) bases[entry.first]["token_env"] = entry.second.token_env;
+            bases[entry.first]["connect_timeout_ms"] = entry.second.connect_timeout_ms;
+            bases[entry.first]["request_timeout_ms"] = entry.second.request_timeout_ms;
+            bases[entry.first]["supports_json_schema"] = entry.second.supports_json_schema;
+            bases[entry.first]["supports_native_tool_calls"] = entry.second.supports_native_tool_calls;
+        } else {
+            bases[entry.first] = {
+                {"kind", entry.second.kind},
+                {"backend", entry.second.backend},
+                {"path", entry.second.path},
+                {"mmproj", entry.second.mmproj},
+                {"load", entry.second.load_policy},
+            };
+        }
     }
     json profiles = json::object();
     for (const auto & entry : catalog.profiles) {
@@ -349,7 +420,8 @@ bool common_agent_model_catalog_resolve_profile(
     selection.profile_id = selected_id;
     selection.base_model_id = base->first;
     selection.backend = base->second.backend;
-    selection.path = (std::filesystem::path(catalog.directory) / base->second.path).lexically_normal().string();
+    selection.path = base->second.backend == "http" ? std::string{} :
+        (std::filesystem::path(catalog.directory) / base->second.path).lexically_normal().string();
     if (!base->second.mmproj.empty()) {
         selection.mmproj = (std::filesystem::path(catalog.directory) / base->second.mmproj).lexically_normal().string();
     }
@@ -362,6 +434,13 @@ bool common_agent_model_catalog_resolve_profile(
     selection.sidebands = selected->second.sidebands;
     selection.tool_output_format = selected->second.tool_output_format;
     selection.tool_output_format_configured = selected->second.tool_output_format_configured;
+    selection.endpoint = base->second.endpoint;
+    selection.model_id = base->second.model_id;
+    selection.token_env = base->second.token_env;
+    selection.connect_timeout_ms = base->second.connect_timeout_ms;
+    selection.request_timeout_ms = base->second.request_timeout_ms;
+    selection.supports_json_schema = base->second.supports_json_schema;
+    selection.supports_native_tool_calls = base->second.supports_native_tool_calls;
     error.clear();
     return true;
 }
@@ -384,6 +463,13 @@ std::string common_agent_model_selection_cache_key(
         << selection.n_parallel << '\n'
         << selection.n_sequences << '\n'
         << selection.load_policy << '\n';
+    if (selection.backend == "http") {
+        key << selection.endpoint << '\n' << selection.model_id << '\n'
+            << selection.token_env << '\n'
+            << selection.connect_timeout_ms << '\n' << selection.request_timeout_ms << '\n'
+            << "json-schema:" << selection.supports_json_schema << '\n'
+            << "native-tools:" << selection.supports_native_tool_calls << '\n';
+    }
     for (const auto & adapter : selection.adapters) {
         key << adapter.adapter_id << ':' << adapter.scale << '\n';
     }

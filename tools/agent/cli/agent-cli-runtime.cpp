@@ -164,6 +164,16 @@ bool parse_native_operation_selection(
         std::string & error) {
     assistant = {};
     assistant.role = "assistant";
+    if (generation.assistant_message) {
+        assistant = *generation.assistant_message;
+        if (assistant.role.empty()) assistant.role = "assistant";
+        if (assistant.tool_calls.size() != 1) {
+            error = "operation selection must return exactly one native tool call";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
     if (!generation.chat_params) {
         error = "operation selection did not return parser metadata";
         return false;

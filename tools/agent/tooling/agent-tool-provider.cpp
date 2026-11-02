@@ -1812,7 +1812,17 @@ bool agent_dispatch_chat_tool_calls(
             call.id = "tool-call-" + std::to_string(index + 1);
         }
 
-        const auto tool_result = tool_view.call({call.id, call.name, call.arguments}, error);
+        const agent_tool_call requested_call{call.id, call.name, call.arguments};
+        if (!tool_view.exposes_tool(call.name)) {
+            error = "tool is not exposed by the authorized runtime view: " + call.name;
+            return false;
+        }
+        if (!tool_view.validate(requested_call, error)) {
+            if (error.empty()) error = "tool call failed runtime authorization or validation";
+            return false;
+        }
+
+        const auto tool_result = tool_view.call(requested_call, error);
         common_chat_msg tool_message;
         tool_message.role = "tool";
         tool_message.tool_name = call.name;

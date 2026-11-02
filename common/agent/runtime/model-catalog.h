@@ -4,6 +4,7 @@
 #include "agent/runtime/model-profile-cache.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -16,6 +17,15 @@ struct common_agent_model_base_spec {
     std::string path;
     std::string mmproj;
     std::string load_policy = "lazy";
+    // HTTP inference host configuration. Token values are never stored here;
+    // only the environment-variable name is part of configuration.
+    std::string endpoint;
+    std::string model_id;
+    std::string token_env;
+    uint32_t connect_timeout_ms = 5000;
+    uint32_t request_timeout_ms = 120000;
+    bool supports_json_schema = false;
+    bool supports_native_tool_calls = false;
 };
 
 struct common_agent_model_profile_spec {
@@ -58,6 +68,13 @@ struct common_agent_model_selection {
     std::vector<common_agent_flydelta_sideband_overlay> sidebands;
     common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::native;
     bool tool_output_format_configured = false;
+    std::string endpoint;
+    std::string model_id;
+    std::string token_env;
+    uint32_t connect_timeout_ms = 5000;
+    uint32_t request_timeout_ms = 120000;
+    bool supports_json_schema = false;
+    bool supports_native_tool_calls = false;
 };
 
 bool common_agent_validate_model_catalog(

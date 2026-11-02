@@ -4,6 +4,7 @@
 #ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
 #include "../runtime/agent-server-context-host.h"
 #include "agent-model-loaders.h"
+#include "agent-http-inference.h"
 #endif
 
 #include "chat.h"
@@ -58,12 +59,29 @@ bool build_agent_inference_session(
         std::shared_ptr<common_agent_server_context_host> server_context_host,
         const std::vector<llama_adapter_lora *> & adapters,
         const std::vector<float> & adapter_scales,
+        const common_agent_model_selection * selection,
         common_agent_inference_session & session,
         std::string & error) {
     session = {};
     session.backend = backend;
     session.model = model;
     session.templates = templates;
+    if (backend == agent_inference_backend::http) {
+#ifdef LLAMA_AGENT_ANDROID_CLI_ONLY
+        error = "HTTP inference backend is unavailable in the Android CLI-only runtime";
+        return false;
+#else
+        if (selection == nullptr) {
+            error = "HTTP inference requires a resident host model profile";
+            return false;
+        }
+        session.inference = make_agent_http_inference(*selection);
+        session.capabilities.json_schema = selection->supports_json_schema;
+        session.capabilities.native_tool_calls = selection->supports_native_tool_calls;
+        error.clear();
+        return true;
+#endif
+    }
 #ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
     if (backend == agent_inference_backend::server_context) {
         if (!adapters.empty()) {
@@ -87,6 +105,10 @@ bool build_agent_inference_session(
         return false;
     }
 #endif
+    if (backend != agent_inference_backend::cli) {
+        error = "unsupported inference backend for runtime session";
+        return false;
+    }
 
     session.inference = make_llama_cli_agent_inference(
         model, templates, adapters, adapter_scales, options.context_size_tokens);
@@ -238,6 +260,7 @@ bool initialize_agent_runtime_session(
             session.loaded_model.server_context_host,
             session.loaded_model.adapters,
             session.loaded_model.adapter_scales,
+            nullptr,
             session.inference_context.session,
             error)) {
         session.reset();
@@ -276,8 +299,9 @@ bool initialize_agent_runtime_session_from_resident_model(
         error = "residency loader returned an unknown model resource";
         return false;
     }
-    const std::string expected_backend = backend == agent_inference_backend::cli
-        ? "cli" : "server-context";
+    const char * expected_backend = backend == agent_inference_backend::cli ? "cli" :
+        backend == agent_inference_backend::server_context ? "server-context" :
+        backend == agent_inference_backend::http ? "http" : "invalid";
     if (loaded->selection.backend != expected_backend) {
         error = "resident model backend does not match the requested inference backend";
         return false;
@@ -295,8 +319,17 @@ bool initialize_agent_runtime_session_from_resident_model(
         error = "resident server-context model resource has no server context host";
         return false;
     }
+    if (backend == agent_inference_backend::http &&
+            (loaded->selection.endpoint.empty() || loaded->selection.model_id.empty() ||
+                loaded->selection.context_size_tokens == 0)) {
+        error = "resident HTTP model resource has incomplete endpoint, model, or context configuration";
+        return false;
+    }
 
-    const auto requested_context_key = make_agent_inference_context_key(options, backend);
+    auto requested_context_key = make_agent_inference_context_key(options, backend);
+    if (backend == agent_inference_backend::http) {
+        requested_context_key.model_key.model = common_agent_model_selection_cache_key(loaded->selection);
+    }
     if (session.inference_context.initialized &&
             session.inference_context.session.inference &&
             common_agent_inference_context_key_match(
@@ -326,6 +359,7 @@ bool initialize_agent_runtime_session_from_resident_model(
             session.loaded_model.server_context_host,
             session.loaded_model.adapters,
             session.loaded_model.adapter_scales,
+            &loaded->selection,
             session.inference_context.session,
             error)) {
         session.reset();
@@ -346,11 +380,29 @@ bool apply_agent_runtime_model_profile(
         const std::string & adapter_root,
         std::string & error) {
     error.clear();
-    if (!session.loaded_model.loaded || session.loaded_model.model == nullptr) {
+    if (!session.loaded_model.loaded) {
         error = "cannot apply a model profile before the base model is loaded";
         return false;
     }
     if (!common_agent_validate_model_profile(profile, error)) {
+        return false;
+    }
+    if (session.loaded_model.backend == agent_inference_backend::http) {
+        if (!profile.adapters.empty() || !profile.sidebands.empty()) {
+            error = "HTTP inference backend does not support model-profile overlays";
+            return false;
+        }
+        session.loaded_model.profile_id = profile.id;
+        session.loaded_model.profile_cache_key = common_agent_model_profile_cache_key(profile);
+        if (session.inference_context.initialized) {
+            session.inference_context.session.profile_id = session.loaded_model.profile_id;
+            session.inference_context.session.profile_cache_key = session.loaded_model.profile_cache_key;
+        }
+        error.clear();
+        return true;
+    }
+    if (session.loaded_model.model == nullptr) {
+        error = "cannot apply a model profile without a local model";
         return false;
     }
     if (profile.adapters.empty() && !adapter_root.empty()) {
@@ -423,6 +475,7 @@ bool apply_agent_runtime_model_profile(
             session.loaded_model.server_context_host,
             session.loaded_model.adapters,
             session.loaded_model.adapter_scales,
+            nullptr,
             session.inference_context.session,
             error)) {
         session.loaded_model.reset();

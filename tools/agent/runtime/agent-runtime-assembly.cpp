@@ -59,6 +59,10 @@ bool parse_agent_inference_backend(const std::string & value, agent_inference_ba
         backend = agent_inference_backend::server_context;
         return true;
     }
+    if (value == "http") {
+        backend = agent_inference_backend::http;
+        return true;
+    }
     return false;
 }
 

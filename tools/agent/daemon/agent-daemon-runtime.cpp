@@ -127,6 +127,7 @@ bool open_daemon_model_residency(
     loaders.emplace(
         "server-context",
         std::make_shared<common_agent_runtime_server_context_model_loader>(loader_config));
+    loaders.emplace("http", std::make_shared<common_agent_runtime_http_model_loader>());
 #endif
     residency = std::make_shared<common_agent_runtime_model_residency>(
         std::move(catalog),

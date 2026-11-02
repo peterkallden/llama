@@ -72,6 +72,14 @@ private:
     common_agent_runtime_model_loader_config config_;
 };
 
+class common_agent_runtime_http_model_loader final
+    : public common_agent_runtime_model_loader {
+public:
+    bool load(const common_agent_model_selection & selection,
+            std::shared_ptr<common_agent_runtime_resident_model> & model,
+            std::string & error) override;
+};
+
 std::shared_ptr<common_agent_runtime_loaded_model>
 common_agent_runtime_loaded_model_cast(
         const std::shared_ptr<common_agent_runtime_resident_model> & model);

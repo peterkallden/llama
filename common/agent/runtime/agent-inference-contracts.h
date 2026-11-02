@@ -14,6 +14,7 @@
 enum class agent_inference_backend {
     cli,
     server_context,
+    http,
 };
 
 struct common_agent_inference_options {

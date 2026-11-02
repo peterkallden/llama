@@ -32,6 +32,10 @@ struct common_agent_inference_capabilities {
     bool text = true;
     bool image = false;
     bool audio = false;
+    bool json_schema = false;
+    bool native_tool_calls = false;
+    bool gbnf_grammar = false;
+    bool flydelta_internal = false;
 };
 
 bool parse_agent_inference_backend(const std::string & value, agent_inference_backend & backend);
