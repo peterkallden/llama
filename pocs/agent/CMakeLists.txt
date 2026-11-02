@@ -921,6 +921,10 @@ target_include_directories(${TARGET} PRIVATE
 )
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
+if (LLAMA_AGENT_TOOLS_CLANG)
+    target_compile_definitions(${TARGET} PRIVATE LLAMA_AGENT_TOOLS_USE_CLANG=1)
+    target_link_libraries(${TARGET} PRIVATE llama-agent-code)
+endif()
 
 set(TARGET llama-agent-openapi-catalog-smoke)
 add_executable(${TARGET}

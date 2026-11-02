@@ -1,12 +1,14 @@
 #pragma once
 
 #include "agent-clangd-protocol.h"
+#include "../host/agent-project-file-watch.h"
 
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 struct agent_clangd_session_config {
     std::string executable = "clangd";
@@ -14,6 +16,9 @@ struct agent_clangd_session_config {
     std::string compile_commands_dir;
     uint32_t request_timeout_ms = 180000;
     uint32_t shutdown_timeout_ms = 1000;
+    std::string compile_commands_source;
+    std::string compile_commands_destination;
+    std::shared_ptr<agent_project_file_watch_service> file_watch_service;
 };
 
 class agent_clangd_session {
@@ -32,6 +37,9 @@ public:
             const std::string & language_id,
             const std::string & text,
             std::string & error);
+
+    bool apply_file_changes(const std::vector<agent_project_file_change> & changes, std::string & error);
+    void stop_for_refresh();
 
     bool initialized() const;
     agent_clangd_json status_snapshot() const;

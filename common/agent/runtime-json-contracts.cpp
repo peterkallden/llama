@@ -161,7 +161,7 @@ std::string common_agent_runtime_user_correction_json(
 
 nlohmann::ordered_json common_agent_runtime_failure_observation_to_json(
         const common_agent_failure & failure) {
-    return {
+    json result = {
         {"failure", {
             {"code", failure.code},
             {"class", common_agent_failure_class_name(failure.classification)},
@@ -176,6 +176,10 @@ nlohmann::ordered_json common_agent_runtime_failure_observation_to_json(
                 : json::parse(failure.repair_context_json, nullptr, false)},
         }},
     };
+    if (failure.http_status >= 100 && failure.http_status <= 599) {
+        result["failure"]["http_status"] = failure.http_status;
+    }
+    return result;
 }
 
 std::string common_agent_runtime_failure_observation_json(

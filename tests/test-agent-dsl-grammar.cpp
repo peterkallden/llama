@@ -192,6 +192,22 @@ void array_ambiguity_contracts() {
 }
 
 void projection_contracts() {
+    {
+        std::string error;
+        std::string normalized;
+        const auto alternatives = common_project_model_input_schema_parameter_requirements(
+            R"({"type":"object","properties":{"search":{"type":"string"},"filter":{"type":"string"}}})",
+            {}, {"search", "filter"}, error);
+        require(!alternatives.empty() && error.empty(), error);
+        require(!common_schema_normalize_and_validate_object("{}", alternatives, normalized, error), "missing alternative accepted");
+        require(common_schema_normalize_and_validate_object(R"({"search":"energy"})", alternatives, normalized, error), error);
+        require(common_schema_normalize_and_validate_object(R"({"filter":"year:2024"})", alternatives, normalized, error), error);
+        require(common_schema_normalize_and_validate_object(R"({"search":"energy","filter":"year:2024"})", alternatives, normalized, error), error);
+        const auto bound = common_project_model_input_schema_without_bound_fields(alternatives, {"search"}, error);
+        require(common_schema_normalize_and_validate_object("{}", bound, normalized, error), "bound alternative was still required");
+        require(common_project_model_input_schema_parameter_requirements(
+            R"({"type":"object","properties":{}})", {}, {"missing"}, error).empty(), "unknown alternative accepted");
+    }
     const std::string schema = R"({"type":"object","required":["dataset","column"],"properties":{
         "dataset":{"type":"string"},"column":{"type":"string"}},"allOf":[{"required":["dataset"]}]})";
     std::string error;

@@ -46,6 +46,27 @@ int main() {
     assert(ref.lineage.chunk_index == 1);
     assert(ref.lineage.chunk_count == plan.ranges.size());
 
+    // Resource-backed windows must see beyond the cut to choose a paragraph
+    // boundary, and neither edge may split a multibyte character.
+    agent_resource_put_request unicode_put = put;
+    unicode_put.text = "Första stycket.\n\nÅngström och blåbär är svenska ord.\n\nNästa stycke med mera text.";
+    agent_resource_descriptor unicode_descriptor;
+    assert(store.put_text(unicode_put, unicode_descriptor, error));
+    agent_resource_chunk_plan unicode_plan;
+    assert(plan_agent_resource_text_chunks(store, unicode_descriptor.uri, authority, {28, 7}, unicode_plan, error));
+    assert(unicode_plan.ranges.size() > 1 && unicode_plan.ranges.front().boundary == "paragraph");
+    size_t covered = 0;
+    for (const auto & range : unicode_plan.ranges) {
+        assert(range.byte_length <= 28 && range.byte_offset <= covered);
+        assert(range.byte_offset == 0 ||
+            (static_cast<unsigned char>(unicode_put.text[range.byte_offset]) & 0xc0) != 0x80);
+        const size_t end = range.byte_offset + range.byte_length;
+        assert(end == unicode_put.text.size() ||
+            (static_cast<unsigned char>(unicode_put.text[end]) & 0xc0) != 0x80);
+        covered = std::max(covered, end);
+    }
+    assert(covered == unicode_put.text.size());
+
     common_runtime_resource_text_view view;
     assert(common_runtime_resource_make_text_view(text, view, error));
     assert(!view.segments.empty());

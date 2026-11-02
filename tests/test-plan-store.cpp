@@ -5,6 +5,37 @@ static common_plan_operation op(common_plan_operation_kind kind, const common_pl
 int main() {
     common_plan_in_memory_store store; std::string error; assert(store.open("", error));
 
+    // Chunk evidence has its own bounded host-only capacity and does not
+    // consume the ordinary observation budget needed by the task plan.
+    common_plan_policy_config small_limits;
+    small_limits.max_observations = 1;
+    small_limits.max_resource_chunk_observations = 2;
+    common_plan_policy chunk_policy(small_limits);
+    common_plan_state budget_plan; budget_plan.id = "chunk-budget";
+    common_plan_operation forged_outcome;
+    forged_outcome.kind = common_plan_operation_kind::record_observation;
+    forged_outcome.plan_id = budget_plan.id;
+    forged_outcome.expected_version = budget_plan.version;
+    forged_outcome.observation = common_plan_observation{"attempt", "workflow_handled_failure", "{}"};
+    assert(!chunk_policy.validate(budget_plan, forged_outcome).allowed);
+    forged_outcome.observation->source = "workflow_terminal_choice";
+    assert(!chunk_policy.validate(budget_plan, forged_outcome).allowed);
+    common_plan_operation chunk_op;
+    chunk_op.kind = common_plan_operation_kind::record_observation;
+    chunk_op.plan_id = budget_plan.id;
+    chunk_op.expected_version = budget_plan.version;
+    chunk_op.observation = common_plan_observation{"c0", "resource_chunk", "chunk"};
+    assert(!chunk_policy.validate(budget_plan, chunk_op).allowed);
+    chunk_op.host_authorized = true;
+    assert(chunk_policy.validate(budget_plan, chunk_op).allowed);
+    budget_plan.observations.push_back(*chunk_op.observation);
+    budget_plan.observations.push_back(*chunk_op.observation);
+    assert(!chunk_policy.validate(budget_plan, chunk_op).allowed);
+    chunk_op.observation = common_plan_observation{"other", "tool", "result"};
+    assert(chunk_policy.validate(budget_plan, chunk_op).allowed);
+    budget_plan.observations.push_back(*chunk_op.observation);
+    assert(!chunk_policy.validate(budget_plan, chunk_op).allowed);
+
     // Initial state is subject to the same evidence invariant as later
     // operations: a materializer cannot claim a tool ran merely by setting
     // the step status before the plan is stored.

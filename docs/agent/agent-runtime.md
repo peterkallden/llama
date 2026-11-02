@@ -2368,8 +2368,8 @@ The budgets are used as follows:
 | `tool_observation_chars` | Compact, verified tool observations rendered for draft/reflection | Canonical host results remain available for bindings; model-facing observations are projected and bounded separately |
 | `input_resources_chars` | Host-approved input resources in the normal prompt | Truncation of the rendered resource catalog |
 | `deliberate_input_resources_chars` | Input resources in deliberate reasoning | Truncation of the rendered resource catalog |
-| `resource_chunk_max_bytes` | Maximum byte size of one controller-owned text chunk | Range planning uses bounded store reads and rejects zero values |
-| `resource_chunk_overlap_bytes` | Byte overlap between adjacent chunks | Preserves boundary context; must be smaller than `resource_chunk_max_bytes` |
+| `resource_chunk_max_bytes` | Optional upper bound in bytes for a controller-owned text chunk | Omit for context-derived sizing; an explicit positive value is a ceiling and may be reduced for the active model |
+| `resource_chunk_overlap_bytes` | Desired byte overlap between adjacent chunks | Reduced when necessary for the effective chunk size; explicit bounds must be compatible |
 | `memory_chars`, `memory_per_item_chars` | Normal memory context | The memory renderer selects entries within total and per-entry budgets |
 | `overlay_chars`, `overlay_per_item_chars` | Symbolic memory overlay | Stage-aware selection and compaction before rendering |
 | `deliberate_memory_chars`, `deliberate_memory_per_item_chars` | Reasoning context | The memory renderer selects entries within the configured budgets |
@@ -3976,8 +3976,8 @@ observation remains the durable progress record. This keeps live tracing useful
 without making the event stream a second progress store.
 
 Each extraction uses a flat evidence DSL. The host renders the bounded text
-view as plain text; the model returns `status: findings` and one exact,
-concise `evidence` sentence, or `status: no_findings`. Evidence is bounded to
+view as plain text; the model returns `status: findings` and up to three exact,
+concise `evidence` sentences, or `status: no_findings`. Each evidence is bounded to
 768 bytes so a complete result sentence from noisy OCR is not rejected merely
 because it crosses a smaller arbitrary limit. The host stores that verified
 sentence as both the initial finding and its evidence; the model does not need
@@ -4050,9 +4050,11 @@ those slices extend the same resource/store/session seams.
 
 The current chunking path is deliberately bounded and text-oriented:
 
-1. After plan or blueprint selection, the host-owned resource store reads
-   bounded text windows using the configured `resource_chunk_max_bytes` and
-   `resource_chunk_overlap_bytes` budgets.
+1. After the task plan is saved, the host derives a bounded text-window size
+   from the active model's context, the extraction instructions, the task,
+   output reservation and safety margin. A configured
+   `resource_chunk_max_bytes` is an upper bound; omission selects dynamic
+   sizing. Unknown context capacity uses a conservative bounded fallback.
 2. The deterministic chunker prefers paragraph, table-row, sentence, and line
    boundaries before using a UTF-8-safe hard byte limit.
 3. The original resource descriptor remains the source of truth. Each chunk is
@@ -4064,8 +4066,20 @@ The current chunking path is deliberately bounded and text-oriented:
    and owns source/range provenance. An unresolved extraction is recorded as
    incomplete coverage and does not stop later slices.
 5. Resume uses the plan's completed chunk observations and starts at the first
-   missing index. Typed daemon events expose planning and processing progress,
-   while the plan remains the durable progress record.
+   missing index. The plan retains the source fingerprint, effective chunk
+   policy and chunker version, and existing ranges are checked on resume. An
+   incompatible smaller model or changed source requires a new plan. Typed
+   daemon events expose planning and processing progress, while the plan
+   remains the durable progress record.
+
+Each turn can process at most 64 resource slices, separately from the ordinary
+plan continuation budget; its deadline and cancellation still apply. Reaching
+the slice limit leaves the plan incomplete and resumable. A chunk extraction
+returns up to three separately source-checked evidence sentences. Coverage of
+the text is not a guarantee that every relevant fact was extracted.
+Host-created chunk observations have their own plan-policy budget (1024 by
+default), separate from ordinary plan observations; the chunk observation
+sources cannot be written by model-authored plan operations.
 
 ### Bound resource-reading turns
 

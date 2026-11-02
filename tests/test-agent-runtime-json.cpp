@@ -15,6 +15,13 @@
 } while (false)
 
 int main() {
+    common_agent_failure http_failure;
+    http_failure.code = "tool.web_fetch.request_failed";
+    http_failure.http_status = 403;
+    const auto http_failure_json = common_agent_runtime_failure_observation_to_json(http_failure);
+    TEST_ASSERT(http_failure_json.at("failure").at("http_status") == 403);
+    http_failure.http_status = 0;
+    TEST_ASSERT(!common_agent_runtime_failure_observation_to_json(http_failure).at("failure").contains("http_status"));
     common_runtime_resource_lineage processor_lineage{
         "resource://source/pdf", 0, 1, 0, 5018540, 0,
         "resource.process:pdf-page-image-v1>tesseract-ocr-v1"};
@@ -45,6 +52,10 @@ int main() {
     TEST_ASSERT(chunk_extraction.findings.size() == 1);
     TEST_ASSERT(chunk_extraction.findings.front().finding == "Radiation flux increased.");
     TEST_ASSERT(chunk_extraction.findings.front().evidence == "Radiation flux increased.");
+    TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
+        "status: findings\nevidence: Radiation flux increased.\nevidence: The camera remained operational during the campaign.",
+        generation_chunk, chunk_extraction, chunk_error));
+    TEST_ASSERT(chunk_extraction.findings.size() == 2);
     TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
         "status: findings\nfinding: The radiation result is reported.\nevidence_ref: Radiation flux increased.",
         generation_chunk, chunk_extraction, chunk_error));
@@ -132,7 +143,7 @@ int main() {
     TEST_ASSERT(extraction_request.grammar.empty());
     TEST_ASSERT(extraction_request.messages[0].content.find("status: findings") != std::string::npos);
     TEST_ASSERT(extraction_request.messages[0].content.find("evidence: <one exact concise sentence") != std::string::npos);
-    TEST_ASSERT(extraction_request.messages[0].content.find("Return at most one evidence sentence") != std::string::npos);
+    TEST_ASSERT(extraction_request.messages[0].content.find("Return at most three distinct evidence sentences") != std::string::npos);
     TEST_ASSERT(extraction_request.messages[0].content.find("evidence sentence must contain that value or comparison") != std::string::npos);
     TEST_ASSERT(extraction_request.messages[0].content.find("host tracks whether a resource was fetched or read") != std::string::npos);
     TEST_ASSERT(extraction_request.messages[0].content.find("do not add a separate finding, include surrounding sentences, wrap it in quotes, or use labels or references") != std::string::npos);

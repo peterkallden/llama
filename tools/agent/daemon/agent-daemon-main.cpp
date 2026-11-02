@@ -2,6 +2,7 @@
 #include "agent-daemon-dispatcher.h"
 #include "agent-daemon-tcp.h"
 #include "agent-daemon-unix.h"
+#include "../code/agent-clangd-provider.h"
 #include "../mcp/agent-mcp-http-server.h"
 #include "../host/agent-host-config.h"
 #include "agent/agent-inbound-contract.h"
@@ -25,6 +26,36 @@
 #include <exception>
 
 namespace {
+
+void refresh_daemon_clangd_provider(daemon_options & options) {
+#ifdef LLAMA_AGENT_TOOLS_USE_CLANG
+    if (!options.file_watch_service) options.file_watch_service = std::make_shared<agent_project_file_watch_service>();
+    options.clangd_provider.reset();
+    if (options.diagnostics.semantic_backend != "clangd" || options.repository_root.empty()) return;
+    agent_clangd_session_config config{
+        options.diagnostics.clangd_executable,
+        options.repository_root,
+        options.diagnostics.compile_commands,
+        options.diagnostics.semantic_request_timeout_ms,
+        1000};
+    config.compile_commands_source = options.diagnostics.compile_commands_source;
+    config.compile_commands_destination = options.diagnostics.compile_commands_destination;
+    config.file_watch_service = options.file_watch_service;
+    options.clangd_provider = std::make_shared<agent_clangd_code_provider>(std::move(config));
+#else
+    (void) options;
+#endif
+}
+
+bool daemon_clangd_configuration_changed(const daemon_options & a, const daemon_options & b) {
+    return a.repository_root != b.repository_root ||
+        a.diagnostics.semantic_backend != b.diagnostics.semantic_backend ||
+        a.diagnostics.clangd_executable != b.diagnostics.clangd_executable ||
+        a.diagnostics.compile_commands != b.diagnostics.compile_commands ||
+        a.diagnostics.compile_commands_source != b.diagnostics.compile_commands_source ||
+        a.diagnostics.compile_commands_destination != b.diagnostics.compile_commands_destination ||
+        a.diagnostics.semantic_request_timeout_ms != b.diagnostics.semantic_request_timeout_ms;
+}
 
 bool read_optional_inbound_limit(
         const agent_mcp_json & arguments,
@@ -239,6 +270,7 @@ int main(int argc, char ** argv) {
         print_agent_daemon_usage(argv[0]);
         return 2;
     }
+    refresh_daemon_clangd_provider(options);
     common_log_set_verbosity_thold(LOG_LEVEL_WARN);
 
     std::string error;
@@ -351,6 +383,8 @@ int main(int argc, char ** argv) {
             }
             candidate.repository_root = canonical_root.string();
         }
+        if (daemon_clangd_configuration_changed(candidate, options))
+            refresh_daemon_clangd_provider(candidate);
 
         auto require_restart = [&](bool changed, const char * field) {
             if (changed) {

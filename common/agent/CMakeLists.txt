@@ -130,6 +130,7 @@ endif()
 
 add_library(${TARGET}
     agent-context-allocation.cpp agent-context-allocation.h
+    agent-resource-chunk-budget.cpp agent-resource-chunk-budget.h
     template-library.cpp template-library.h
     agent-bootstrap.cpp agent-bootstrap.h
     agent-package-json.cpp agent-package-json.h

@@ -43,11 +43,25 @@ bool plan_agent_resource_text_chunks(
     }
     size_t offset = 0;
     while (offset < out.parent.size_bytes) {
-        const size_t overlap = out.ranges.empty()
-            ? 0 : policy.overlap_bytes;
+        size_t overlap = out.ranges.empty() ? 0 : std::min(policy.overlap_bytes, offset);
+        if (overlap != 0) {
+            std::string prefix;
+            if (!store.read_text_range(uri, authority, offset - overlap,
+                    std::min<size_t>(overlap, 4), prefix, error)) return false;
+            size_t skip = 0;
+            while (skip < prefix.size() &&
+                    common_runtime_resource_chunk_detail::is_utf8_continuation(
+                        static_cast<unsigned char>(prefix[skip]))) ++skip;
+            overlap -= skip;
+        }
         const size_t read_limit = policy.max_bytes - overlap;
         std::string window;
-        if (!store.read_text_range(uri, authority, offset, read_limit, window, error)) {
+        // Read a little beyond the target so the text chunker can see that
+        // the window continues and choose a structural/UTF-8-safe boundary.
+        const size_t remaining = out.parent.size_bytes - offset;
+        const size_t bounded_limit = std::min(read_limit, remaining);
+        const size_t lookahead = std::min<size_t>(4, remaining - bounded_limit);
+        if (!store.read_text_range(uri, authority, offset, bounded_limit + lookahead, window, error)) {
             out = {};
             return false;
         }

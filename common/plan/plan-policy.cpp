@@ -1,4 +1,5 @@
 #include "plan/plan-policy.h"
+#include "plan/plan-workflow-state.h"
 
 #include <algorithm>
 #include <functional>
@@ -152,7 +153,7 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         if (op.kind == common_plan_operation_kind::reset_step) {
             if (!reset_transition(step->status)) return deny("illegal step reset");
         } else if (!transition(step->status, target)) return deny("illegal step state transition");
-        if (target == common_plan_step_status::active) for (const auto & dep : step->depends_on) { const auto * d = find_step(plan, dep); if (!d || d->status != common_plan_step_status::completed) return deny("step has unmet dependency"); }
+        if (target == common_plan_step_status::active) for (const auto & dep : step->depends_on) { const auto * d = find_step(plan, dep); if (!d || (d->status != common_plan_step_status::completed && !common_plan_workflow_failure_handled(plan, *d))) return deny("step has unmet dependency"); }
         if (target == common_plan_step_status::completed && config.require_evidence_for_completion) {
             for (const auto & id : step->required_evidence) {
                 if (std::find(op.evidence_ids.begin(), op.evidence_ids.end(), id) == op.evidence_ids.end()) return deny("required evidence is missing");
@@ -267,15 +268,28 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
             break;
         }
     }
-    if (op.kind == common_plan_operation_kind::complete_plan) { if (!plan_transition(plan.status, common_plan_status::completed)) return deny("illegal plan state transition"); for (const auto & step : plan.steps) if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped) return deny("mandatory steps remain incomplete"); }
+    if (op.kind == common_plan_operation_kind::complete_plan) { if (!plan_transition(plan.status, common_plan_status::completed)) return deny("illegal plan state transition"); for (const auto & step : plan.steps) if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped && !common_plan_workflow_failure_handled(plan, step)) return deny("mandatory steps remain incomplete"); }
     if (op.kind == common_plan_operation_kind::fail_plan && !plan_transition(plan.status, common_plan_status::failed)) return deny("illegal plan state transition");
-    if (op.kind == common_plan_operation_kind::record_observation && (!op.observation || plan.observations.size() >= config.max_observations)) return deny("invalid or excessive observation");
+    if (op.kind == common_plan_operation_kind::record_observation) {
+        if (!op.observation) return deny("invalid or excessive observation");
+        const auto is_chunk = [](const common_plan_observation & observation) {
+            return observation.source == "resource_chunk_planned" ||
+                observation.source == "resource_chunk" || observation.source == "resource_chunk_unresolved";
+        };
+        const bool chunk = is_chunk(*op.observation);
+        if (chunk && !op.host_authorized) return deny("resource chunk observations are host-authorized only");
+        const size_t chunk_count = std::count_if(plan.observations.begin(), plan.observations.end(), is_chunk);
+        if ((chunk && chunk_count >= config.max_resource_chunk_observations) ||
+                (!chunk && plan.observations.size() - chunk_count >= config.max_observations))
+            return deny("invalid or excessive observation");
+    }
     if (op.kind == common_plan_operation_kind::record_observation && op.observation && !op.host_authorized &&
             (op.observation->source == "workflow_verification" || op.observation->source == "workflow_arguments" ||
              op.observation->source == "workflow_handoff" || op.observation->source == "workflow_grounding_policy" ||
              op.observation->source == "response_review" || op.observation->source == "declared_claim" || op.observation->source == "artifact_snapshot" ||
              op.observation->source == "artifact_section" || op.observation->source == "artifact_publication" ||
-             op.observation->source == "research_checkpoint" || op.observation->source == "artifact_continuation"))
+             op.observation->source == "research_checkpoint" || op.observation->source == "artifact_continuation" ||
+             op.observation->source == "workflow_terminal_choice" || op.observation->source == "workflow_handled_failure"))
         return deny("workflow grounding and artifact publication observations are host-authorized only");
     if (op.kind == common_plan_operation_kind::request_route_transition) {
         if (!op.host_authorized || !op.route_binding || !op.workflow_definition) return deny("route transition is host-authorized only");

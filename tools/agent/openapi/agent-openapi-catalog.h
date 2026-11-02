@@ -70,6 +70,7 @@ struct agent_openapi_operation {
     // before execution so the common contract validator can still surface a
     // repairable host failure.
     std::vector<std::string> host_required_parameters;
+    std::vector<std::string> host_required_any_parameters;
     agent_openapi_paging_contract paging;
     agent_openapi_access access = agent_openapi_access::write;
     bool read_only = false;

@@ -331,6 +331,7 @@ int main() {
         resource.size_bytes = 512;
         resource.scope = common_runtime_resource_scope::turn;
         result.resource_refs.push_back(std::move(resource));
+        result.structured_content_json = R"({"materialized":true})";
         return true;
     };
     agent_openapi_tool_provider provider(std::move(catalog), executor, materializer);
@@ -352,6 +353,7 @@ int main() {
     const auto output = json::parse(result.content_json);
     const auto & body = output.at("result");
     assert(body.at("result_count") == 2);
+    assert(body.at("preview_omitted_items") == 0);
     assert(body.at("resource_ref") == "resource://turn/openalex-results");
     assert(body.at("pagination").at("pages_fetched") == 2);
     assert(body.at("pagination").at("complete") == true);
@@ -365,9 +367,48 @@ int main() {
         R"({"best_oa_location":{"pdf_url":"https://files.example/paper.pdf"},"content_url":"https://files.example/paper.txt","landing_page_url":"https://publisher.example/paper"})",
         true));
     assert(preferred_pdf.at("full_text_url") == "https://files.example/paper.pdf");
+    const auto content_urls = json::parse(agent_openapi_project_model_result(
+        R"({"content_urls":{"pdf":"https://content.example/work.pdf"}})", true));
+    assert(content_urls.at("full_text_url") == "https://content.example/work.pdf");
+    assert(content_urls.at("full_text_url_source") == "content_urls.pdf");
     const auto landing_only = json::parse(agent_openapi_project_model_result(
         R"({"landing_page_url":"https://publisher.example/paper"})", true));
     assert(!landing_only.contains("full_text_url"));
+
+    // A materialized single work still exposes bounded host-derived fields
+    // required for the full-text workflow, while retaining the raw resource.
+    agent_openapi_catalog work_catalog;
+    work_catalog.provider_id = "openalex";
+    work_catalog.prefix = "openalex";
+    work_catalog.base_url = "https://api.openalex.org";
+    auto work_operation = operation;
+    work_operation.operation_id = "getWork";
+    work_catalog.operations.push_back(work_operation);
+    agent_openapi_tool_provider work_provider(std::move(work_catalog),
+        [](const agent_tool_context &, const agent_openapi_operation &, const std::string &,
+                agent_openapi_execution_result & work, std::string &) {
+            work.ok = true;
+            work.structured_content_json = R"({"id":"W1","display_name":"Work","best_oa_location":{"pdf_url":"https://example.org/work.pdf"},"abstract_inverted_index":{"A":[0],"study":[1]},"large_payload":"not exposed"})";
+            return true;
+        },
+        [](const agent_tool_context &, const agent_openapi_operation &, const std::string &,
+                agent_openapi_execution_result & work, std::string &) {
+            common_runtime_resource_ref resource;
+            resource.uri = "resource://turn/work";
+            work.resource_refs.push_back(std::move(resource));
+            work.structured_content_json = R"({"resource_ref":"resource://turn/work"})";
+            return true;
+        });
+    auto work_view = work_provider.resolve_tools(context, error);
+    assert(work_view && error.empty());
+    const auto work_result = work_view->call({"work", "openalex.getWork", "{}"}, error);
+    assert(work_result.ok && error.empty());
+    const auto work = json::parse(work_result.content_json).at("result");
+    assert(work.at("resource_ref") == "resource://turn/work");
+    assert(work.at("full_text_url") == "https://example.org/work.pdf");
+    assert(work.at("full_text_url_source") == "best_oa_location.pdf_url");
+    assert(work.at("abstract_text") == "A study");
+    assert(!work.contains("large_payload"));
 
     // Without a workflow directive an OpenAPI collection remains one request.
     calls = 0;
@@ -376,6 +417,7 @@ int main() {
     assert(result.ok && calls == 1 && materializations == 1);
     const auto single = json::parse(result.content_json).at("result");
     assert(!single.contains("pagination"));
+    assert(single.at("candidates")[0].at("title") == "First");
 
     // Existing connector status metadata survives the MCP provider boundary.
     agent_openapi_catalog error_catalog;

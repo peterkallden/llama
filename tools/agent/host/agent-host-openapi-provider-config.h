@@ -16,6 +16,9 @@ struct agent_host_openapi_operation_policy {
     std::string access;
     std::string default_projection;
     std::vector<std::string> required_parameters;
+    // At least one of these declared parameters must be supplied. An empty
+    // list disables this additional host-use constraint.
+    std::vector<std::string> required_any_parameters;
     // Optional host-owned concrete arguments for a workflow-bound operation.
     // The value is a bounded JSON object serialized at the config seam; it is
     // never inferred from free text and is merged through the common request

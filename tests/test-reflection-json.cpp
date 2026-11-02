@@ -37,11 +37,21 @@ int main() {
             common_reflection_parse_json(nlohmann::json{{"decision", "revise"}, {"retry", {host_step}}}.dump(), result, error)) {
         std::cerr << "host retry binding changed model ID validation" << '\n'; return 1;
     }
+    CHECK_CONTRACT(common_reflection_parse_json(
+        nlohmann::json{{"decision", "revise"}, {"retry", {host_step}}}.dump(),
+        result, error, 8, {}, {host_step}));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1 &&
+        result.proposed_plan_operations.front().step_id == host_step);
     if (!common_reflection_parse_compact_dsl("reflect retry\nactivate host-retry-1", result, error, {}, 8, {}, host_step) ||
             result.proposed_plan_operations.size() != 2 || result.proposed_plan_operations[0].step_id != "host-retry-1" ||
             result.proposed_plan_operations[1].step_id != host_step) {
         std::cerr << "host retry alias rewrote a model-written reference" << '\n'; return 1;
     }
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","next_action":""})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","next_action":"  \t "})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"accept","next_action":42})", result, error));
     CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept", result, error));
     CHECK_CONTRACT(result.decision == common_reflection_decision::accept);
     CHECK_CONTRACT(result.proposed_plan_operations.empty());
@@ -100,6 +110,17 @@ int main() {
     CHECK_CONTRACT(*result.proposed_plan_operations[2].step_id == "retry-2");
     CHECK_CONTRACT(result.proposed_plan_operations[3].kind == common_plan_operation_kind::reset_step);
     CHECK_CONTRACT(*result.proposed_plan_operations[3].step_id == "fetch");
+    const std::string long_workflow_id = "agent-blueprint:" + std::string(64, 'a') + ":workflow:fetch-full-text:0123456789ab";
+    common_reflection_result long_id_result;
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        nlohmann::json{{"decision", "revise"}, {"retry", {long_workflow_id}}}.dump(), long_id_result, error));
+    CHECK_CONTRACT(common_reflection_parse_json(
+        nlohmann::json{{"decision", "revise"}, {"retry", {long_workflow_id}}}.dump(),
+        long_id_result, error, 8, {}, {long_workflow_id}));
+    CHECK_CONTRACT(long_id_result.proposed_plan_operations.size() == 1 &&
+        *long_id_result.proposed_plan_operations[0].step_id == long_workflow_id);
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        nlohmann::json{{"decision", "revise"}, {"retry", {std::string(4097, 'x')}}}.dump(), long_id_result, error));
     CHECK_CONTRACT(result.proposed_plan_operations[4].kind == common_plan_operation_kind::set_next_action);
     CHECK_CONTRACT(*result.proposed_plan_operations[4].value == "re-run verification");
     CHECK_CONTRACT(result.proposed_plan_operations[5].kind == common_plan_operation_kind::add_step);

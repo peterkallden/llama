@@ -531,6 +531,15 @@ std::string common_project_model_input_schema_required_parameters(
         const std::string & schema_json,
         const std::vector<std::string> & required_parameters,
         std::string & error) {
+    return common_project_model_input_schema_parameter_requirements(
+        schema_json, required_parameters, {}, error);
+}
+
+std::string common_project_model_input_schema_parameter_requirements(
+        const std::string & schema_json,
+        const std::vector<std::string> & required_parameters,
+        const std::vector<std::string> & required_any_parameters,
+        std::string & error) {
     error.clear();
     auto schema = json::parse(schema_json, nullptr, false);
     if (schema.is_discarded() || !schema.is_object() ||
@@ -573,6 +582,23 @@ std::string common_project_model_input_schema_required_parameters(
     schema["required"] = json::array();
     for (const auto & parameter : required) {
         schema["required"].push_back(parameter);
+    }
+    if (!required_any_parameters.empty()) {
+        json alternatives = json::array();
+        std::set<std::string> seen;
+        for (const auto & parameter : required_any_parameters) {
+            if (parameter.empty() || !properties.contains(parameter) || !seen.insert(parameter).second) {
+                error = "host-required alternative is empty, duplicated, or absent from model input schema: " + parameter;
+                return {};
+            }
+            alternatives.push_back({{"required", json::array({parameter})}});
+        }
+        if (!schema.contains("allOf")) schema["allOf"] = json::array();
+        if (!schema["allOf"].is_array()) {
+            error = "model input schema allOf must be an array";
+            return {};
+        }
+        schema["allOf"].push_back({{"anyOf", std::move(alternatives)}});
     }
     return schema.dump();
 }

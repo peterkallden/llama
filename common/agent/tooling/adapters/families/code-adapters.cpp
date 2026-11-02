@@ -625,13 +625,24 @@ bool common_try_register_code_tool_adapter(
     installed = false;
     const auto & id = definition.executor_id;
     const bool inspect = id == "builtin.code.inspect";
+    const bool refresh = id == "builtin.code.refresh";
     const bool symbols = has_executor(id, "builtin.code.symbols", "builtin.diagnostics.symbol");
     const bool references = has_executor(id, "builtin.code.references", "builtin.diagnostics.references");
     const bool calls = has_executor(id, "builtin.code.calls", "builtin.diagnostics.call_hierarchy");
     const bool impact = id == "builtin.code.impact";
-    if (!inspect && !symbols && !references && !calls && !impact) return false;
+    if (!inspect && !refresh && !symbols && !references && !calls && !impact) return false;
 
-    if (inspect) {
+    if (refresh) {
+        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+            json args;
+            std::string parse_error;
+            if (!common_adapter_parse_object(input, args, parse_error) || !args.empty())
+                return common_adapter_validation_failure("tool.code.invalid_arguments", "code.refresh accepts no arguments");
+            if (!bindings.code_refresh) return common_adapter_execution_failure("tool.code.refresh.unavailable",
+                "semantic code refresh is not configured", "The configured code-analysis host cannot refresh its index.");
+            return bindings.code_refresh();
+        }, error);
+    } else if (inspect) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
             json args;
             std::string parse_error;
@@ -698,12 +709,18 @@ bool common_try_register_code_tool_adapter(
                     if (parsed.is_object()) provider_status = std::move(parsed);
                 }
             }
+            const json watcher_status = provider_status.is_object() && provider_status.contains("file_watcher")
+                ? provider_status["file_watcher"] : json(nullptr);
             return common_adapter_success_json({{"schema", "code-capabilities.v1"},
                 {"repository_available", repository_available},
                 {"backend", semantic_provider ? "semantic_provider" : "bounded_text"},
                 {"compile_commands", bindings.code_compile_commands.empty() ? json(nullptr) : json(bindings.code_compile_commands)},
                 {"compilation_database_status", database_status}, {"source_in_database", source_in_database},
                 {"compilation_database_unique_sources", database_source_count}, {"compilation_database_invalid_entries", database_entries_invalid},
+                {"file_watcher", watcher_status},
+                {"latest_change_generation", watcher_status.is_object() ? watcher_status.value("latest_change_generation", json(nullptr)) : json(nullptr)},
+                {"delivered_change_generation", watcher_status.is_object() ? watcher_status.value("delivered_change_generation", json(nullptr)) : json(nullptr)},
+                {"reconciliation_required", watcher_status.is_object() ? watcher_status.value("needs_reconciliation", json(nullptr)) : json(nullptr)},
                 {"provider_status", provider_status},
                 {"index_coverage", semantic_provider ? "unknown" : "unavailable"},
                 {"capabilities", {{"symbols", repository_available ? (symbols_semantic ? "semantic" : "text_fallback") : "unavailable"},

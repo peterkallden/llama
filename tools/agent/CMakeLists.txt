@@ -50,6 +50,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-data-store-factory.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-investigation-dataset-source.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/data/agent-dataset-importer.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-project-file-watch.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
@@ -272,6 +273,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-projection.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-project-file-watch.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/resource/agent-resource-catalog-cozo.cpp
 )
 
@@ -410,6 +412,7 @@ add_library(llama-agent-code
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-projection.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-project-file-watch.cpp
 )
 target_include_directories(llama-agent-code PUBLIC
     ${PROJECT_SOURCE_DIR}

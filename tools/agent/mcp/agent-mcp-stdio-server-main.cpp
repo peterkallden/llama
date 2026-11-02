@@ -763,11 +763,16 @@ int main(int argc, char ** argv) {
         repository_root,
         configured_mcp_providers);
 #ifdef LLAMA_AGENT_TOOLS_USE_CLANG
+    tool_request.file_watch_service = std::make_shared<agent_project_file_watch_service>();
     if (tool_request.diagnostics.semantic_backend == "clangd" && !repository_root.empty()) {
-        tool_request.clangd_provider = std::make_shared<agent_clangd_code_provider>(agent_clangd_session_config{
+        auto config = agent_clangd_session_config{
             tool_request.diagnostics.clangd_executable, repository_root,
             tool_request.diagnostics.compile_commands,
-            tool_request.diagnostics.semantic_request_timeout_ms, 1000});
+            tool_request.diagnostics.semantic_request_timeout_ms, 1000};
+        config.compile_commands_source = tool_request.diagnostics.compile_commands_source;
+        config.compile_commands_destination = tool_request.diagnostics.compile_commands_destination;
+        config.file_watch_service = tool_request.file_watch_service;
+        tool_request.clangd_provider = std::make_shared<agent_clangd_code_provider>(std::move(config));
     }
 #endif
     const auto memory_query = make_memory_query(options);

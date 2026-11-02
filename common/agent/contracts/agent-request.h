@@ -96,11 +96,26 @@ struct common_agent_tool_argument_binding {
     bool model_visible = true;
 };
 
+struct common_agent_workflow_terminal_choice {
+    std::string transition_id;
+    std::string choice_id;
+    std::string source_step_id;
+    std::string source_observation_id;
+};
+
+// A terminal choice has no following tool step on which to retain its alias.
+// Carry it separately so the host can persist the decision with its evidence.
+struct common_agent_workflow_continuation : std::vector<common_plan_step> {
+    using std::vector<common_plan_step>::operator=;
+    std::optional<common_agent_workflow_terminal_choice> terminal_choice;
+    void clear() { std::vector<common_plan_step>::clear(); terminal_choice.reset(); }
+};
+
 using common_agent_workflow_continuation_provider = std::function<bool(
     const common_plan_state & plan,
     const std::string & completed_step_id,
     const common_plan_observation & observation,
-    std::vector<common_plan_step> & continuation_steps,
+    common_agent_workflow_continuation & continuation_steps,
     std::string & error)>;
 
 struct common_agent_request {
@@ -134,10 +149,15 @@ struct common_agent_request {
     common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
     common_agent_deliberation_policy deliberation_policy;
     std::string prompt;
+    // Host-only, turn-local clarification of an ambiguous reflection. This is
+    // separate from the original user request and is never persisted as it.
+    std::string reflection_followup_context;
     // Host-scoped graph data, never instructions or proof of a relationship.
     std::string project_graph_context;
     std::vector<common_agent_input_resource> input_resources;
     std::optional<common_agent_resource_read_binding> resource_read_binding;
+    // Host asks for the saved plan before preparing bound resource chunks.
+    bool yield_after_plan_creation = false;
     // Reference-only case context; the host resolves it under current scope.
     std::optional<common_investigation_context_binding> investigation_context;
     // Host-resolved kinds for explicitly selected and authorized case sources.

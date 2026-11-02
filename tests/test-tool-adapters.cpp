@@ -1550,6 +1550,17 @@ int main() {
         code_bindings.code_status = []() { return common_tool_execution_result::success(R"({"session":"initialized","index_activity":"active","observation_may_be_stale":true})"); };
         assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.inspect"),
             code_bindings, code_registry, installed, error) && installed);
+        bool refreshed = false;
+        code_bindings.code_refresh = [&refreshed]() {
+            refreshed = true;
+            return common_tool_execution_result::success(R"({"refreshed":true,"index_coverage":"unknown"})");
+        };
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.refresh"),
+            code_bindings, code_registry, installed, error) && installed);
+        const auto refresh_result = code_registry.execute({"code.refresh", "{}"});
+        assert(refresh_result.ok && refreshed && refresh_result.output.find("index_coverage") != std::string::npos);
+        const auto refresh_invalid = code_registry.execute({"code.refresh", R"({"root":"/tmp"})"});
+        assert(!refresh_invalid.ok && refresh_invalid.failure_class == common_tool_failure_class::validation);
         const auto inspection = code_registry.execute({"code.inspect", R"({"path":"src/sample.txt"})"});
         assert(inspection.ok);
         const auto info = nlohmann::json::parse(inspection.output);

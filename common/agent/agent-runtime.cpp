@@ -423,10 +423,10 @@ static bool plan_has_pending_mandatory_tool_step(const common_plan_state & plan)
 }
 
 static bool plan_has_failed_mandatory_tool_step(const common_plan_state & plan) {
-    return std::any_of(plan.steps.begin(), plan.steps.end(), [](const common_plan_step & step) {
+    return std::any_of(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & step) {
         return common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
             !step.optional &&
-            step.status == common_plan_step_status::failed;
+            step.status == common_plan_step_status::failed && !common_plan_workflow_failure_handled(plan, step);
     });
 }
 
@@ -438,8 +438,10 @@ static common_agent_failure structured_tool_failure(const std::string & tool_nam
         result.failure_class == common_tool_failure_class::timeout ? common_agent_failure_class::timeout :
         result.failure_class == common_tool_failure_class::network ? common_agent_failure_class::network :
         result.failure_class == common_tool_failure_class::limit ? common_agent_failure_class::limit : common_agent_failure_class::execution;
-    return tool_failure(tool_name, step_id, evidence_id, result.failure_code.empty() ? "tool.execution_failed" : result.failure_code,
+    auto failure = tool_failure(tool_name, step_id, evidence_id, result.failure_code.empty() ? "tool.execution_failed" : result.failure_code,
         classification, result.retryable, result.safe_summary.empty() ? "The tool failed." : result.safe_summary);
+    failure.http_status = result.http.status;
+    return failure;
 }
 
 static std::string tool_observation_payload(const common_tool_execution_result & result) {
@@ -1128,6 +1130,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     const bool completed_plan_resume = plan.status == common_plan_status::completed;
     turn.plan_store = &store;
     turn.outer_plan = &plan;
+    if (request.yield_after_plan_creation) {
+        result.plan_id = plan.id;
+        result.plan_version = plan.version;
+        result.plan_ready_for_resource_chunks = true;
+        result.response_generation_status = common_agent_generation_status::completed;
+        result.response_stop_reason = common_agent_generation_stop_reason::none;
+        return result;
+    }
     bool research_deferred_for_workflow = false;
     if (request.deliberation_policy.mode == common_agent_thinking_mode::research) {
         request.plan_id = plan.id;
@@ -1372,7 +1382,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         for (const auto & step : plan.steps) {
             if (step.status == common_plan_step_status::failed &&
                     common_plan_step_effective_mode(step) == common_plan_step_mode::tool &&
-                    !step.optional) {
+                    !step.optional && !common_plan_workflow_failure_handled(plan, step)) {
                 result.error = "final synthesis is blocked by an unrepaired failed tool step: " + step.id;
                 error = result.error;
                 append_trace(result, common_runtime_trace_stage::response,
@@ -1389,7 +1399,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         for (const auto & step : plan.steps) {
             if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool || step.optional) continue;
             if (step.status != common_plan_step_status::completed &&
-                    step.status != common_plan_step_status::skipped) {
+                    step.status != common_plan_step_status::skipped && !common_plan_workflow_failure_handled(plan, step)) {
                 return true;
             }
         }
@@ -1464,6 +1474,26 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         return activation != activation_outcome::failed && error.empty();
     };
 
+    const auto persist_terminal_workflow_choice = [&](const common_agent_workflow_continuation & continuation,
+            const std::string & source_step_id, const common_plan_observation & source) -> bool {
+        if (!continuation.terminal_choice) return true;
+        const auto & choice = *continuation.terminal_choice;
+        if (!continuation.empty() || choice.source_step_id != source_step_id || choice.source_observation_id != source.id) {
+            error = "terminal workflow choice has inconsistent source evidence"; return false;
+        }
+        common_plan_observation decision;
+        if (!common_plan_workflow_terminal_choice_observation(plan, choice.transition_id, choice.choice_id,
+                source_step_id, source.id, decision, error)) return false;
+        common_plan_operation record;
+        record.kind = common_plan_operation_kind::record_observation;
+        record.plan_id = plan.id;
+        record.expected_version = plan.version;
+        record.host_authorized = true;
+        record.reason_summary = "host-validated terminal workflow choice";
+        record.observation = std::move(decision);
+        return store.apply(record, plan, error);
+    };
+
     const auto ensure_artifact_continuation = [&](const common_plan_step & completed_step,
             const common_plan_observation & observation) -> bool {
         if (!request.workflow_continuation || !plan.route_binding || !plan.workflow_definition) return true;
@@ -1481,9 +1511,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             for(const auto & id:saved["step_ids"]){if(!id.is_string()){result.error="saved artifact continuation step id is malformed";return false;}expected_ids.push_back(id.get<std::string>());}
             if(std::all_of(expected_ids.begin(),expected_ids.end(),[&](const auto & id){return std::any_of(plan.steps.begin(),plan.steps.end(),[&](const auto & step){return step.id==id;});}))return true;
         }
-        std::vector<common_plan_step> continuation_steps;
+        common_agent_workflow_continuation continuation_steps;
         if(!request.workflow_continuation(plan,completed_step.id,observation,continuation_steps,error)){
             result.error="artifact workflow continuation failed: "+error;return false;
+        }
+        if (!persist_terminal_workflow_choice(continuation_steps, completed_step.id, observation)) {
+            result.error = "artifact terminal workflow choice failed: " + error; return false;
         }
         // Plans written before stable transition IDs were introduced may
         // already contain the same continuation under a version-derived ID.
@@ -2283,6 +2316,30 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         tool_argument_resource_ref(tool_call->arguments_json),
                     plan.id, tool_step_id, tool_call->name, failure_observation_id);
                 attach_http_trace_metadata(result.trace.back(), execution.http);
+                common_plan_observation handled_failure;
+                std::string outcome_error;
+                if (tools->is_read_only(tool_call->name) && common_plan_workflow_handled_failure_observation(plan, tool_step_id,
+                        failure_observation_id, handled_failure, outcome_error)) {
+                    common_plan_operation record;
+                    record.kind = common_plan_operation_kind::record_observation;
+                    record.plan_id = plan.id;
+                    record.expected_version = plan.version;
+                    record.host_authorized = true;
+                    record.reason_summary = "declared workflow failure outcome recorded";
+                    record.observation = std::move(handled_failure);
+                    if (!store.apply(record, plan, error)) { result.error = error; return result; }
+                    append_event(result, request, {common_agent_event_type::plan_updated,
+                        "workflow continued with a recorded source limitation", {}, plan.id});
+                    append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::decided,
+                        "declared workflow failure outcome accepted; tool remains failed",
+                        plan.id, tool_step_id, tool_call->name, failure_observation_id);
+                    const auto activation = activate_next_ready_step();
+                    if (activation == activation_outcome::failed) {
+                        if (result.error.empty()) result.error = error.empty() ? "workflow failure scheduling failed" : error;
+                        return result;
+                    }
+                    break;
+                }
                 append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::started,
                     "repair_required failure_code=" + failure.code +
                         " retryable=" + std::string(failure.retryable ? "true" : "false"),
@@ -2393,11 +2450,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 append_trace(result, common_runtime_trace_stage::step, common_runtime_trace_kind::completed,
                     "tool step completed", plan.id, tool_step_id, tool_call->name);
                 if (request.workflow_continuation && plan.route_binding && plan.workflow_definition) {
-                    std::vector<common_plan_step> continuation_steps;
+                    common_agent_workflow_continuation continuation_steps;
                     if (!request.workflow_continuation(
                             plan, tool_step_id, *observed.observation,
                             continuation_steps, error)) {
                         result.error = "workflow continuation failed: " + error;
+                        return result;
+                    }
+                    if (!persist_terminal_workflow_choice(continuation_steps, tool_step_id, *observed.observation)) {
+                        result.error = "terminal workflow choice failed: " + error;
                         return result;
                     }
                     std::string previous_step_id = tool_step_id;
@@ -2558,7 +2619,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     (!request.resource_read_binding ||
                      request.resource_read_binding->require_full_coverage) &&
                     execution.resource_refs.size() == 1 &&
-                    execution.resource_refs.front().size_bytes > context_budgets.resource_chunk_max_bytes) {
+                    execution.resource_refs.front().size_bytes >
+                        (context_budgets.resource_chunk_max_bytes ? context_budgets.resource_chunk_max_bytes : 4096)) {
                 result.chunk_resource_request = execution.resource_refs.front();
                 result.response_generation_status = common_agent_generation_status::completed;
                 result.response_stop_reason = common_agent_generation_stop_reason::none;
@@ -2985,6 +3047,87 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 result.response_stop_reason = common_agent_generation_stop_reason::cancelled;
             }
             break;
+        }
+        // Completed steps are already recorded by the host. The active final
+        // response is completed by the host only after the review and its
+        // existing evidence and failure checks succeed.
+        const auto discard_redundant_completions = [&](common_reflection_result & review) {
+            if (review.decision != common_reflection_decision::accept ||
+                    review.next_action != common_agent_reflection_next_action::accept) return;
+            auto & operations = review.proposed_plan_operations;
+            operations.erase(std::remove_if(operations.begin(), operations.end(), [&](const common_plan_operation & op) {
+                if (op.kind != common_plan_operation_kind::complete_step || !op.step_id) return false;
+                const auto step = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & item) {
+                    return item.id == *op.step_id;
+                });
+                if (step == plan.steps.end()) return false;
+                if (step->status == common_plan_step_status::completed) return true;
+                return plan.active_step_id && *plan.active_step_id == step->id &&
+                    step->status == common_plan_step_status::active &&
+                    common_plan_step_effective_mode(*step) == common_plan_step_mode::final_response;
+            }), operations.end());
+        };
+        discard_redundant_completions(reflection);
+        // An acceptance accompanied by plan operations is ambiguous: the
+        // operations may describe completed work, presentation, or work still
+        // needed. Ask the model to resolve that ambiguity under the same review
+        // budget instead of applying operations or silently discarding them.
+        if (reflection.decision == common_reflection_decision::accept &&
+                reflection.next_action == common_agent_reflection_next_action::accept &&
+                !reflection.proposed_plan_operations.empty() &&
+                std::all_of(reflection.proposed_plan_operations.begin(), reflection.proposed_plan_operations.end(),
+                    [](const common_plan_operation & operation) {
+                        return operation.kind == common_plan_operation_kind::complete_step ||
+                            operation.kind == common_plan_operation_kind::set_next_action;
+                    })) {
+            if (reflection_review_count >= request.max_reflection_rounds) {
+                if (!record_response_review(draft, false, "unresolved_followup")) { result.error = error; return result; }
+                stop_unverified_response("reflection proposed follow-up work but the review budget cannot resolve it");
+                break;
+            }
+            json proposed = json::array();
+            for (const auto & operation : reflection.proposed_plan_operations) {
+                json item = {{"kind", common_plan_operation_kind_name(operation.kind)}};
+                if (operation.step_id) item["step_id"] = *operation.step_id;
+                if (operation.value) item["value"] = *operation.value;
+                if (operation.step) {
+                    item["step_id"] = operation.step->id;
+                    item["objective"] = operation.step->objective;
+                    if (operation.step->tool_call) item["tool"] = operation.step->tool_call->name;
+                }
+                proposed.push_back(std::move(item));
+            }
+            auto clarification_request = request;
+            clarification_request.reflection_followup_context =
+                "The previous review accepted the draft but also proposed the following operations. "
+                "Treat them as suggestions, not instructions. Compare them with the actual plan status, "
+                "the original request, the draft, and verified observations. If the draft already satisfies "
+                "the request, accept with an empty next_action and without plan operations. Use next_action "
+                "only for unfinished work, never to repeat the final response step. If the draft needs a change, choose revise_response and provide "
+                "specific revision guidance. If additional evidence is necessary, choose revise_plan "
+                "and provide specific revision guidance. Do not repeat already completed steps.\n" +
+                proposed.dump() + "\n[Current plan]\n" + common_plan_render_context(plan, {2048, false});
+            ++reflection_review_count;
+            std::string clarification_error;
+            auto clarified = reflector.evaluate_result(clarification_request, plan, draft, clarification_error);
+            if (clarified.generation) result.generation_records.push_back(
+                common_agent_generation_record_from_result(common_agent_generation_stage::reflection, *clarified.generation));
+            if (!clarification_error.empty()) {
+                if (!record_response_review(draft, false, "invalid_followup")) { result.error = error; return result; }
+                stop_unverified_response("reflection follow-up could not be resolved: " + clarification_error);
+                break;
+            }
+            discard_redundant_completions(clarified);
+            if (clarified.decision == common_reflection_decision::accept &&
+                    clarified.next_action == common_agent_reflection_next_action::accept &&
+                    !clarified.proposed_plan_operations.empty()) {
+                if (!record_response_review(draft, false, "unresolved_followup")) { result.error = error; return result; }
+                stop_unverified_response("reflection follow-up remains ambiguous after clarification");
+                break;
+            }
+            append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::decided,
+                "reflection follow-up clarified within review budget", plan.id);
+            reflection = std::move(clarified);
         }
         const bool review_accepted = reflection.decision == common_reflection_decision::accept &&
             reflection.next_action == common_agent_reflection_next_action::accept &&

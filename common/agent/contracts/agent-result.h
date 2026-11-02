@@ -42,6 +42,7 @@ struct common_agent_result {
     // Host handoff requested by an opted-in workflow after a successful text
     // resource.read. The runtime driver owns chunk planning and continuation.
     std::optional<common_runtime_resource_ref> chunk_resource_request;
+    bool plan_ready_for_resource_chunks = false;
     // Host handoff requested after a workflow produced one or more typed
     // datasets and declared eligible downstream workflow targets.
     bool workflow_handoff_requested = false;

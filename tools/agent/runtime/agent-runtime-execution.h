@@ -131,6 +131,7 @@ struct common_agent_runtime_driver_execution {
     // synthesis slice after the last bounded chunk has been processed.
     std::vector<common_agent_input_resource> resource_chunk_original_inputs;
     bool resource_chunk_observations_prepared = false;
+    bool resource_chunk_needs_plan = false;
     bool resource_chunk_single_pass = false;
     // Only one resource chunk chain is active at a time.  The original
     // resource remains authoritative in the store; this is the transient

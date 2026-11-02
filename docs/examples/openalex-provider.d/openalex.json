@@ -16,11 +16,12 @@
     "operations": {
       "listWorks": {
         "enabled": true,
+        "required_any_parameters": ["search", "filter"],
         "default_projection": "id,display_name,publication_year,doi,cited_by_count,primary_topic,topics"
       },
       "getWork": {
         "enabled": true,
-        "default_projection": "id,display_name,publication_year,publication_date,doi,authorships,primary_topic,topics,best_oa_location,has_content"
+        "default_projection": "id,display_name,publication_year,publication_date,doi,authorships,best_oa_location,has_content,content_urls,abstract_inverted_index"
       },
       "listAuthors": {
         "enabled": true,

@@ -20,6 +20,31 @@ bool terminal(const common_plan_workflow_definition & definition, const std::str
         definition.terminal_states.end();
 }
 
+bool is_required_parameter_alternatives(const json & schema) {
+    if (!schema.is_object() || schema.size() != 1 || !schema.contains("anyOf") ||
+            !schema["anyOf"].is_array() || schema["anyOf"].empty()) return false;
+    for (const auto & alternative : schema["anyOf"]) {
+        if (!alternative.is_object() || alternative.size() != 1 || !alternative.contains("required") ||
+                !alternative["required"].is_array() || alternative["required"].empty()) return false;
+        for (const auto & field : alternative["required"]) if (!field.is_string()) return false;
+    }
+    return true;
+}
+
+void relax_host_required_parameter_constraints(json & schema) {
+    if (!schema.is_object()) return;
+    schema.erase("required");
+    // OpenAPI required_any_parameters are compiled as allOf -> anyOf ->
+    // required-only branches. They constrain the completed call, not the
+    // workflow's static seed, which the model is expected to complete.
+    if (!schema.contains("allOf") || !schema["allOf"].is_array()) return;
+    auto & constraints = schema["allOf"];
+    constraints.erase(std::remove_if(constraints.begin(), constraints.end(), [](const json & constraint) {
+        return is_required_parameter_alternatives(constraint);
+    }), constraints.end());
+    if (constraints.empty()) schema.erase("allOf");
+}
+
 bool replace_previous(json & value, const std::string & step_id, const std::string & choice) {
     if (value.is_array()) {
         for (auto & item : value) if (!replace_previous(item, step_id, choice)) return false;
@@ -266,7 +291,7 @@ bool common_agent_workflow_static_tool_arguments(
     // silently replaced by model-generated arguments.
     auto partial_schema = json::parse(tool.parameters, nullptr, false);
     if (partial_schema.is_object()) {
-        partial_schema.erase("required");
+        relax_host_required_parameter_constraints(partial_schema);
         std::string partial_normalized;
         std::string partial_error;
         if (!common_schema_normalize_and_validate_object(
@@ -290,7 +315,7 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
             select_arguments = std::move(select_arguments)](
             const common_plan_state & plan, const std::string & completed_step_id,
             const common_plan_observation & observation,
-            std::vector<common_plan_step> & steps, std::string & error) {
+            common_agent_workflow_continuation & steps, std::string & error) {
         steps.clear(); error.clear();
         if (!route.workflow_definition || route.workflow_definition->transitions.empty() ||
                 !plan.workflow_definition || !plan.route_binding ||
@@ -340,9 +365,14 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
                 // model_choice transitions after resume.
                 aliases = next->id + "=" + choice + ",";
             }
+            const auto choice_transition_id = next->id;
             next = common_agent_workflow_next_transition(definition, state, &route.resolved_tools);
             if (next == nullptr) {
-            if (terminal(definition, state)) return true;
+            if (terminal(definition, state)) {
+                steps.terminal_choice = common_agent_workflow_terminal_choice{
+                    choice_transition_id, choice, completed_step_id, observation.id};
+                return true;
+            }
             error = "workflow state has no authorized path to completion";
             return false;
         }

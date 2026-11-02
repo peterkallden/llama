@@ -258,6 +258,67 @@ public:
     }
 };
 
+class ambiguous_accept_reflector final : public common_reflection_engine {
+public:
+    int calls = 0;
+    bool repeat_ambiguity = false;
+    common_reflection_result evaluate(const common_agent_request & request, const common_plan_state &,
+            const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        result.decision = common_reflection_decision::accept;
+        result.ready_to_answer = true;
+        ++calls;
+        if (calls > 1) {
+            assert(request.reflection_followup_context.find("Return the verified result") != std::string::npos);
+            assert(request.prompt == "answer");
+            if (!repeat_ambiguity) {
+                common_plan_operation completed;
+                completed.kind = common_plan_operation_kind::complete_step;
+                completed.step_id = "lookup";
+                result.proposed_plan_operations.push_back(completed);
+            }
+        }
+        if (calls == 1 || repeat_ambiguity) {
+            common_plan_operation completed;
+            completed.kind = common_plan_operation_kind::complete_step;
+            completed.step_id = "lookup";
+            result.proposed_plan_operations.push_back(completed);
+            common_plan_operation next;
+            next.kind = common_plan_operation_kind::set_next_action;
+            next.value = "Return the verified result";
+            result.proposed_plan_operations.push_back(next);
+        }
+        return result;
+    }
+};
+
+class completed_step_reflector final : public common_reflection_engine {
+public:
+    bool include_unknown = false;
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state & plan,
+            const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        result.decision = common_reflection_decision::accept;
+        result.ready_to_answer = true;
+        result.next_action = common_agent_reflection_next_action::accept;
+        common_plan_operation complete;
+        complete.kind = common_plan_operation_kind::complete_step;
+        complete.step_id = "lookup";
+        result.proposed_plan_operations.push_back(complete);
+        if (plan.active_step_id) {
+            complete.step_id = *plan.active_step_id;
+            result.proposed_plan_operations.push_back(complete);
+        }
+        if (include_unknown) {
+            complete.step_id = "unknown-step";
+            result.proposed_plan_operations.push_back(complete);
+        }
+        return result;
+    }
+};
+
 class context_overflow_reflector final : public common_reflection_engine {
 public:
     common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
@@ -351,6 +412,60 @@ int main() {
     assert(created.plan_id && *created.plan_id == "turn-1" && created.reflected);
     const auto plan = store.get("turn-1", error);
     assert(plan && plan->scope == common_plan_scope::project && plan->namespace_id == "tenant-a" && plan->project_id == "project-a" && plan->observations.size() == 1 && plan->observations[0].summary == "current status");
+
+    {
+        common_plan_in_memory_store handoff_store;
+        assert(handoff_store.open("", error));
+        planner handoff_planner;
+        common_agent_runtime handoff_runtime(handoff_store, handoff_planner, e, r, &tool_runtime);
+        auto handoff_request = request;
+        handoff_request.plan_id.reset();
+        handoff_request.yield_after_plan_creation = true;
+        const auto handoff = handoff_runtime.run(handoff_request);
+        assert(handoff.error.empty() && handoff.plan_ready_for_resource_chunks && handoff.plan_id);
+        const auto saved = handoff_store.get(*handoff.plan_id, error);
+        assert(saved && handoff_planner.calls == 1 && saved->observations.empty());
+        handoff_request.plan_id = handoff.plan_id;
+        handoff_request.yield_after_plan_creation = false;
+        const auto continued = handoff_runtime.run(handoff_request);
+        assert(continued.error.empty() && handoff_planner.calls == 1);
+    }
+
+    for (const size_t budget : {size_t{1}, size_t{2}}) {
+        common_plan_in_memory_store followup_store;
+        assert(followup_store.open("", error));
+        planner followup_planner;
+        ambiguous_accept_reflector followup_reflector;
+        common_agent_runtime followup_runtime(followup_store, followup_planner, e, followup_reflector, &tool_runtime);
+        auto followup_request = request;
+        followup_request.max_reflection_rounds = budget;
+        const auto outcome = followup_runtime.run(followup_request);
+        if (budget == 1) {
+            assert(followup_reflector.calls == 1 && outcome.response.empty());
+            assert(outcome.error.find("review budget cannot resolve") != std::string::npos);
+        } else {
+            assert(followup_reflector.calls == 2 && outcome.error.empty() && outcome.response == "draft");
+            assert(followup_planner.calls == 1);
+        }
+    }
+
+    for (const bool include_unknown : {false, true}) {
+        common_plan_in_memory_store completed_store;
+        assert(completed_store.open("", error));
+        planner completed_planner;
+        completed_step_reflector completed_reflector;
+        completed_reflector.include_unknown = include_unknown;
+        common_agent_runtime completed_runtime(completed_store, completed_planner, e, completed_reflector, &tool_runtime);
+        auto completed_request = request;
+        completed_request.max_reflection_rounds = 1;
+        const auto outcome = completed_runtime.run(completed_request);
+        if (include_unknown) {
+            assert(outcome.response.empty());
+            assert(outcome.error.find("review budget cannot resolve") != std::string::npos);
+        } else {
+            assert(outcome.error.empty() && outcome.response == "draft");
+        }
+    }
 
     common_plan_in_memory_store route_store;
     assert(route_store.open("", error));

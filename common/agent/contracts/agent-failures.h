@@ -32,4 +32,6 @@ struct common_agent_failure {
     bool retryable = false;
     std::string safe_summary;
     std::string repair_context_json;
+    // Zero means that no HTTP response was received.
+    int http_status = 0;
 };

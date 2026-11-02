@@ -179,7 +179,7 @@ bool prepare_common_agent_reflection_plan_repair(
         return false;
     }
     const bool declared_graph = plan.workflow_definition && !plan.workflow_definition->transitions.empty();
-    std::vector<common_plan_step> steps;
+    common_agent_workflow_continuation steps;
     if (declared_graph) {
         // Only the existing host continuation provider can select graph edges.
         const auto * observed = common_plan_workflow_observation(plan, {});
@@ -189,6 +189,10 @@ bool prepare_common_agent_reflection_plan_repair(
             return false;
         }
         if (!context.request.workflow_continuation(plan, source->id, *observed, steps, context.error)) return false;
+        if (steps.terminal_choice) {
+            context.error = "workflow repair requires an additional step, not a terminal choice";
+            return false;
+        }
     } else {
         auto request = context.request;
         request.plan_id = plan.id;

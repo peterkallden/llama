@@ -356,6 +356,25 @@ bool validate_required_operation_parameters(
             return false;
         }
     }
+    if (!policy->second.required_any_parameters.empty()) {
+        bool found = false;
+        for (const auto & parameter : policy->second.required_any_parameters) {
+            const auto it = arguments.find(parameter);
+            if (it != arguments.end() && !it->is_null() &&
+                    (!it->is_string() || !it->get<std::string>().empty())) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            error = "OpenAPI operation requires at least one parameter: " + operation.operation_id + ".";
+            for (size_t i = 0; i < policy->second.required_any_parameters.size(); ++i) {
+                if (i) error += ", ";
+                error += policy->second.required_any_parameters[i];
+            }
+            return false;
+        }
+    }
     return true;
 }
 
@@ -552,7 +571,7 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             result.failure_code = "openapi.required_parameter_missing";
             result.failure_class = common_tool_failure_class::validation;
             result.retryable = true;
-            result.safe_summary = "A host-required OpenAPI argument is missing; repair the tool arguments before retrying.";
+            result.safe_summary = error + "; supply the required arguments before retrying.";
             result.raw_diagnostic = error;
             return true;
         }

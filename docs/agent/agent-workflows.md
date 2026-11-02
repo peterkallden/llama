@@ -66,6 +66,15 @@ quality of a model's assessment.
   only route-resolved tools, terminal states and dataflow from recorded host
   observations. It is not a new domain-specific planner.
 
+For a read operation where an HTTP failure is an expected limitation, a tool
+transition may declare `failure_terminal_state` and a bounded
+`handled_http_statuses` list. The target must be a declared terminal state.
+Only the host can record the outcome after the matching tool response; the
+tool step remains failed, and the result is presented as a source limitation.
+Other statuses, transport failures and policy denials retain their ordinary
+repair or failure behavior. This does not itself select or authorize a new
+research workflow.
+
 Workflow definitions declare semantic `required_capabilities`, optional
 `optional_capabilities`, and host-state `required_context`. Required
 capabilities gate route eligibility. Optional capabilities are included only

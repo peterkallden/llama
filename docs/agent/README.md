@@ -64,7 +64,7 @@ their own evidence in [Agent Assurance](agent-assurance.md).
 | Visualizations and reports | Dataset projections, retained PNG snapshots and figures in saved report views; research and code share the generic relationship renderer | [Visualization and report integration](agent-investigation.md#dataset-visualizations), [report editor](document-editor.md) |
 | Mixed-source investigation | Documents, explicitly mapped JSONL/CSV logs and configured search sources in one revisioned case; nine workflow families | [Investigation Workspace](agent-investigation.md) |
 | Actors and associations | Anchored mentions, separate actor candidates, proposed links and host-authorized analyst decisions with immutable review history | [Actor review](agent-investigation.md#user-review-of-actor-associations) |
-| Source code analysis | `code.inspect`, `code.symbols`, `code.references`, `code.calls`, two starter workflows and bounded one-hop call graphs | [Source Code Analysis](code-analysis.md) |
+| Source code analysis | `code.inspect`, `code.refresh`, `code.symbols`, `code.references`, `code.calls`, two starter workflows and bounded one-hop call graphs | [Source Code Analysis](code-analysis.md) |
 | Remote text inference | Explicit HTTP model-catalog profiles keep daemon tools and state local while sending generation requests to `llama-server` | [HTTP inference profiles](agent-http-inference.md) |
 
 Code call graphs currently describe the host's live repository state; they do

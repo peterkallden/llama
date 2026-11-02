@@ -264,7 +264,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v41");
+        checked_in_starter.version == "v43");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -447,7 +447,7 @@ int main() {
     assert(roundtrip_full_text_workflow != checked_in_roundtrip.workflows.end());
     assert(roundtrip_full_text_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
-    assert(roundtrip_full_text_workflow->definition.workflow_revision == "v3");
+    assert(roundtrip_full_text_workflow->definition.workflow_revision == "v4");
     const auto roundtrip_eurostat_metadata = std::find_if(
         checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
         [](const auto & workflow) {
@@ -458,6 +458,8 @@ int main() {
     assert(roundtrip_eurostat_metadata->definition.transitions.size() == metadata_definition.transitions.size());
     assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 2);
     assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
+    assert(roundtrip_full_text_workflow->definition.transitions[2].failure_terminal_state == "full_text_unavailable");
+    assert((roundtrip_full_text_workflow->definition.transitions[2].handled_http_statuses == std::vector<int>{401, 403, 404, 410}));
     const auto roundtrip_eurostat_catalog = std::find_if(
         checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
         [](const auto & workflow) {
@@ -556,6 +558,10 @@ int main() {
                 "workflow://openalex/full-text-evidence";
         });
     assert(checked_in_openalex_full_text_workflow != checked_in_starter.workflows.end());
+    assert(checked_in_openalex_full_text_workflow->definition.preferred_thinking_mode == "research");
+    assert(std::find(checked_in_openalex_full_text_workflow->definition.optional_capabilities.begin(),
+        checked_in_openalex_full_text_workflow->definition.optional_capabilities.end(), "web.search") !=
+        checked_in_openalex_full_text_workflow->definition.optional_capabilities.end());
     assert(checked_in_openalex_full_text_workflow->definition.required_capabilities ==
         std::vector<std::string>({"openapi.read", "web.fetch", "resource.inspect", "resource.read"}));
     assert(checked_in_openalex_full_text_workflow->definition.required_context ==
@@ -759,7 +765,7 @@ int main() {
         std::vector<std::string>({"resource.read", "artifact.export"}));
     assert(openalex_search_workflow->definition.required_context ==
         std::vector<std::string>({"context.openapi.available"}));
-    assert(openalex_search_workflow->definition.workflow_revision == "v3");
+    assert(openalex_search_workflow->definition.workflow_revision == "v4");
     assert(openalex_search_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
     assert(openalex_search_workflow->definition.transitions.size() == 1 &&
@@ -768,7 +774,7 @@ int main() {
         std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
     const auto openalex_search_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
-            return blueprint.id == "openalex-work-search-v2";
+            return blueprint.id == "openalex-work-search-v3";
         });
     assert(openalex_search_blueprint != checked_in_starter.blueprints.end());
     assert(openalex_search_blueprint->workflow_policy == common_plan_workflow_policy::required);

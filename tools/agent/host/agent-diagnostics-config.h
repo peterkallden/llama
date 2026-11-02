@@ -8,6 +8,8 @@ struct agent_host_diagnostics_config {
     std::string clang_executable = "clang";
     std::string clangd_executable = "clangd";
     std::string compile_commands = "auto";
+    std::string compile_commands_source;
+    std::string compile_commands_destination;
     uint32_t semantic_request_timeout_ms = 180000;
     std::string native_crash_backend = "auto";
     std::string gdb_executable = "gdb";

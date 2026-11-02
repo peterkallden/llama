@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v41",
+  "version": "v43",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -118,7 +118,7 @@
     {
       "id": "openalex-full-text-evidence-v1",
       "summary": "OpenAlex abstract and full-text evidence",
-      "content": "First verify the OpenAlex work record and interpret its abstract when available. Treat the abstract as author-supplied summary evidence, not a substitute for methods, results or limitations. Only when the question requires more, use a host-returned open-access content_url or best_oa_location URL with web.fetch. The returned resource_ref is the authoritative fetched body: inspect/read it before making claims. For a PDF, request its text representation through resource.read; report when the body is truncated, text extraction is unavailable, or only metadata/abstract is available. Read conclusions for the authors' stated claim, then results and methods to assess support; use discussion for interpretation and limitations.",
+      "content": "First verify the OpenAlex work record and interpret its abstract when available. Treat the abstract as author-supplied summary evidence, not a substitute for methods, results or limitations. Only when the question requires more, use a host-returned open-access content URL or best_oa_location URL with web.fetch. The returned resource_ref is the authoritative fetched body: inspect/read it before making claims. For a PDF, request its text representation through resource.read; report when the body is truncated, text extraction is unavailable, or only metadata/abstract is available. If access fails, state which source was unavailable and do not claim to have read it. If the question and budget justify it, look for another accessible version or a relevant independent article; distinguish the same work from another work and never attribute another article's findings to the original. Read conclusions for the authors' stated claim, then results and methods to assess support; use discussion for interpretation and limitations.",
       "importance": 0.9,
       "confidence": 1.0
     },
@@ -468,12 +468,12 @@
       ]
     },
     {
-      "id": "openalex-work-search-path-v2",
-      "source_revision": "agent-workflows-starter@v12",
+      "id": "openalex-work-search-path-v3",
+      "source_revision": "agent-workflows-starter@v42",
       "workflow_ref": "workflow://openalex/work-search",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "openapi",
-      "graph_revision": "openalex-work-search-graph@v3",
+      "graph_revision": "openalex-work-search-graph@v4",
       "resource_read_policy": "chunked",
       "required_capabilities": [
         "openapi.read"
@@ -501,6 +501,8 @@
           "to": "works_retrieved",
           "tool": "openalex.listWorks",
           "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the user's topic or explicit filters to scope the search. Supply search, filter, or both; never issue an unscoped collection request.",
           "max_pages": 5
         }
       ]
@@ -668,11 +670,12 @@
     },
     {
       "id": "openalex-full-text-evidence-path-v2",
-      "source_revision": "agent-workflows-starter@v12",
+      "source_revision": "agent-workflows-starter@v43",
       "workflow_ref": "workflow://openalex/full-text-evidence",
-      "workflow_revision": "v3",
+      "workflow_revision": "v4",
       "family": "openapi",
-      "graph_revision": "openalex-full-text-evidence-graph@v3",
+      "preferred_thinking_mode": "research",
+      "graph_revision": "openalex-full-text-evidence-graph@v4",
       "resource_read_policy": "chunked",
       "required_capabilities": [
         "openapi.read",
@@ -681,7 +684,8 @@
         "resource.read"
       ],
       "optional_capabilities": [
-        "artifact.export"
+        "artifact.export",
+        "web.search"
       ],
       "required_context": [
         "context.openapi.available",
@@ -690,6 +694,7 @@
       "start_state": "identifier_pending",
       "terminal_states": [
         "abstract_complete",
+        "full_text_unavailable",
         "text_read"
       ],
       "transitions": [
@@ -727,6 +732,8 @@
           "to": "full_text_fetched",
           "tool": "web.fetch",
           "arguments": "{\"max_bytes\":10485760}",
+          "failure_terminal_state": "full_text_unavailable",
+          "handled_http_statuses": [401, 403, 404, 410],
           "bindings": [
             {
               "target": "/url",
@@ -2602,8 +2609,8 @@
       ]
     },
     {
-      "id": "openalex-work-search-v2",
-      "source_revision": "agent-workflows-starter@v12",
+      "id": "openalex-work-search-v3",
+      "source_revision": "agent-workflows-starter@v42",
       "selection_description": "Find bounded scholarly-work candidates from a configured OpenAlex provider.",
       "purpose": "Turn a research question into a traceable, bounded set of scholarly records.",
       "goal": "Return relevant OpenAlex work candidates with their retrieved bibliographic metadata.",
@@ -2620,7 +2627,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://openalex/work-search",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "next_action": "scope-search",
@@ -2891,7 +2898,7 @@
     },
     {
       "id": "openalex-full-text-evidence-v2",
-      "source_revision": "agent-workflows-starter@v12",
+      "source_revision": "agent-workflows-starter@v43",
       "selection_description": "Verify a scholarly record from OpenAlex, interpret its abstract, and retrieve open full text only when needed.",
       "purpose": "Ground a scholarly answer in the smallest available evidence layer while preserving the distinction between metadata, abstract and full text.",
       "goal": "Answer a question about a scholarly work from verified OpenAlex metadata, abstract evidence and, when necessary, a host-materialized open full-text resource.",
@@ -2909,7 +2916,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://openalex/full-text-evidence",
-          "workflow_revision": "v3"
+          "workflow_revision": "v4"
         }
       ],
       "next_action": "resolve-work",

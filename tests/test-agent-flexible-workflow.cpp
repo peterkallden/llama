@@ -334,7 +334,7 @@ void transitions_and_resume() {
             require(transition.id == "followup" && json::parse(seed)["scope"] == "fixed", "later transition lost its host seed");
             ++calls; arguments = R"({"scope":"fixed","query":"a model follow-up"})"; error.clear(); return true;
         });
-    std::vector<common_plan_step> steps;
+    common_agent_workflow_continuation steps;
     std::string error;
     require(continuation(plan, inspect.id, observation, steps, error) && steps.size() == 1 && calls == 1, error);
     require(json::parse(steps[0].tool_call->arguments_json)["query"] == "a model follow-up", "later model arguments were lost");

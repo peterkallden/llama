@@ -775,15 +775,19 @@ bool resolve_agent_host_tool_selection(
 #ifdef LLAMA_AGENT_TOOLS_USE_CLANG
         std::shared_ptr<agent_clangd_code_provider> clangd_provider;
         if (request.diagnostics.semantic_backend == "clangd" && !repository_root.empty()) {
-            clangd_provider = request.clangd_provider ? request.clangd_provider : std::make_shared<agent_clangd_code_provider>(agent_clangd_session_config{
-                request.diagnostics.clangd_executable,
-                repository_root,
+            auto config = agent_clangd_session_config{
+                request.diagnostics.clangd_executable, repository_root,
                 request.diagnostics.compile_commands,
-                request.diagnostics.semantic_request_timeout_ms,
-                1000,
-            });
-            bindings.code_compile_commands = request.diagnostics.compile_commands;
+                request.diagnostics.semantic_request_timeout_ms, 1000};
+            config.compile_commands_source = request.diagnostics.compile_commands_source;
+            config.compile_commands_destination = request.diagnostics.compile_commands_destination;
+            config.file_watch_service = request.file_watch_service;
+            clangd_provider = request.clangd_provider ? request.clangd_provider
+                : std::make_shared<agent_clangd_code_provider>(std::move(config));
+            bindings.code_compile_commands = request.diagnostics.compile_commands_destination.empty()
+                ? request.diagnostics.compile_commands : request.diagnostics.compile_commands_destination;
             bindings.code_status = [clangd_provider]() { return common_tool_execution_result::success(clangd_provider->status_snapshot().dump()); };
+            bindings.code_refresh = [clangd_provider]() { return clangd_provider->refresh(); };
             bindings.code_symbols = [clangd_provider](const std::string & input) { return clangd_provider->symbol(input); };
             bindings.code_references = [clangd_provider](const std::string & input) { return clangd_provider->references(input); };
             bindings.code_calls = [clangd_provider](const std::string & input) { return clangd_provider->call_hierarchy(input); };

@@ -2,6 +2,8 @@
 #include "agent/tooling/contracts/tool-budget.h"
 #include "agent-runtime-execution.h"
 #include "common/agent/resource-chunk-extraction.h"
+#include "common/agent/agent-resource-chunk-budget.h"
+#include "agent/agent-context-allocation.h"
 #include "agent/context-compaction.h"
 #include "agent/input-resources.h"
 #include "plan/plan-workflow-state.h"
@@ -135,6 +137,7 @@ bool transition_driver_cognitive_mode(
 bool tool_has_no_required_arguments(const common_chat_tool & tool) {
     const auto schema = nlohmann::ordered_json::parse(tool.parameters, nullptr, false);
     if (schema.is_discarded() || !schema.is_object()) return false;
+    if (schema.contains("anyOf") || schema.contains("oneOf") || schema.contains("allOf")) return false;
     if (!schema.contains("required")) return true;
     return schema["required"].is_array() && schema["required"].empty();
 }
@@ -481,9 +484,13 @@ bool prepare_resource_chunk_observations(
     }
     execution.resource_chunk_observations_prepared = true;
     execution.resource_chunk_original_inputs = execution.input_resources;
-    if (!execution.resource_read_binding ||
-            !execution.resource_read_binding->require_content_read ||
-            !execution.resource_read_binding->require_full_coverage) {
+    const bool bound_full_read = execution.resource_read_binding &&
+        execution.resource_read_binding->require_content_read &&
+        execution.resource_read_binding->require_full_coverage;
+    const bool workflow_full_read = !execution.resource_read_binding && std::any_of(
+        execution.input_resources.begin(), execution.input_resources.end(),
+        [](const auto & input) { return input.required && input.role == "workflow_full_text"; });
+    if (!bound_full_read && !workflow_full_read) {
         // Questions use the ordinary resource.read path, which can choose a
         // bounded range based on the task. Eagerly extracting chunk zero here
         // would both waste context and make a partial read look task-relevant.
@@ -491,32 +498,73 @@ bool prepare_resource_chunk_observations(
         // instruction to read every file on every turn.
         return true;
     }
-    if (execution.tooling.resource_runtime.store == nullptr ||
-            execution.input_resources.empty() || execution.current_plan_id.empty()) {
+    if (execution.tooling.resource_runtime.store == nullptr || execution.input_resources.empty()) {
         return true;
     }
 
-    std::string plan_error;
-    auto plan = execution.plan_store.get(execution.current_plan_id, plan_error);
-    if (!plan) {
-        error = plan_error.empty() ? "resource chunk planning requires an active plan" : plan_error;
-        return false;
-    }
     const auto & context_budgets = execution.runtime_config.generation_config.context_budgets;
-    const common_runtime_resource_chunk_policy policy{
+    const bool initial_orientation = execution.resource_read_binding && execution.resource_read_binding->intent ==
+        common_agent_resource_read_intent::orientation;
+    const bool needs_chunks = std::any_of(execution.input_resources.begin(), execution.input_resources.end(),
+        [&](const auto & input) {
+            return (bound_full_read || (input.required && input.role == "workflow_full_text")) &&
+                !input.resource.uri.empty() &&
+                !common_runtime_resource_lineage_is_chunk(input.resource.lineage) &&
+                (input.resource.size_bytes > context_budgets.resource_chunk_max_bytes || initial_orientation);
+        });
+    std::string plan_error;
+    auto plan = execution.current_plan_id.empty() ? std::optional<common_plan_state>{} :
+        execution.plan_store.get(execution.current_plan_id, plan_error);
+    if (!plan_error.empty()) { error = plan_error; return false; }
+    const auto has_saved_plan = [&](const common_agent_input_resource & input) {
+        if (!plan || input.resource.uri.empty()) return false;
+        const std::string id = "resource_chunk_plan:" + input.resource.uri + ":" +
+            (execution.resource_read_binding ? execution.resource_read_binding->task_fingerprint.substr(0, 16) : "unbound");
+        return std::any_of(plan->observations.begin(), plan->observations.end(),
+            [&](const common_plan_observation & observation) { return observation.id == id; });
+    };
+    if (!needs_chunks && std::none_of(execution.input_resources.begin(),
+            execution.input_resources.end(), has_saved_plan)) return true;
+    if (!plan) {
+        execution.resource_chunk_needs_plan = true;
+        return true;
+    }
+    execution.resource_chunk_needs_plan = false;
+    const common_runtime_resource_chunk_policy effective_policy{
         context_budgets.resource_chunk_max_bytes,
         context_budgets.resource_chunk_overlap_bytes};
     const auto authority = make_agent_resource_read_authority(
         execution.tooling.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
     const size_t input_count = execution.input_resources.size();
-    const bool initial_orientation = execution.resource_read_binding &&
-        execution.resource_read_binding->intent == common_agent_resource_read_intent::orientation;
     for (size_t input_index = 0; input_index < input_count; ++input_index) {
         const auto & input = execution.input_resources[input_index];
-        if (input.resource.uri.empty() ||
+        if ((!bound_full_read && (!input.required || input.role != "workflow_full_text")) || input.resource.uri.empty() ||
                 common_runtime_resource_lineage_is_chunk(input.resource.lineage) ||
-                (input.resource.size_bytes <= policy.max_bytes && !initial_orientation)) {
+                (input.resource.size_bytes <= effective_policy.max_bytes && !initial_orientation && !has_saved_plan(input))) {
             continue;
+        }
+        const std::string plan_observation_id = "resource_chunk_plan:" + input.resource.uri + ":" +
+            (execution.resource_read_binding ? execution.resource_read_binding->task_fingerprint.substr(0, 16) : "unbound");
+        const auto saved_plan = std::find_if(plan->observations.begin(), plan->observations.end(),
+            [&](const common_plan_observation & observation) { return observation.id == plan_observation_id; });
+        common_runtime_resource_chunk_policy policy = effective_policy;
+        json saved_policy;
+        if (saved_plan != plan->observations.end()) {
+            saved_policy = json::parse(saved_plan->summary, nullptr, false);
+            if (!saved_policy.is_object() || saved_policy.value("schema", std::string{}) != "resource-chunk-plan.v1" ||
+                    saved_policy.value("chunker", std::string{}) != "text-window-v2" ||
+                    !saved_policy.contains("max_bytes") || !saved_policy["max_bytes"].is_number_unsigned() ||
+                    !saved_policy.contains("overlap_bytes") || !saved_policy["overlap_bytes"].is_number_unsigned()) {
+                error = "saved resource chunk plan has no reusable boundary policy; start a new plan";
+                return false;
+            }
+            policy.max_bytes = saved_policy["max_bytes"].get<size_t>();
+            policy.overlap_bytes = saved_policy["overlap_bytes"].get<size_t>();
+            if (policy.max_bytes == 0 || policy.overlap_bytes >= policy.max_bytes ||
+                    policy.max_bytes > effective_policy.max_bytes) {
+                error = "saved resource chunk plan does not fit the current model context; resume with a compatible model or start a new plan";
+                return false;
+            }
         }
         agent_resource_evidence_session evidence_session;
         if (!make_agent_resource_evidence_session(
@@ -531,6 +579,12 @@ bool prepare_resource_chunk_observations(
         const auto & chunk_plan = evidence_session.plan;
         if (chunk_plan.ranges.empty()) {
             continue;
+        }
+        if (saved_plan != plan->observations.end() &&
+                (saved_policy.value("source_sha256", std::string{}) != chunk_plan.parent.sha256 ||
+                 saved_policy.value("chunk_count", size_t{0}) != chunk_plan.ranges.size())) {
+            error = "saved resource chunk boundaries or source no longer match; start a new plan";
+            return false;
         }
         size_t next_chunk_index = 0;
         for (const auto & observation : plan->observations) {
@@ -548,11 +602,25 @@ bool prepare_resource_chunk_observations(
                     });
                 if (target != execution.resource_read_binding->targets.end()) target_fingerprint = target->content_fingerprint;
             }
-            if (!common_runtime_resource_lineage_is_chunk(lineage) ||
-                    !execution.resource_read_binding || !observation.resource_read_provenance ||
-                    observation.resource_read_provenance->task_fingerprint != execution.resource_read_binding->task_fingerprint ||
-                    target_fingerprint.empty() ||
-                    observation.resource_read_provenance->source_fingerprint != target_fingerprint) continue;
+            if (!common_runtime_resource_lineage_is_chunk(lineage)) continue;
+            if (execution.resource_read_binding) {
+                if (!observation.resource_read_provenance ||
+                        observation.resource_read_provenance->task_fingerprint != execution.resource_read_binding->task_fingerprint ||
+                        target_fingerprint.empty() ||
+                        observation.resource_read_provenance->source_fingerprint != target_fingerprint) continue;
+            } else if (observation.id.rfind("resource_chunk:" + input.resource.uri + ":unbound:", 0) != 0) {
+                continue;
+            }
+            if (lineage.chunk_index >= chunk_plan.ranges.size()) {
+                error = "saved resource chunk index no longer exists";
+                return false;
+            }
+            const auto & expected = chunk_plan.ranges[lineage.chunk_index];
+            if (lineage.chunk_count != expected.chunk_count || lineage.byte_offset != expected.byte_offset ||
+                    lineage.byte_length != expected.byte_length || lineage.overlap_bytes != expected.overlap_bytes) {
+                error = "saved resource chunk range differs from its persisted policy";
+                return false;
+            }
             if (lineage.chunk_index == next_chunk_index) ++next_chunk_index;
         }
         if (next_chunk_index >= chunk_plan.ranges.size()) {
@@ -569,25 +637,20 @@ bool prepare_resource_chunk_observations(
         execution.active_resource_chunk_input = input_index;
         execution.active_resource_chunk_index = next_chunk_index;
 
-        const std::string plan_observation_id = "resource_chunk_plan:" + input.resource.uri + ":" +
-            (execution.resource_read_binding ? execution.resource_read_binding->task_fingerprint.substr(0, 16) : "unbound");
-        const bool plan_observation_exists = std::any_of(
-            plan->observations.begin(), plan->observations.end(),
-            [&](const common_plan_observation & observation) {
-                return observation.id == plan_observation_id;
-            });
-        if (!plan_observation_exists) {
+        if (saved_plan == plan->observations.end()) {
             common_plan_operation observed;
             observed.kind = common_plan_operation_kind::record_observation;
             observed.plan_id = plan->id;
             observed.expected_version = plan->version;
+            observed.host_authorized = true;
             observed.reason_summary = "bounded resource chunk plan attached to the session lane";
             observed.observation = common_plan_observation{
                 plan_observation_id,
                 "resource_chunk_planned",
-                "Planned " + std::to_string(execution.resource_evidence_sessions.back().plan.ranges.size()) +
-                    " bounded text chunks; starting at chunk " + std::to_string(next_chunk_index) +
-                    "; the original resource remains authoritative.",
+                json{{"schema", "resource-chunk-plan.v1"}, {"chunker", "text-window-v2"}, {"max_bytes", policy.max_bytes},
+                    {"overlap_bytes", policy.overlap_bytes},
+                    {"source_sha256", execution.resource_evidence_sessions[plan_index].plan.parent.sha256},
+                    {"chunk_count", execution.resource_evidence_sessions[plan_index].plan.ranges.size()}}.dump(),
                 1.0f,
                 {input.resource.uri},
                 {first_ref},
@@ -647,9 +710,10 @@ bool extract_active_resource_chunk(
     const auto & config = execution.runtime_config.generation_config;
     for (size_t attempt = 0; attempt < 2; ++attempt) {
         common_agent_generation_options options;
-        options.n_predict = 192;
+        options.n_predict = 384;
         options.n_threads = config.n_threads;
         options.generation_trace = config.generation_trace;
+        options.should_stop = [&execution]() { return execution.execution_control.should_stop(); };
         const std::string correction = attempt == 0 ? "" :
             "the previous attempt failed because " + error +
             ". Try once more with only one complete evidence sentence copied from the visible text; do not add a finding field or wrap it in quotes. "
@@ -669,6 +733,8 @@ bool extract_active_resource_chunk(
         if (!common_agent_generation_succeeded(generated)) {
             error = "resource evidence generation failed: " + generated.error_message;
             if (generated.error_message.empty()) error += " model did not return a completed result";
+            if (execution.execution_control.should_stop() ||
+                    generated.error_message.find("context") != std::string::npos) return false;
             continue;
         }
         if (common_agent_parse_resource_chunk_extraction(
@@ -734,6 +800,7 @@ bool record_and_advance_resource_chunk(
     observed.kind = common_plan_operation_kind::record_observation;
     observed.plan_id = plan->id;
     observed.expected_version = plan->version;
+    observed.host_authorized = true;
     observed.reason_summary = "bounded resource chunk processed on the session lane";
     observed.observation = common_plan_observation{
         "resource_chunk:" + chunk_plan.parent.uri + ":" +
@@ -1825,6 +1892,10 @@ bool run_agent_runtime_driver(
     const std::string original_prompt = execution.orchestration_config.prompt;
     common_agent_result aggregate;
     size_t continuation_count = 0;
+    // Resource slices are not plan/reflection continuations. Bound their
+    // work separately while retaining the ordinary turn deadline and cancel.
+    constexpr size_t max_resource_chunks_per_turn = 64;
+    size_t resource_chunks_processed = 0;
     const auto preserve_partial_result = [&]() {
         execution.orchestration_config.prompt = original_prompt;
         result = std::move(aggregate);
@@ -1912,6 +1983,25 @@ bool run_agent_runtime_driver(
 
     execution.project_graph_context = prepare_project_graph_context(execution);
 
+    const bool bound_full_read = execution.resource_read_binding &&
+        execution.resource_read_binding->require_content_read &&
+        execution.resource_read_binding->require_full_coverage && !execution.input_resources.empty();
+    const bool workflow_chunked = execution.route_selected && execution.selected_route.workflow_definition &&
+        execution.selected_route.workflow_definition->resource_read_policy ==
+            common_plan_workflow_resource_read_policy::chunked;
+    if (bound_full_read || workflow_chunked) {
+        common_runtime_resource_chunk_policy chunk_policy;
+        if (!common_agent_resolve_resource_chunk_policy(execution.inference,
+                execution.runtime_config.generation_config.context_budgets,
+                original_prompt, chunk_policy, error)) return fail_with_partial_result(error);
+        execution.runtime_config.generation_config.context_budgets.resource_chunk_max_bytes = chunk_policy.max_bytes;
+        execution.runtime_config.generation_config.context_budgets.resource_chunk_overlap_bytes = chunk_policy.overlap_bytes;
+        execution.runtime_config.context_budgets.resource_chunk_max_bytes = chunk_policy.max_bytes;
+        execution.runtime_config.context_budgets.resource_chunk_overlap_bytes = chunk_policy.overlap_bytes;
+        if (execution.policy.agent_trace) fprintf(stderr, "agent resource chunk budget: max_bytes=%zu overlap_bytes=%zu\n",
+            chunk_policy.max_bytes, chunk_policy.overlap_bytes);
+    }
+
     if (!prepare_resource_chunk_observations(execution, error)) {
         return fail_with_partial_result(error);
     }
@@ -1919,15 +2009,16 @@ bool run_agent_runtime_driver(
     while (true) {
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
         if (execution.active_resource_chunk_plan != static_cast<size_t>(-1)) {
-            if (continuation_count >= execution.runtime_config.max_continuations) {
+            if (resource_chunks_processed >= max_resource_chunks_per_turn) {
                 aggregate.trace.push_back({common_runtime_trace_stage::plan,
                     common_runtime_trace_kind::failed,
-                    "workflow continuation budget exhausted before handoff; used=" +
-                        std::to_string(continuation_count) + " max=" +
-                        std::to_string(execution.runtime_config.max_continuations) +
+                    "resource chunk work budget exhausted; processed=" +
+                        std::to_string(resource_chunks_processed) + " max=" +
+                        std::to_string(max_resource_chunks_per_turn) +
                         "; active plan remains resumable and is not marked complete",
                     execution.current_plan_id, {}, {}, {}, {}});
                 aggregate.limit_reached = true;
+                if (!execution.current_plan_id.empty()) aggregate.plan_id = execution.current_plan_id;
                 aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
                 result = std::move(aggregate);
                 break;
@@ -1943,7 +2034,7 @@ bool run_agent_runtime_driver(
             const bool has_next_chunk = record_and_advance_resource_chunk(
                 execution, context, extraction, chunk_chain_completed, error);
             if (!error.empty()) return fail_with_partial_result(error);
-            ++continuation_count;
+            ++resource_chunks_processed;
             if (has_next_chunk) {
                 execution.orchestration_config.prompt =
                     "Continue the same task. The host is processing the next bounded resource slice; "
@@ -1951,11 +2042,13 @@ bool run_agent_runtime_driver(
                 continue;
             }
             if (chunk_chain_completed) {
-                if (continuation_count >= execution.runtime_config.max_continuations) {
-                    aggregate.limit_reached = true;
-                    aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
-                    result = std::move(aggregate);
-                    break;
+                if (execution.resource_read_binding && execution.resource_read_binding->intent ==
+                        common_agent_resource_read_intent::document_review) {
+                    for (const auto & input : execution.resource_chunk_original_inputs) {
+                        if (std::none_of(execution.available_resources.begin(), execution.available_resources.end(),
+                                [&](const auto & available) { return available.resource.uri == input.resource.uri; }))
+                            execution.available_resources.push_back(input);
+                    }
                 }
                 if (!prepare_resource_chunk_observations(execution, error)) {
                     return fail_with_partial_result(error);
@@ -1966,13 +2059,29 @@ bool run_agent_runtime_driver(
                         "do not ask the model to read or locate it.\n";
                     continue;
                 }
-                execution.orchestration_config.prompt =
-                    "Synthesize the validated resource-chunk findings from the active plan in chunk order. "
-                    "Use only the structured claims, host-verified excerpts and source locations below. The source text has "
-                    "already been read and processed; do not claim it still needs to be fetched or read. "
-                    "Answer the original user task below directly; do not substitute generic workflow or acquisition status. "
-                    "State uncertainty or incomplete coverage if source coverage is incomplete.\n"
-                    "Original user task:\n" + original_prompt + "\n";
+                const bool document_review = execution.resource_read_binding &&
+                    execution.resource_read_binding->intent == common_agent_resource_read_intent::document_review;
+                if (document_review) {
+                    // Evidence summaries cannot substitute for the exact text
+                    // of a block the user asks to edit. Keep its host-owned
+                    // projection available for bounded follow-up reads.
+                    const auto & binding = *execution.resource_read_binding;
+                    execution.orchestration_config.prompt =
+                        "Continue the original document task using the host-validated findings below. "
+                        "For a requested edit, inspect the exact target block before proposing a bounded patch; "
+                        "a summary does not replace the original text. Preserve the host's revision and approval rules.\n"
+                        "Host-bound document: " + json{{"document_uri", binding.document_uri},
+                            {"revision", binding.document_revision}, {"selected_block_ids", binding.selected_block_ids}}.dump() +
+                        "\nOriginal user task:\n" + original_prompt + "\n";
+                } else {
+                    execution.orchestration_config.prompt =
+                        "Synthesize the validated resource-chunk findings from the active plan in chunk order. "
+                        "Use only the structured claims, host-verified excerpts and source locations below. The source text has "
+                        "already been read and processed; do not claim it still needs to be fetched or read. "
+                        "Answer the original user task below directly; do not substitute generic workflow or acquisition status. "
+                        "State uncertainty or incomplete coverage if source coverage is incomplete.\n"
+                        "Original user task:\n" + original_prompt + "\n";
+                }
                 std::string coverage_error;
                 const auto active_plan = execution.plan_store.get(
                     execution.current_plan_id, coverage_error);
@@ -1984,11 +2093,27 @@ bool run_agent_runtime_driver(
                     if (!common_agent_research_chunk_evidence_from_observations(
                             active_plan->observations, claim_id,
                             chunk_sources, chunk_evidence, coverage_error)) return false;
-                    execution.orchestration_config.prompt += "\nHost-validated evidence, in source order:\n";
+                    const std::string evidence_header = "\nHost-validated evidence, in source order:\n";
+                    size_t evidence_budget = execution.runtime_config.generation_config.context_budgets.tool_observation_chars;
+                    const size_t capacity = execution.inference.context_capacity_tokens();
+                    if (capacity != 0) {
+                        const auto counted = execution.inference.count_context_text_tokens(
+                            execution.orchestration_config.prompt + evidence_header);
+                        const size_t mandatory = counted.value_or(
+                            execution.orchestration_config.prompt.size() + evidence_header.size());
+                        const size_t reserve = static_cast<size_t>(std::max(1,
+                            execution.runtime_config.generation_config.n_predict)) + 256;
+                        const size_t target = std::min(evidence_budget, capacity / 4);
+                        const auto allocation = common_agent_allocate_context(capacity, mandatory, reserve,
+                            {{target, target}});
+                        evidence_budget = allocation.mandatory_fits ? allocation.section_tokens.front() : 0;
+                    }
+                    std::string evidence_text;
+                    size_t omitted_findings = 0;
                     for (const auto & item : chunk_evidence) {
                         const auto source = std::find_if(chunk_sources.begin(), chunk_sources.end(),
                             [&](const auto & candidate) { return candidate.source_id == item.source_id; });
-                        execution.orchestration_config.prompt +=
+                        const std::string finding =
                             "claim: " + item.statement + "\n"
                             "supporting_excerpt: " + item.supporting_excerpt + "\n"
                             "source_title: " + (source == chunk_sources.end()
@@ -1997,7 +2122,15 @@ bool run_agent_runtime_driver(
                                 ? item.source_location : (source->resource_ref->lineage.parent_uri.empty()
                                     ? source->resource_ref->uri : source->resource_ref->lineage.parent_uri)) + "\n"
                             "source_location: " + item.source_location + "\n";
+                        if (finding.size() <= evidence_budget - std::min(evidence_budget, evidence_text.size()))
+                            evidence_text += finding;
+                        else ++omitted_findings;
                     }
+                    if (!evidence_text.empty()) execution.orchestration_config.prompt += evidence_header + evidence_text;
+                    if (omitted_findings != 0) execution.orchestration_config.prompt +=
+                        "\nHost context limit: " + std::to_string(omitted_findings) +
+                        " validated findings are omitted from this prompt. They remain in the plan. "
+                        "Do not claim the shown findings are a comprehensive assessment.\n";
                     std::set<std::string> chunk_parents;
                     for (const auto & observation : active_plan->observations) {
                         if (common_plan_observation_is_resource_chunk(observation) &&
@@ -2030,6 +2163,7 @@ bool run_agent_runtime_driver(
             ? execution.tooling.tools
             : execution.model_tools;
         common_agent_request request = make_agent_runtime_driver_request(execution);
+        request.yield_after_plan_creation = execution.resource_chunk_needs_plan;
         request.result_requirement_selector = [&execution, &model_tools](
                 const common_agent_request & current, const common_plan_state & plan,
                 const common_plan_step & step, std::string & requirement, common_agent_generated_text_result & generated, std::string & selection_error) {
@@ -2072,7 +2206,9 @@ bool run_agent_runtime_driver(
                         if (!projection_error.empty()) return true;
                         const auto * next = common_agent_workflow_next_transition(*route.workflow_definition,
                             option.to_state, &route.resolved_tools);
-                        if (!next) return true;
+                        if (!next) return std::find(route.workflow_definition->terminal_states.begin(),
+                            route.workflow_definition->terminal_states.end(), option.to_state) ==
+                            route.workflow_definition->terminal_states.end();
                         if (next->kind != common_plan_workflow_transition_kind::tool) return false;
                         const auto tool = std::find_if(execution.tooling.tools.begin(), execution.tooling.tools.end(),
                             [&](const auto & item) { return item.name == next->tool_name; });
@@ -2137,6 +2273,15 @@ bool run_agent_runtime_driver(
         }
         append_runtime_result(aggregate, slice);
         if (execution.execution_control.should_stop()) return stop_for_execution_control();
+        if (slice.plan_ready_for_resource_chunks) {
+            if (!slice.plan_id || slice.plan_id->empty())
+                return fail_with_partial_result("resource chunk handoff did not provide the saved plan");
+            execution.current_plan_id = *slice.plan_id;
+            execution.resource_chunk_needs_plan = false;
+            execution.resource_chunk_observations_prepared = false;
+            if (!prepare_resource_chunk_observations(execution, error)) return fail_with_partial_result(error);
+            continue;
+        }
         if (slice.workflow_handoff_requested) {
             if (continuation_count >= execution.runtime_config.max_continuations) {
                 aggregate.limit_reached = true;
@@ -2214,17 +2359,21 @@ bool run_agent_runtime_driver(
                         "workflow requested a second chunked resource while another resource is active");
                 }
             } else {
+                if (execution.runtime_config.generation_config.context_budgets.resource_chunk_max_bytes == 0) {
+                    common_runtime_resource_chunk_policy chunk_policy;
+                    if (!common_agent_resolve_resource_chunk_policy(execution.inference,
+                            execution.runtime_config.generation_config.context_budgets,
+                            original_prompt, chunk_policy, error)) return fail_with_partial_result(error);
+                    execution.runtime_config.generation_config.context_budgets.resource_chunk_max_bytes = chunk_policy.max_bytes;
+                    execution.runtime_config.generation_config.context_budgets.resource_chunk_overlap_bytes = chunk_policy.overlap_bytes;
+                    execution.runtime_config.context_budgets.resource_chunk_max_bytes = chunk_policy.max_bytes;
+                    execution.runtime_config.context_budgets.resource_chunk_overlap_bytes = chunk_policy.overlap_bytes;
+                }
                 execution.input_resources.push_back({resource, "workflow_full_text", true});
                 execution.resource_chunk_observations_prepared = false;
                 if (!prepare_resource_chunk_observations(execution, error)) {
                     return fail_with_partial_result(error);
                 }
-            }
-            if (continuation_count >= execution.runtime_config.max_continuations) {
-                aggregate.limit_reached = true;
-                aggregate.response_stop_reason = common_agent_generation_stop_reason::limit;
-                result = std::move(aggregate);
-                break;
             }
             execution.orchestration_config.prompt =
                 execution.active_resource_chunk_plan != static_cast<size_t>(-1)
@@ -2232,7 +2381,6 @@ bool run_agent_runtime_driver(
                       "Treat each slice as evidence; do not produce the final answer until all slices are processed.\n"
                     : "Continue the same workflow from the completed bounded resource read.\n"
                       "Use the recorded resource observation and continue the existing plan.\n";
-            ++continuation_count;
             continue;
         }
         if (slice.response_stop_reason != common_agent_generation_stop_reason::limit ||

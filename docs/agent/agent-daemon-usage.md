@@ -579,7 +579,7 @@ constraints, and the resolved capability set before any model ranking. A
 requirement such as `development.build` is therefore checked against the
 host-owned profile; callers cannot add capabilities by choosing a blueprint.
 
-The read-only developer profile exposes `code.inspect`, `code.symbols`,
+The read-only developer profile exposes `code.inspect`, `code.refresh`, `code.symbols`,
 `code.references` and `code.calls`. `code.inspect` reports which operations have
 semantic support. Symbol and reference results identify whether they came from
 clangd/LSP or bounded text fallback; fallback matches do not resolve symbols.
@@ -598,6 +598,16 @@ still owns executable discovery, `compile_commands.json` selection and the
 semantic provider binding. If `clangd` is unavailable, `code.symbols` and
 `code.references` retain the explicit text fallback; `code.calls` reports that
 semantic call hierarchy is unavailable.
+
+The host may set `diagnostics.compile_commands_source` and
+`diagnostics.compile_commands_destination` to validate and atomically copy a
+build-tree compilation database into the stable directory named by
+`diagnostics.compile_commands`. `code.refresh` reconciles file changes and
+restarts clangd lazily on the next semantic query. Its status reports observed
+and delivered watcher generations; those events do not certify that clangd's
+background index is complete, so index coverage remains unknown. Build-file
+changes can mark the compilation database as possibly stale, but the daemon
+does not run CMake or a compiler for this purpose.
 
 The tool catalog includes semantic `development.build` and `development.test` contracts for
 the developer path. They are confirmation-gated and describe a

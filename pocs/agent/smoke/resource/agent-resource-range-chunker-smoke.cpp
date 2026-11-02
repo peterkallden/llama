@@ -1,8 +1,15 @@
 #include "tools/agent/resource/agent-resource-chunker.h"
 #include "agent/input-resources.h"
+#include "agent/agent-resource-chunk-budget.h"
 
 #include <cstdio>
 #include <memory>
+
+class bounded_smoke_inference final : public common_agent_inference {
+public:
+    size_t context_capacity_tokens() const override { return 2048; }
+    bool generate(const common_agent_generation_request &, common_agent_generation_result &) override { return false; }
+};
 
 int main() {
     std::string error;
@@ -37,6 +44,18 @@ int main() {
         std::fprintf(stderr, "chunk plan metadata is incomplete\n");
         return 1;
     }
+    if (plan.ranges.front().boundary != "paragraph") {
+        std::fprintf(stderr, "resource window did not preserve its paragraph boundary\n");
+        return 1;
+    }
+    bounded_smoke_inference inference;
+    common_agent_context_budget_config config;
+    common_runtime_resource_chunk_policy allocated;
+    if (!common_agent_resolve_resource_chunk_policy(inference, config, "Read the source", allocated, error) ||
+            allocated.max_bytes >= inference.context_capacity_tokens() || allocated.overlap_bytes >= allocated.max_bytes) {
+        std::fprintf(stderr, "context-aware chunk allocation failed: %s\n", error.c_str());
+        return 1;
+    }
     std::string chunk_text;
     if (!read_agent_resource_chunk(store, authority, plan, 1, chunk_text, error) ||
             chunk_text.empty()) {
@@ -54,8 +73,8 @@ int main() {
         {{chunk_ref, "resource_chunk", true}}, 2048);
     if (rendered.find("chunk_index=1") == std::string::npos ||
             rendered.find("id=r1") == std::string::npos ||
-            rendered.find("byte_offset=28") == std::string::npos ||
-            rendered.find("byte_length=32") == std::string::npos ||
+            rendered.find("byte_offset=" + std::to_string(plan.ranges[1].byte_offset)) == std::string::npos ||
+            rendered.find("byte_length=" + std::to_string(plan.ranges[1].byte_length)) == std::string::npos ||
             rendered.find("resource.read") == std::string::npos) {
         std::fprintf(stderr, "chunk input view did not expose bounded read metadata\n");
         return 1;

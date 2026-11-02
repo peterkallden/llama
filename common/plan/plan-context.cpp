@@ -1,4 +1,5 @@
 #include "plan/plan-context.h"
+#include "plan/plan-workflow-state.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <algorithm>
@@ -234,6 +235,27 @@ std::string common_plan_render_tool_observations(
     std::ostringstream out;
     out << header;
     size_t remaining = config.char_budget - header.size() - footer.size();
+    std::string limitations;
+    for (const auto & step : plan.steps) {
+        if (!common_plan_workflow_failure_handled(plan, step) || !step.tool_call) continue;
+        for (auto observation = plan.observations.rbegin(); observation != plan.observations.rend(); ++observation) {
+            if (observation->id.rfind("tool:" + step.id + ":", 0) != 0 || observation->source != step.tool_call->name) continue;
+            const auto payload = plan_context_json::parse(observation->summary, nullptr, false);
+            if (!payload.is_object() || !payload.contains("failure") || !payload["failure"].is_object()) break;
+            const auto & failure = payload["failure"];
+            std::string line = "- " + common_plan_escape_context_text(step.tool_call->name) + " failed";
+            if (failure.contains("http_status") && failure["http_status"].is_number_integer())
+                line += " (HTTP " + std::to_string(failure["http_status"].get<int>()) + ")";
+            line += "; the requested source content was not retrieved.\n";
+            if (limitations.size() + line.size() <= 1024) limitations += line;
+            break;
+        }
+    }
+    if (!limitations.empty()) {
+        limitations = "<source_limitations>\n" + limitations + "</source_limitations>\n";
+        if (limitations.size() + omitted.size() <= remaining) remaining -= limitations.size();
+        else limitations.clear();
+    }
     std::vector<std::string> selected;
     bool omitted_any = false;
     for (auto current = plan.observations.rbegin(); current != plan.observations.rend(); ++current) {
@@ -265,6 +287,7 @@ std::string common_plan_render_tool_observations(
     for (auto line = selected.rbegin(); line != selected.rend(); ++line) out << *line;
     if (omitted_any) out << omitted;
     out << footer;
+    out << limitations;
     return out.str();
 }
 

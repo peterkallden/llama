@@ -16,6 +16,7 @@
     "operations": {
       "listWorks": {
         "enabled": true,
+        "required_any_parameters": ["search", "filter"],
         "default_projection": "id,display_name,publication_year,doi,cited_by_count,primary_topic,topics"
       },
       "getWork": {

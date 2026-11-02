@@ -93,7 +93,19 @@ with tempfile.TemporaryDirectory(prefix="agent-clangd-workspace-") as temporary:
         while time.monotonic() < deadline and not list(index_dir.glob("*")):
             time.sleep(0.1)
         assert list(index_dir.glob("*")), "clangd did not persist a workspace index"
-        print("clangd workspace MCP: symbols, cross-file references, calls and coverage passed")
+        # Change a compilation-database source from a separate process while
+        # the MCP host stays alive. The watcher should deliver it without an
+        # explicit code.refresh request.
+        subprocess.run([sys.executable, "-c",
+            "from pathlib import Path; import sys; p=Path(sys.argv[1]); p.write_text(p.read_text().replace('fixture_caller', 'fixture_caller_live_refresh'))",
+            str(root / "caller.cpp")], check=True)
+        deadline = time.monotonic() + 30
+        while True:
+            refreshed = call(22, "code.symbols", {"symbol": "fixture_caller_live_refresh"})
+            if any(item["path"] == "caller.cpp" for item in refreshed["items"]): break
+            if time.monotonic() >= deadline: raise AssertionError(f"live file change was not reflected: {refreshed}")
+            time.sleep(0.2)
+        print("clangd workspace MCP: symbols, cross-file references, calls, coverage and live file refresh passed")
     finally:
         p.terminate()
         try:
@@ -105,6 +117,12 @@ with tempfile.TemporaryDirectory(prefix="agent-clangd-workspace-") as temporary:
     assert list(index_dir.glob("*")), "clangd index was lost after server shutdown"
     print("clangd workspace MCP: disk index remains after server shutdown")
 
+    # Change the same source while the host is stopped. Startup reconciliation
+    # should make the latest symbol available after the next request.
+    subprocess.run([sys.executable, "-c",
+        "from pathlib import Path; import sys; p=Path(sys.argv[1]); p.write_text(p.read_text().replace('fixture_caller_live_refresh', 'fixture_caller_after_restart'))",
+        str(root / "caller.cpp")], check=True)
+
     p = subprocess.Popen([str(server), "--config", str(root / "config.json"), "--repository-root", str(root)],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     lines = queue.Queue()
@@ -115,11 +133,11 @@ with tempfile.TemporaryDirectory(prefix="agent-clangd-workspace-") as temporary:
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         deadline = time.monotonic() + 30
         while True:
-            found = call(31, "code.symbols", {"symbol": "fixture_caller"})
+            found = call(31, "code.symbols", {"symbol": "fixture_caller_after_restart"})
             if any(item["path"] == "caller.cpp" for item in found["items"]): break
-            if time.monotonic() >= deadline: raise AssertionError(f"restart lookup failed: {found}")
+            if time.monotonic() >= deadline: raise AssertionError(f"restart reconciliation lookup failed: {found}")
             time.sleep(0.2)
-        print("clangd workspace MCP: project lookup after server restart passed")
+        print("clangd workspace MCP: stopped-file reconciliation after server restart passed")
     finally:
         p.terminate()
         try:

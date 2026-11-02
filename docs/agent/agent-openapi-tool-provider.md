@@ -360,6 +360,20 @@ context so the existing reflection path can revise the tool step. The host
 does not invent a search term or silently execute an unscoped collection
 request.
 
+When several declared parameters are alternative ways to scope an operation,
+`required_any_parameters` requires at least one of them; supplying multiple
+is allowed. It can be combined with `required_parameters`, whose entries all
+remain required. For example:
+
+```json
+{"listWorks": {"required_any_parameters": ["search", "filter"]}}
+```
+
+The model receives an `anyOf` requirement and the host checks it again before
+the HTTP request. Missing, null and empty-string alternatives do not satisfy the
+host requirement. This is an operation policy, not a change to OpenAlex's own
+OpenAPI definition.
+
 OpenAPI HTTP status and rate-limit metadata survive the provider/MCP boundary:
 status, failure code/class, retryability, `Retry-After`/rate-limit delay,
 requested/final URL, content type, response size and duration. Common request,

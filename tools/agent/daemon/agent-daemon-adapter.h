@@ -76,6 +76,9 @@ struct daemon_options {
     common_agent_sandbox_host_config sandbox;
     std::string repository_root;
     agent_host_diagnostics_config diagnostics;
+    // Long-lived host-owned clangd session shared across daemon tool turns.
+    std::shared_ptr<class agent_clangd_code_provider> clangd_provider;
+    std::shared_ptr<class agent_project_file_watch_service> file_watch_service;
     std::string mcp_tool_command;
     std::vector<std::string> mcp_tool_args;
     std::string mcp_tool_server_name = "mcp";

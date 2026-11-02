@@ -9,6 +9,7 @@ failures, formatting, include traces and native crash reports.
 | Tool | Behavior |
 | --- | --- |
 | `code.inspect` | Reports whether the host has an authorized repository and which semantic operations are available. |
+| `code.refresh` | Reconciles watched files and schedules a fresh clangd session for the next semantic query. |
 | `code.symbols` | Finds symbol definitions through the semantic provider, or bounded text matches when no provider is configured. |
 | `code.references` | Finds references through the semantic provider, or bounded text matches when no provider is configured. |
 | `code.calls` | Returns one-hop callers/callees from a semantic provider and a relationship projection using the shared visualization contract. |
@@ -46,8 +47,9 @@ root, including when that root comes from the host tool context. The provider an
 transport are implemented under `tools/agent/code/`; native compiler and crash
 diagnostics remain under `tools/agent/diagnostics/`.
 
-The stdio MCP server retains its clangd session while refreshing tool policy
-for each call. Indexing is asynchronous and the provider cannot establish
+The stdio MCP server retains its clangd provider while refreshing tool policy
+for each call. The daemon also keeps one host-owned provider across turns so the
+watcher and LSP session do not restart with every per-turn tool view. Indexing is asynchronous and the provider cannot establish
 project-wide index coverage: clangd results therefore report `complete: false`
 and an explicit coverage limitation even when all returned entries were parsed.
 An empty result does not prove that a symbol or caller is absent. The Codex MCP
@@ -65,6 +67,61 @@ encountered; that count is not an index coverage measurement. `provider_status`
 is a non-blocking snapshot of the session and last observed clangd index
 activity. Progress notifications are read during requests, so the observation
 may be stale even when an activity reports that it ended.
+
+The host-owned file-watch service is backend-neutral and can be shared by
+multiple consumers registered for the same canonical project root. Linux uses
+recursive inotify watches; other platforms use bounded polling, and polling
+also reconciles Linux snapshots periodically. It watches C/C++ source and
+header files plus common build inputs, while skipping `.git`, build, cache and
+agent data directories. It does not follow symlinks. New directories, atomic
+renames, deletions, branch changes and inotify queue loss are handled as file
+events or a request for reconciliation. Callbacks run outside watcher locks.
+
+When clangd has a document open, source changes are sent as versioned LSP
+`didChange` notifications and deletion closes the document. Other watched
+files are sent through `workspace/didChangeWatchedFiles`. A delivered event
+means only that the host observed and forwarded a file change; it does not mean
+clangd's asynchronous project index has completed. `code.inspect` reports the
+watcher backend, whether reconciliation is needed, and the latest observed and
+consumer-acknowledged change generations. A pending delivery does not imply
+clangd has consumed the change, and neither acknowledgement nor delivery proves
+background indexing has completed. `index_coverage` remains `unknown`. `code.refresh`
+schedules filesystem reconciliation, validates and publishes a configured
+compilation database, and stops the current clangd session so the next semantic
+query starts it with current inputs. It does not launch CMake or compile.
+
+`diagnostics.compile_commands_source` and
+`diagnostics.compile_commands_destination` are optional host-owned paths. The
+source may be a JSON file or its containing directory. On change, the host
+validates the bounded compilation database and atomically publishes it to the
+destination; invalid input leaves the previous working copy in place. If no
+destination is set, `diagnostics.compile_commands` is used. A configured source
+can live in a build tree excluded from recursive project watching because it is
+registered as an explicit file. Changes to CMake or other build inputs set
+`compile_commands_may_be_stale`; the host never generates build commands.
+When a configured source cannot be published, semantic queries can use the
+last validated destination while `compile_commands_sync_error` and the stale
+flag report the failure. `code.refresh` itself reports the failed publication.
+`code.inspect` can report whether a requested source has an entry in the
+selected database, including `false` when it is known to be missing.
+
+For example, an agent host can keep its reusable clangd database outside a
+frequently rebuilt checkout:
+
+```json
+{
+  "diagnostics": {
+    "semantic_backend": "clangd",
+    "compile_commands": "/home/agent/agent-data/clangd",
+    "compile_commands_source": "/home/agent/llama/build-agent-vulkan-cozo/compile_commands.json",
+    "compile_commands_destination": "/home/agent/agent-data/clangd/compile_commands.json"
+  }
+}
+```
+
+The remote Codex/MCP client remains an ordinary client of the existing
+llama-agent MCP server; watcher ownership and configuration belong to that
+server or daemon host.
 Clangd's background index persists under the compilation database directory's
 `.cache/clangd/index` when writable and is reused across process restarts.
 `diagnostics.semantic_request_timeout_ms` bounds an individual clangd request

@@ -77,6 +77,30 @@ bool parse_base(const std::string & id, const json & value,
     base.request_timeout_ms = value.value("request_timeout_ms", uint32_t{120000});
     base.supports_json_schema = value.value("supports_json_schema", false);
     base.supports_native_tool_calls = value.value("supports_native_tool_calls", false);
+    base.map_tool_names = value.value("map_tool_names", false);
+    if (value.contains("generation")) {
+        const auto & generation = value.at("generation");
+        if (base.backend != "http" || !generation.is_object()) {
+            error = "generation options require an HTTP model base: " + id;
+            return false;
+        }
+        for (const auto & item : generation.items()) {
+            if (item.key() != "token_limit_parameter" && item.key() != "reasoning_effort" && item.key() != "strict_json_schema") {
+                error = "unknown HTTP generation option: " + item.key();
+                return false;
+            }
+        }
+        base.token_limit_parameter = generation.value("token_limit_parameter", "max_tokens");
+        base.reasoning_effort = generation.value("reasoning_effort", "");
+        base.strict_json_schema = generation.value("strict_json_schema", true);
+    }
+    if ((base.token_limit_parameter != "max_tokens" && base.token_limit_parameter != "max_completion_tokens") ||
+            (base.reasoning_effort != "" && base.reasoning_effort != "none" && base.reasoning_effort != "minimal" &&
+             base.reasoning_effort != "low" && base.reasoning_effort != "medium" && base.reasoning_effort != "high" &&
+             base.reasoning_effort != "xhigh" && base.reasoning_effort != "max")) {
+        error = "HTTP model base has invalid generation options: " + id;
+        return false;
+    }
     const bool http = base.backend == "http";
     if (http && !valid_http_endpoint(base.endpoint)) {
         error = "HTTP model base requires a valid http or https endpoint: " + id;
@@ -236,6 +260,15 @@ bool common_agent_validate_model_catalog(
         })) { error = "model catalog directory is required for local model bases"; return false; }
     size_t generation_count = 0;
     for (const auto & entry : catalog.bases) {
+        const auto & base = entry.second;
+        if ((base.token_limit_parameter != "max_tokens" && base.token_limit_parameter != "max_completion_tokens") ||
+                (base.reasoning_effort != "" && base.reasoning_effort != "none" && base.reasoning_effort != "minimal" &&
+                 base.reasoning_effort != "low" && base.reasoning_effort != "medium" && base.reasoning_effort != "high" &&
+                 base.reasoning_effort != "xhigh" && base.reasoning_effort != "max") ||
+                (base.backend != "http" && (base.token_limit_parameter != "max_tokens" || !base.reasoning_effort.empty() || !base.strict_json_schema))) {
+            error = "model base has invalid generation options: " + entry.first;
+            return false;
+        }
         if (entry.second.kind == "generation") ++generation_count;
         if (entry.second.kind == "embedding" && !entry.second.mmproj.empty()) {
             error = "embedding model base must not declare mmproj: " + entry.first;
@@ -289,6 +322,14 @@ std::string common_agent_model_catalog_to_json(
             bases[entry.first]["request_timeout_ms"] = entry.second.request_timeout_ms;
             bases[entry.first]["supports_json_schema"] = entry.second.supports_json_schema;
             bases[entry.first]["supports_native_tool_calls"] = entry.second.supports_native_tool_calls;
+            bases[entry.first]["map_tool_names"] = entry.second.map_tool_names;
+            if (entry.second.token_limit_parameter != "max_tokens" || !entry.second.reasoning_effort.empty() || !entry.second.strict_json_schema) {
+                bases[entry.first]["generation"] = {{"token_limit_parameter", entry.second.token_limit_parameter}};
+                if (!entry.second.reasoning_effort.empty())
+                    bases[entry.first]["generation"]["reasoning_effort"] = entry.second.reasoning_effort;
+                if (!entry.second.strict_json_schema)
+                    bases[entry.first]["generation"]["strict_json_schema"] = false;
+            }
         } else {
             bases[entry.first] = {
                 {"kind", entry.second.kind},
@@ -455,6 +496,10 @@ bool common_agent_model_catalog_resolve_profile(
     selection.request_timeout_ms = base->second.request_timeout_ms;
     selection.supports_json_schema = base->second.supports_json_schema;
     selection.supports_native_tool_calls = base->second.supports_native_tool_calls;
+    selection.map_tool_names = base->second.map_tool_names;
+    selection.token_limit_parameter = base->second.token_limit_parameter;
+    selection.reasoning_effort = base->second.reasoning_effort;
+    selection.strict_json_schema = base->second.strict_json_schema;
     error.clear();
     return true;
 }
@@ -482,7 +527,11 @@ std::string common_agent_model_selection_cache_key(
             << selection.token_env << '\n'
             << selection.connect_timeout_ms << '\n' << selection.request_timeout_ms << '\n'
             << "json-schema:" << selection.supports_json_schema << '\n'
-            << "native-tools:" << selection.supports_native_tool_calls << '\n';
+            << "native-tools:" << selection.supports_native_tool_calls << '\n'
+            << "map-tool-names:" << selection.map_tool_names << '\n'
+            << "token-limit-parameter:" << selection.token_limit_parameter << '\n'
+            << "reasoning-effort:" << selection.reasoning_effort << '\n'
+            << "strict-json-schema:" << selection.strict_json_schema << '\n';
     }
     for (const auto & adapter : selection.adapters) {
         key << adapter.adapter_id << ':' << adapter.scale << '\n';

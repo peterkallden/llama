@@ -510,6 +510,7 @@ test-agent-flydelta-alpha-response-search.cpp
         test-tool-family-index.cpp
         test-tool-navigation.cpp
         test-agent-clangd-protocol.cpp
+        test-agent-project-file-watch.cpp
         test-agent-code-projection.cpp
         test-agent-native-crash.cpp
         test-agent-native-crash-smoke.cpp
@@ -570,7 +571,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-loop|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|agent-resource-retention|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|tool-family-index|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-loop|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|agent-resource-retention|agent-research-contract|plan-store|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|tool-family-index|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()
@@ -712,6 +713,19 @@ test-agent-flydelta-alpha-response-search.cpp
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-protocol.cpp)
             target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-session.cpp)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-provider.cpp)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/code/agent-clangd-projection.cpp)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-project-file-watch.cpp)
+            if (MSVC)
+                target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
+            else()
+                target_compile_options(${TEST_NAME} PRIVATE -UNDEBUG)
+            endif()
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-project-file-watch")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/host)
+            target_sources(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-project-file-watch.cpp)
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "agent;code-analysis;model-free")
         endif()
         if (TEST_NAME STREQUAL "test-agent-native-crash")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/diagnostics)

@@ -125,6 +125,7 @@
         "workspace.read",
         "workspace.search",
         "code.inspect",
+        "code.refresh",
         "code.symbols",
         "code.references",
         "code.calls",
@@ -177,7 +178,9 @@
     "semantic_backend": "clangd",
     "clang_executable": "clang",
     "clangd_executable": "clangd",
-    "compile_commands": "build-agent-vulkan-cozo"
+    "compile_commands": "var/codex-mcp-tool-audit/clangd",
+    "compile_commands_source": "build-agent-vulkan-cozo/compile_commands.json",
+    "compile_commands_destination": "var/codex-mcp-tool-audit/clangd/compile_commands.json"
   },
   "limits": {
     "worker_count": 2,

@@ -118,6 +118,14 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
         transition.cost = source.value("cost", 1.0f);
         transition.optional = source.value("optional", false);
         transition.optional_availability = source.value("optional_availability", false);
+        transition.failure_terminal_state = source.value("failure_terminal_state", std::string{});
+        if (source.contains("handled_http_statuses")) {
+            if (!source["handled_http_statuses"].is_array()) { error = "handled HTTP statuses must be an array"; return false; }
+            for (const auto & status : source["handled_http_statuses"]) {
+                if (!status.is_number_integer()) { error = "handled HTTP status must be an integer"; return false; }
+                transition.handled_http_statuses.push_back(status.get<int>());
+            }
+        }
         if (source.contains("max_pages")) {
             if (!source["max_pages"].is_number_integer()) {
                 error = "workflow transition max_pages must be an integer";
@@ -345,6 +353,16 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                 if (transition.optional_availability && transition.kind != common_plan_workflow_transition_kind::tool) {
                     error = "optional availability requires a tool transition"; return false;
                 }
+                if (!transition.failure_terminal_state.empty() || !transition.handled_http_statuses.empty()) {
+                    if (transition.kind != common_plan_workflow_transition_kind::tool ||
+                            std::find(definition.terminal_states.begin(), definition.terminal_states.end(),
+                                transition.failure_terminal_state) == definition.terminal_states.end() ||
+                            transition.handled_http_statuses.empty() || transition.handled_http_statuses.size() > 16 ||
+                            std::any_of(transition.handled_http_statuses.begin(), transition.handled_http_statuses.end(),
+                                [](int status) { return status < 400 || status > 599; })) {
+                        error = "invalid terminal HTTP failure outcome"; return false;
+                    }
+                }
                 if (transition.model_supplies_arguments &&
                         transition.kind != common_plan_workflow_transition_kind::tool) {
                     error = "model-supplied workflow arguments require a tool transition";
@@ -399,6 +417,8 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                 }
                 states.insert(transition.from_state); states.insert(transition.to_state);
                 predecessors[transition.to_state].push_back(transition.from_state);
+                if (!transition.failure_terminal_state.empty())
+                    predecessors[transition.failure_terminal_state].push_back(transition.from_state);
             }
             for (const auto & link : definition.continuation_links) {
                 for (const auto & binding : link.argument_bindings) {
@@ -716,6 +736,10 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                 if (!transition.tool_name.empty()) item["tool"] = transition.tool_name;
                 if (transition.model_supplies_arguments) item["model_supplies_arguments"] = true;
                 if (transition.optional_availability) item["optional_availability"] = true;
+                if (!transition.failure_terminal_state.empty()) {
+                    item["failure_terminal_state"] = transition.failure_terminal_state;
+                    item["handled_http_statuses"] = transition.handled_http_statuses;
+                }
                 if (!transition.model_instruction.empty()) item["model_instruction"] = transition.model_instruction;
                 if (transition.kind == common_plan_workflow_transition_kind::artifact_compose) {
                     item["artifact_profile_ref"] = transition.artifact_profile_ref;

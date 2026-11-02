@@ -48,6 +48,8 @@ int main() {
         fetch_full_text.argument_bindings = {
             {"/url", "get-work", "/result/best_oa_location/pdf_url", true},
         };
+        fetch_full_text.failure_terminal_state = "complete";
+        fetch_full_text.handled_http_statuses = {403, 404};
         plan.workflow_definition->start_state = "record";
         plan.workflow_definition->terminal_states = {"complete"};
         plan.workflow_definition->transitions = {choose_depth, fetch_full_text};
@@ -201,7 +203,9 @@ int main() {
             plan->workflow_definition->transitions[0].candidate_id_json_pointer == "/code" &&
             plan->workflow_definition->transitions[0].choices[1].id == "full-text" &&
             plan->workflow_definition->transitions[1].argument_bindings.size() == 1 &&
-            plan->workflow_definition->transitions[1].argument_bindings[0].source_transition_id == "get-work");
+            plan->workflow_definition->transitions[1].argument_bindings[0].source_transition_id == "get-work" &&
+            plan->workflow_definition->transitions[1].failure_terminal_state == "complete" &&
+            (plan->workflow_definition->transitions[1].handled_http_statuses == std::vector<int>{403, 404}));
         assert(plan->route_binding &&
             plan->route_binding->route_id.find("blueprint:dataset-quality") == 0 &&
             plan->route_binding->execution_envelope_fingerprint == "env-v2");

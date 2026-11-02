@@ -10,10 +10,14 @@
 #include "agent/tooling/schema/tool-output-codec.h"
 #include "tools/agent/mcp/agent-mcp-http-server.h"
 #include "tools/agent/daemon/agent-daemon-dispatcher.h"
+#ifdef LLAMA_AGENT_TOOLS_USE_CLANG
+#include "tools/agent/code/agent-clangd-provider.h"
+#endif
 #include <thread>
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -1209,6 +1213,78 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "daemon tooling resolve did not expose expected native+MCP tools\n");
         return 1;
     }
+
+#ifdef LLAMA_AGENT_TOOLS_USE_CLANG
+    {
+        // Exercise the daemon tool resolver with the same host-owned watcher
+        // across independent selections, without loading a model or GPU.
+        daemon_options code_options = options;
+        code_options.repository_root = config_root.string();
+        code_options.tool_profile = "code-analysis";
+        code_options.diagnostics.semantic_backend = "clangd";
+        code_options.diagnostics.compile_commands = "auto";
+        code_options.file_watch_service = std::make_shared<agent_project_file_watch_service>();
+        agent_clangd_session_config code_config;
+        code_config.repository_root = code_options.repository_root;
+        code_config.file_watch_service = code_options.file_watch_service;
+        code_options.clangd_provider = std::make_shared<agent_clangd_code_provider>(std::move(code_config));
+        common_agent_runtime_session_host_turn_request code_request;
+        code_request.mode = common_agent_runtime_host_mode::chat;
+        code_request.session_id = "code-session";
+        code_request.namespace_id = "code-namespace";
+        code_request.project_id = "code-project";
+        common_agent_runtime_tooling code_tooling;
+        if (!resolve_agent_daemon_tooling(code_options, nullptr, code_request, *runtime.memory_store,
+                *runtime.plan_store, runtime.resource_store.get(), code_tooling, error, runtime.data_store.get()) ||
+                !code_tooling.tool_view || !code_tooling.tool_view->exposes_tool("code.inspect") ||
+                !code_tooling.tool_view->exposes_tool("code.refresh")) {
+            std::fprintf(stderr, "daemon code tool selection failed: %s\n", error.c_str());
+            return 1;
+        }
+        const auto initial = code_tooling.tool_view->call({"inspect-initial", "code.inspect", "{}"}, error);
+        if (!initial.ok) { std::fprintf(stderr, "daemon code.inspect failed: %s\n", error.c_str()); return 1; }
+        const auto watched = config_root / "daemon-watched.cpp";
+        { std::ofstream output(watched); output << "int daemon_watched;\n"; }
+        // Leave one bounded interval for either inotify delivery or the
+        // configured polling fallback, then inspect once. Repeated tool-view
+        // calls consume the ordinary runtime call budget and do not belong in
+        // a low-level watcher smoke.
+        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+        const auto inspected = code_tooling.tool_view->call({"inspect-change", "code.inspect", "{}"}, error);
+        const auto inspect_envelope = json::parse(inspected.content_json, nullptr, false);
+        const auto body = inspect_envelope.is_object() && inspect_envelope.contains("result")
+            ? inspect_envelope["result"] : inspect_envelope;
+        const auto watcher = body.is_object() ? body.value("file_watcher", json::object()) : json::object();
+        if (!inspected.ok || !watcher.is_object() || watcher.value("latest_change_generation", 0) == 0) {
+            std::fprintf(stderr, "daemon watcher did not observe a source change: %s\n", inspected.content_json.c_str());
+            return 1;
+        }
+        code_tooling.tool_view = nullptr;
+        code_tooling.owned_resources.clear();
+        common_agent_runtime_tooling next_selection;
+        if (!resolve_agent_daemon_tooling(code_options, nullptr, code_request, *runtime.memory_store,
+                *runtime.plan_store, runtime.resource_store.get(), next_selection, error, runtime.data_store.get()) ||
+                !next_selection.tool_view) {
+            std::fprintf(stderr, "daemon code tool reselection failed: %s\n", error.c_str());
+            return 1;
+        }
+        const auto retained = next_selection.tool_view->call({"inspect-retained", "code.inspect", "{}"}, error);
+        const auto retained_envelope = json::parse(retained.content_json, nullptr, false);
+        const auto retained_body = retained_envelope.is_object() && retained_envelope.contains("result")
+            ? retained_envelope["result"] : retained_envelope;
+        if (!retained.ok || !retained_body.is_object() || !retained_body.contains("file_watcher") ||
+                !retained_body["file_watcher"].is_object() ||
+                retained_body["file_watcher"].value("latest_change_generation", 0) == 0) {
+            std::fprintf(stderr, "daemon code provider did not retain watcher state across selections\n");
+            return 1;
+        }
+        const auto refreshed = next_selection.tool_view->call({"refresh-code", "code.refresh", "{}"}, error);
+        if (!refreshed.ok) { std::fprintf(stderr, "daemon code.refresh failed: %s\n", error.c_str()); return 1; }
+        next_selection.tool_view = nullptr;
+        next_selection.owned_resources.clear();
+        std::filesystem::remove(watched);
+    }
+#endif
 
     daemon_options custom_options = options;
     custom_options.tool_profile = "custom-research";

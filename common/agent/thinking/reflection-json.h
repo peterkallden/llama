@@ -5,7 +5,8 @@ bool common_reflection_parse_json(
         common_reflection_result & result,
         std::string & error,
         size_t max_operations = 8,
-        const std::string & inferred_replace_step_id = {});
+        const std::string & inferred_replace_step_id = {},
+        const std::vector<std::string> & authorized_step_ids = {});
 bool common_reflection_parse_compact_dsl(
         const std::string & dsl_text,
         common_reflection_result & result,

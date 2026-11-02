@@ -24,6 +24,8 @@ const std::pair<const char *, size_t common_agent_context_budget_config::*> prom
     {"tool_observation_chars", &common_agent_context_budget_config::tool_observation_chars},
     {"input_resources_chars", &common_agent_context_budget_config::input_resources_chars},
     {"deliberate_input_resources_chars", &common_agent_context_budget_config::deliberate_input_resources_chars},
+    {"resource_chunk_max_bytes", &common_agent_context_budget_config::resource_chunk_max_bytes},
+    {"resource_chunk_overlap_bytes", &common_agent_context_budget_config::resource_chunk_overlap_bytes},
     {"memory_chars", &common_agent_context_budget_config::memory_chars},
     {"memory_per_item_chars", &common_agent_context_budget_config::memory_per_item_chars},
     {"overlay_chars", &common_agent_context_budget_config::overlay_chars},
@@ -361,6 +363,12 @@ bool read_openapi_provider(
                         !read_string_array(it.value()["required_parameters"],
                             operation.required_parameters,
                             "OpenAPI operation policy required_parameters", error)) {
+                    return false;
+                }
+                if (it.value().contains("required_any_parameters") &&
+                        !read_string_array(it.value()["required_any_parameters"],
+                            operation.required_any_parameters,
+                            "OpenAPI operation policy required_any_parameters", error)) {
                     return false;
                 }
                 if (it.value().contains("bound_arguments")) {
@@ -1319,6 +1327,8 @@ bool parse_agent_host_config_json(
         read_optional(diagnostics, "clang_executable", config.diagnostics.clang_executable);
         read_optional(diagnostics, "clangd_executable", config.diagnostics.clangd_executable);
         read_optional(diagnostics, "compile_commands", config.diagnostics.compile_commands);
+        read_optional(diagnostics, "compile_commands_source", config.diagnostics.compile_commands_source);
+        read_optional(diagnostics, "compile_commands_destination", config.diagnostics.compile_commands_destination);
         read_optional(diagnostics, "semantic_request_timeout_ms", config.diagnostics.semantic_request_timeout_ms);
         read_optional(diagnostics, "native_crash_backend", config.diagnostics.native_crash_backend);
         read_optional(diagnostics, "gdb_executable", config.diagnostics.gdb_executable);
@@ -1637,6 +1647,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"access", operation.second.access},
                 {"default_projection", operation.second.default_projection},
                 {"required_parameters", operation.second.required_parameters},
+                {"required_any_parameters", operation.second.required_any_parameters},
             };
             const auto bound_arguments = json::parse(
                 operation.second.bound_arguments_json, nullptr, false);
@@ -1968,6 +1979,8 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"clang_executable", config.diagnostics.clang_executable},
             {"clangd_executable", config.diagnostics.clangd_executable},
             {"compile_commands", config.diagnostics.compile_commands},
+            {"compile_commands_source", config.diagnostics.compile_commands_source},
+            {"compile_commands_destination", config.diagnostics.compile_commands_destination},
             {"semantic_request_timeout_ms", config.diagnostics.semantic_request_timeout_ms},
             {"native_crash_backend", config.diagnostics.native_crash_backend},
             {"gdb_executable", config.diagnostics.gdb_executable},
@@ -2236,8 +2249,13 @@ bool validate_agent_host_config(
     const auto & budgets = config.context_budgets;
     if (budgets.plan_chars == 0 || budgets.step_chars == 0 ||
             budgets.tool_observation_chars == 0 || budgets.input_resources_chars == 0 ||
-            budgets.deliberate_input_resources_chars == 0 || budgets.resource_chunk_max_bytes == 0 ||
-            budgets.resource_chunk_overlap_bytes >= budgets.resource_chunk_max_bytes || budgets.memory_chars == 0 ||
+            budgets.deliberate_input_resources_chars == 0 ||
+            (budgets.configured_prompt_values.count("resource_chunk_max_bytes") && budgets.resource_chunk_max_bytes == 0) ||
+            (budgets.resource_chunk_max_bytes != 0 && budgets.resource_chunk_max_bytes < 4) ||
+            (budgets.resource_chunk_max_bytes != 0 &&
+                (budgets.configured_prompt_values.count("resource_chunk_overlap_bytes") ||
+                 budgets.resource_chunk_overlap_bytes != common_agent_context_budget_config{}.resource_chunk_overlap_bytes) &&
+                budgets.resource_chunk_overlap_bytes >= budgets.resource_chunk_max_bytes) || budgets.memory_chars == 0 ||
             budgets.memory_per_item_chars == 0 || budgets.overlay_chars == 0 ||
             budgets.overlay_per_item_chars == 0 || budgets.deliberate_memory_chars == 0 ||
             budgets.deliberate_memory_per_item_chars == 0 || budgets.deliberate_overlay_chars == 0 ||
@@ -2395,6 +2413,12 @@ bool validate_agent_host_config(
     if (config.diagnostics.compile_commands.empty()) {
         error = "diagnostics.compile_commands must not be empty";
         return false;
+    }
+    for (const auto * path : {&config.diagnostics.compile_commands_source, &config.diagnostics.compile_commands_destination}) {
+        if (path->size() > 4096 || path->find('\0') != std::string::npos) {
+            error = "diagnostics compilation database paths must be at most 4096 bytes and contain no NUL";
+            return false;
+        }
     }
     if (config.diagnostics.semantic_request_timeout_ms < 100 || config.diagnostics.semantic_request_timeout_ms > 180000) {
         error = "diagnostics.semantic_request_timeout_ms must be between 100 and 180000";

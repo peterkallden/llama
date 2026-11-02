@@ -55,6 +55,11 @@ bool add_model_views(json & value, bool openalex_result) {
                 !value["best_oa_location"]["pdf_url"].get<std::string>().empty()) {
             url = value["best_oa_location"]["pdf_url"].get<std::string>();
             source = "best_oa_location.pdf_url";
+        } else if (value.contains("content_urls") && value["content_urls"].is_object() &&
+                value["content_urls"].contains("pdf") && value["content_urls"]["pdf"].is_string() &&
+                !value["content_urls"]["pdf"].get<std::string>().empty()) {
+            url = value["content_urls"]["pdf"].get<std::string>();
+            source = "content_urls.pdf";
         } else if (value.contains("content_url") && value["content_url"].is_string()) {
             url = value["content_url"].get<std::string>();
             source = "content_url";

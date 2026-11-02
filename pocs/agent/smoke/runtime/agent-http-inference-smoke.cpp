@@ -72,6 +72,10 @@ int main() {
         const json body = json::parse(request.body);
         { std::lock_guard<std::mutex> lock(seen_mutex); seen = body; received_auth = request.get_header_value("Authorization"); }
         const std::string prompt = body["messages"].back().value("content", std::string{});
+        if (prompt == "dsl-fixture") {
+            response.set_content(R"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"open! memory.search\nquery: project status"}}]})", "application/json");
+            return;
+        }
         if (prompt == "missing-choice") { response.set_content("{}", "application/json"); return; }
         if (prompt == "malformed-json") { response.set_content("{broken", "application/json"); return; }
         if (prompt == "slow-response") std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -80,12 +84,21 @@ int main() {
             response.set_content(R"({"error":{"message":"maximum context length exceeded"}})", "application/json");
             return;
         }
+        if (prompt == "schema-context-error") {
+            response.status = 400;
+            response.set_content(R"({"error":{"message":"Invalid schema: In context=('properties','args'), additionalProperties must be false"}})", "application/json");
+            return;
+        }
         if (body.contains("response_format")) {
             if (prompt == "invalid-schema") {
                 response.set_content(R"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"wrong\":\"fixture\"}"}}]})", "application/json");
                 return;
             }
             response.set_content(R"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"family\":\"memory\",\"tool_name\":\"memory.search\"}"}}],"usage":{"completion_tokens":3}})", "application/json");
+            return;
+        }
+        if (prompt == "mapped-tools") {
+            response.set_content(R"({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"mapped-1","type":"function","function":{"name":"memory_2esearch","arguments":"{\"query\":\"test\"}"}}]}}]})", "application/json");
             return;
         }
         if (std::any_of(body["messages"].begin(), body["messages"].end(), [](const json & message) {
@@ -148,10 +161,51 @@ int main() {
         std::lock_guard<std::mutex> lock(seen_mutex);
         assert(seen["model"] == "fixture-model");
         assert(seen["max_tokens"] == 72);
+        assert(!seen.contains("max_completion_tokens") && !seen.contains("reasoning_effort"));
         assert(seen["stream"] == false);
         assert(seen["tool_choice"] == "required");
         assert(seen["messages"].size() == 1 && seen["tools"].size() == 1);
         assert(received_auth == "Bearer smoke-secret");
+    }
+
+    {
+        auto mapped_selection = selection;
+        mapped_selection.map_tool_names = true;
+        mapped_selection.token_limit_parameter = "max_completion_tokens";
+        mapped_selection.reasoning_effort = "none";
+        auto mapped_inference = make_agent_http_inference(mapped_selection);
+        common_agent_generation_request mapped;
+        common_chat_msg prior;
+        prior.role = "assistant";
+        prior.tool_calls.push_back({"memory.search", R"({"query":"old"})", "old-call"});
+        common_chat_msg prior_result;
+        prior_result.role = "tool";
+        prior_result.tool_name = "memory.search";
+        prior_result.tool_call_id = "old-call";
+        prior_result.content = "result";
+        mapped.messages = {prior, prior_result, {"user", "mapped-tools"}};
+        mapped.tools.emplace_back("memory.search", "Search", R"({"type":"object"})");
+        mapped.tools.emplace_back("memory_search", "Other search", R"({"type":"object"})");
+        mapped.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
+        mapped.options.n_predict = 72;
+        assert(mapped_inference->generate(mapped, result));
+        assert(result.status == common_agent_generation_status::completed);
+        assert(result.assistant_message && result.assistant_message->tool_calls.front().name == "memory.search");
+        {
+            std::lock_guard<std::mutex> lock(seen_mutex);
+            assert(seen["tools"][0]["function"]["name"] == "memory_2esearch");
+            assert(seen["tools"][1]["function"]["name"] == "memory_5fsearch");
+            assert(seen["messages"][0]["tool_calls"][0]["function"]["name"] == "memory_2esearch");
+            assert(seen["max_completion_tokens"] == 72 && !seen.contains("max_tokens"));
+            assert(seen["reasoning_effort"] == "none");
+        }
+        mapped.messages = {{"user", "unauthorized-tool"}};
+        assert(mapped_inference->generate(mapped, result));
+        assert(result.status == common_agent_generation_status::errored);
+        assert(result.error_message.find("undeclared tool name") != std::string::npos);
+        mapped.tools[0].name = std::string(65, 'a');
+        assert(mapped_inference->generate(mapped, result));
+        assert(result.status == common_agent_generation_status::errored);
     }
 
     common_agent_model_catalog runtime_catalog;
@@ -232,6 +286,37 @@ int main() {
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("does not support GBNF") != std::string::npos);
     request.grammar.clear();
+
+    // DSL requests for locally validated purposes use text when HTTP cannot
+    // enforce their grammar. Other grammar requests remain unsupported.
+    auto dsl_selection = selection;
+    dsl_selection.tool_output_format_configured = true;
+    dsl_selection.tool_output_format = common_agent_tool_output_format::compact_dsl;
+    auto dsl_inference = make_agent_http_inference(dsl_selection);
+    common_agent_generation_request dsl_request;
+    dsl_request.messages = {{"user", "dsl-fixture"}};
+    dsl_request.grammar = "root ::= \"x\"";
+    assert(dsl_inference->generate(dsl_request, result));
+    assert(result.status == common_agent_generation_status::errored);
+    dsl_request.purpose = common_agent_generation_purpose::planner;
+    assert(dsl_inference->generate(dsl_request, result));
+    assert(result.status == common_agent_generation_status::completed);
+    assert(result.content == "open! memory.search\nquery: project status");
+    // The inherited DSL default works without a profile override.
+    assert(inference->generate(dsl_request, result));
+    assert(result.status == common_agent_generation_status::completed);
+    auto native_selection = selection;
+    native_selection.tool_output_format_configured = true;
+    native_selection.tool_output_format = common_agent_tool_output_format::native;
+    auto native_inference = make_agent_http_inference(native_selection);
+    assert(native_inference->generate(dsl_request, result));
+    assert(result.status == common_agent_generation_status::errored);
+    dsl_request.json_schema = R"({"type":"object"})";
+    assert(dsl_inference->generate(dsl_request, result));
+    assert(result.status == common_agent_generation_status::errored);
+    { std::lock_guard<std::mutex> lock(seen_mutex);
+      assert(!seen.contains("response_format") && !seen.contains("tools")); }
+
     common_agent_generation_resource image_resource;
     image_resource.resource.mime_type = "image/png";
     request.input_resources.push_back(std::move(image_resource));
@@ -251,8 +336,15 @@ int main() {
     assert(result.status == common_agent_generation_status::completed);
     assert(result.stop_reason == common_agent_generation_stop_reason::json_schema);
     assert(result.content == R"({"family":"memory","tool_name":"memory.search"})");
+    { std::lock_guard<std::mutex> lock(seen_mutex); assert(seen["response_format"]["json_schema"]["strict"] == true); }
     const auto planning = json::parse(result.content);
     assert(planning["family"] == "memory" && planning["tool_name"] == "memory.search");
+    auto nonstrict_selection = selection;
+    nonstrict_selection.strict_json_schema = false;
+    auto nonstrict_inference = make_agent_http_inference(nonstrict_selection);
+    assert(nonstrict_inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::completed);
+    { std::lock_guard<std::mutex> lock(seen_mutex); assert(seen["response_format"]["json_schema"]["strict"] == false); }
 
     auto no_tool_support_selection = selection;
     no_tool_support_selection.supports_native_tool_calls = false;
@@ -278,6 +370,9 @@ int main() {
     assert(schema_inference->generate(request, result));
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("rejected by requested JSON schema") != std::string::npos);
+    assert(nonstrict_inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::errored);
+    assert(result.error_message.find("rejected by requested JSON schema") != std::string::npos);
     request.json_schema.clear();
     request.messages.front().content = "malformed-json";
     assert(inference->generate(request, result));
@@ -291,6 +386,11 @@ int main() {
     assert(inference->generate(request, result));
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("context limit") != std::string::npos);
+    request.messages.front().content = "schema-context-error";
+    assert(inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::errored);
+    assert(result.error_message.find("context limit") == std::string::npos);
+    assert(result.error_message.find("server rejected") != std::string::npos);
     request.options.should_stop = [] { return true; };
     assert(inference->generate(request, result));
     assert(result.status == common_agent_generation_status::cancelled);
@@ -326,6 +426,10 @@ int main() {
     base.model_id = "llama-server-model";
     base.token_env = "AGENT_TEST_TOKEN";
     base.supports_native_tool_calls = true;
+    base.map_tool_names = true;
+    base.token_limit_parameter = "max_completion_tokens";
+    base.reasoning_effort = "none";
+    base.strict_json_schema = false;
     catalog.bases.emplace("remote", base);
     common_agent_model_profile_spec profile;
     profile.base_model_id = "remote";
@@ -343,6 +447,15 @@ int main() {
     assert(common_agent_model_catalog_resolve_profile(parsed, "remote-default", resolved, error));
     assert(resolved.path.empty() && resolved.endpoint == "http://127.0.0.1:8080");
     assert(resolved.context_size_tokens == 4096 && resolved.model_id == "llama-server-model");
+    assert(resolved.map_tool_names);
+    assert(resolved.token_limit_parameter == "max_completion_tokens" && resolved.reasoning_effort == "none");
+    assert(!resolved.strict_json_schema);
+    auto different_selection = resolved;
+    different_selection.reasoning_effort = "low";
+    assert(common_agent_model_selection_cache_key(resolved) != common_agent_model_selection_cache_key(different_selection));
+    different_selection = resolved;
+    different_selection.strict_json_schema = true;
+    assert(common_agent_model_selection_cache_key(resolved) != common_agent_model_selection_cache_key(different_selection));
     assert(common_agent_model_selection_cache_key(resolved).find("secret-value") == std::string::npos);
 #ifdef _WIN32
     _putenv_s("LLAMA_AGENT_HTTP_MISSING_TOKEN_FOR_TEST", "");
@@ -355,6 +468,18 @@ int main() {
     assert(!http_loader.load(resolved, loaded_model, error));
     assert(error.find("environment variable is unset") != std::string::npos);
     auto invalid_catalog = json::parse(serialized);
+    invalid_catalog["bases"]["remote"]["generation"]["strict_json_schema"] = "false";
+    assert(!common_agent_model_catalog_from_json(invalid_catalog.dump(), parsed, error));
+    invalid_catalog = json::parse(serialized);
+    invalid_catalog["bases"]["remote"]["generation"]["token_limit_parameter"] = "arbitrary";
+    assert(!common_agent_model_catalog_from_json(invalid_catalog.dump(), parsed, error));
+    invalid_catalog = json::parse(serialized);
+    invalid_catalog["bases"]["remote"]["generation"]["reasoning_effort"] = "invalid";
+    assert(!common_agent_model_catalog_from_json(invalid_catalog.dump(), parsed, error));
+    invalid_catalog = json::parse(serialized);
+    invalid_catalog["bases"]["remote"]["generation"]["unknown"] = true;
+    assert(!common_agent_model_catalog_from_json(invalid_catalog.dump(), parsed, error));
+    invalid_catalog = json::parse(serialized);
     invalid_catalog["bases"]["remote"]["endpoint"] = "";
     assert(!common_agent_model_catalog_from_json(invalid_catalog.dump(), parsed, error));
     invalid_catalog = json::parse(serialized);

@@ -236,6 +236,13 @@ int main() {
     assert(projected_evidence.front().claim_id == "task:projection");
     assert(projected_evidence.front().supporting_excerpt_host_verified);
     assert(projected_evidence.front().source_location == chunk_workspace.evidence.front().source_location);
+    auto earlier_chunk = chunk_observations.front();
+    earlier_chunk.id = "chunk-1-with-finding";
+    earlier_chunk.resource_refs.front().lineage.chunk_index = 1;
+    earlier_chunk.resource_refs.front().lineage.byte_offset = 2048;
+    assert(common_agent_research_chunk_evidence_from_observations(
+        {earlier_chunk, chunk_observations.front()}, "task:projection", projected_sources, projected_evidence, factory_error));
+    assert(projected_evidence.size() == 2 && projected_evidence[0].evidence_id != projected_evidence[1].evidence_id);
     auto no_finding_observation = chunk_observations.front();
     no_finding_observation.id = "chunk-1";
     no_finding_observation.summary = "no relevant findings.";

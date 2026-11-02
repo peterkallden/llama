@@ -11,6 +11,10 @@
 
 namespace {
 
+// Workflow-generated IDs can include a blueprint identity and transition.
+// The plan policy subsequently resolves IDs against the host-owned plan.
+constexpr size_t max_reflection_step_id_length = 4096;
+
 bool parse_string_array(const common_json_contract_value & value, size_t max_items, size_t max_length, std::vector<std::string> & out, std::string & error) {
     if (!value.is_array() || value.size() > max_items) { error = "reflection string list is invalid"; return false; }
     out.clear();
@@ -23,16 +27,47 @@ bool parse_string_array(const common_json_contract_value & value, size_t max_ite
     return true;
 }
 
-bool parse_optional_step_ids(const common_json_contract_value & object, const char * key, size_t max_items, std::vector<std::string> & out, std::string & error) {
-    if (!object.contains(key)) { out.clear(); return true; }
-    return parse_string_array(object[key], max_items, 64, out, error);
+bool is_authorized_step_id(const std::string & id, const std::vector<std::string> & authorized_step_ids) {
+    return std::find(authorized_step_ids.begin(), authorized_step_ids.end(), id) != authorized_step_ids.end();
 }
 
-bool parse_dependencies(const common_json_contract_value & source, std::vector<std::string> & dependencies, std::string & error) {
+bool parse_step_id_array(const common_json_contract_value & value, size_t max_items,
+        const std::vector<std::string> & authorized_step_ids,
+        std::vector<std::string> & out, std::string & error) {
+    if (!value.is_array() || value.size() > max_items) { error = "reflection step ID list is invalid"; return false; }
+    out.clear();
+    for (const auto & item : value) {
+        if (!item.is_string()) { error = "reflection step ID list must contain only strings"; return false; }
+        const auto parsed = item.get<std::string>();
+        if (parsed.empty() || parsed.size() > max_reflection_step_id_length ||
+                (parsed.size() > 64 && !is_authorized_step_id(parsed, authorized_step_ids))) {
+            error = "reflection step ID is invalid"; return false;
+        }
+        out.push_back(parsed);
+    }
+    return true;
+}
+
+bool parse_optional_step_ids(const common_json_contract_value & object, const char * key, size_t max_items,
+        const std::vector<std::string> & authorized_step_ids,
+        std::vector<std::string> & out, std::string & error) {
+    if (!object.contains(key)) { out.clear(); return true; }
+    return parse_step_id_array(object[key], max_items, authorized_step_ids, out, error);
+}
+
+bool parse_dependencies(const common_json_contract_value & source, const std::vector<std::string> & authorized_step_ids,
+        std::vector<std::string> & dependencies, std::string & error) {
     const auto it = source.contains("after") ? source.find("after") : source.find("depends_on");
     if (it == source.end()) { dependencies.clear(); return true; }
-    if (it->is_string()) { dependencies = {it->get<std::string>()}; return true; }
-    return parse_string_array(*it, 8, 64, dependencies, error);
+    if (it->is_string()) {
+        const auto dependency = it->get<std::string>();
+        if (dependency.empty() || dependency.size() > max_reflection_step_id_length ||
+                (dependency.size() > 64 && !is_authorized_step_id(dependency, authorized_step_ids))) {
+            error = "reflection dependency is invalid"; return false;
+        }
+        dependencies = {dependency}; return true;
+    }
+    return parse_step_id_array(*it, 8, authorized_step_ids, dependencies, error);
 }
 
 std::string next_generated_repair_id(size_t index, const std::set<std::string> & seen_ids) {
@@ -99,7 +134,8 @@ bool parse_compact_replace_step(
     const common_json_contract_value & item,
     common_plan_operation & op,
     std::string & error,
-    const std::string & inferred_step_id) {
+    const std::string & inferred_step_id,
+    const std::vector<std::string> & authorized_step_ids) {
     if (!item.is_object()) { error = "invalid reflection replace_steps item"; return false; }
     std::string step_id;
     if (item.contains("step_id") && item["step_id"].is_string() && !item["step_id"].get<std::string>().empty()) step_id = item["step_id"].get<std::string>();
@@ -118,7 +154,7 @@ bool parse_compact_replace_step(
     parsed.title = item.value("title", step_id);
     parsed.objective = item.value("objective", std::string("Repair the failed step after reflection."));
     parsed.intended_contribution = item.value("contribution", parsed.objective);
-    if (!parse_dependencies(item, parsed.depends_on, error)) return false;
+    if (!parse_dependencies(item, authorized_step_ids, parsed.depends_on, error)) return false;
     if (item.contains("required_evidence") && !parse_string_array(item["required_evidence"], 8, 128, parsed.required_evidence, error)) return false;
     if (item.contains("source_memory_ids") && !parse_string_array(item["source_memory_ids"], 8, 128, parsed.source_memory_ids, error)) return false;
     if (!parse_compact_tool(item, parsed, error)) return false;
@@ -192,6 +228,7 @@ bool parse_compact_add_step(
     std::set<std::string> & seen_ids,
     std::optional<common_plan_step> & previous_step,
     common_plan_operation & op,
+    const std::vector<std::string> & authorized_step_ids,
     std::string & error) {
     if (!item.is_object()) { error = "invalid reflection add_steps item"; return false; }
     common_plan_step parsed;
@@ -209,7 +246,7 @@ bool parse_compact_add_step(
     parsed.title = item.value("title", parsed.id);
     parsed.objective = item.value("objective", std::string("Repair the plan after reflection."));
     parsed.intended_contribution = item.value("contribution", parsed.objective);
-    if (!parse_dependencies(item, parsed.depends_on, error)) return false;
+    if (!parse_dependencies(item, authorized_step_ids, parsed.depends_on, error)) return false;
     if (parsed.depends_on.empty() && previous_step) parsed.depends_on = {previous_step->id};
     if (item.contains("required_evidence") && !parse_string_array(item["required_evidence"], 8, 128, parsed.required_evidence, error)) return false;
     if (item.contains("source_memory_ids") && !parse_string_array(item["source_memory_ids"], 8, 128, parsed.source_memory_ids, error)) return false;
@@ -238,7 +275,8 @@ bool common_reflection_parse_json(
         common_reflection_result & result,
         std::string & error,
         size_t max_operations,
-        const std::string & inferred_replace_step_id) {
+        const std::string & inferred_replace_step_id,
+        const std::vector<std::string> & authorized_step_ids) {
     common_json_contract_value j;
     if (!common_json_contract_parse_object(text, j, error)) return false;
     try {
@@ -278,7 +316,7 @@ bool common_reflection_parse_json(
             result.learning_hint = std::move(parsed);
         }
         std::vector<std::string> complete_ids;
-        if (!parse_optional_step_ids(j, "complete", max_operations, complete_ids, error)) return false;
+        if (!parse_optional_step_ids(j, "complete", max_operations, authorized_step_ids, complete_ids, error)) return false;
         for (const auto & step_id : complete_ids) {
             common_plan_operation op;
             op.kind = common_plan_operation_kind::complete_step;
@@ -286,7 +324,7 @@ bool common_reflection_parse_json(
             result.proposed_plan_operations.push_back(std::move(op));
         }
         std::vector<std::string> activate_ids;
-        if (!parse_optional_step_ids(j, "activate", max_operations, activate_ids, error)) return false;
+        if (!parse_optional_step_ids(j, "activate", max_operations, authorized_step_ids, activate_ids, error)) return false;
         for (const auto & step_id : activate_ids) {
             common_plan_operation op;
             op.kind = common_plan_operation_kind::activate_step;
@@ -294,7 +332,7 @@ bool common_reflection_parse_json(
             result.proposed_plan_operations.push_back(std::move(op));
         }
         std::vector<std::string> retry_ids;
-        if (!parse_optional_step_ids(j, "retry", max_operations, retry_ids, error)) return false;
+        if (!parse_optional_step_ids(j, "retry", max_operations, authorized_step_ids, retry_ids, error)) return false;
         for (const auto & step_id : retry_ids) {
             common_plan_operation op;
             op.kind = common_plan_operation_kind::activate_step;
@@ -302,7 +340,7 @@ bool common_reflection_parse_json(
             result.proposed_plan_operations.push_back(std::move(op));
         }
         std::vector<std::string> reset_ids;
-        if (!parse_optional_step_ids(j, "reset", max_operations, reset_ids, error)) return false;
+        if (!parse_optional_step_ids(j, "reset", max_operations, authorized_step_ids, reset_ids, error)) return false;
         for (const auto & step_id : reset_ids) {
             common_plan_operation op;
             op.kind = common_plan_operation_kind::reset_step;
@@ -310,11 +348,14 @@ bool common_reflection_parse_json(
             result.proposed_plan_operations.push_back(std::move(op));
         }
         if (j.contains("next_action")) {
-            if (!j["next_action"].is_string() || j["next_action"].get<std::string>().empty()) { error = "next_action must be a non-empty string"; return false; }
-            common_plan_operation op;
-            op.kind = common_plan_operation_kind::set_next_action;
-            op.value = j["next_action"].get<std::string>();
-            result.proposed_plan_operations.push_back(std::move(op));
+            if (!j["next_action"].is_string()) { error = "next_action must be a string"; return false; }
+            const auto action = j["next_action"].get<std::string>();
+            if (!trim_reflection_text(action).empty()) {
+                common_plan_operation op;
+                op.kind = common_plan_operation_kind::set_next_action;
+                op.value = action;
+                result.proposed_plan_operations.push_back(std::move(op));
+            }
         }
         if (j.contains("add_steps")) {
             if (!j["add_steps"].is_array() || j["add_steps"].size() > max_operations) { error = "too many reflection add_steps"; return false; }
@@ -323,7 +364,7 @@ bool common_reflection_parse_json(
             std::optional<common_plan_step> previous_step;
             for (const auto & item : j["add_steps"]) {
                 common_plan_operation op;
-                if (!parse_compact_add_step(item, generated_index, seen_ids, previous_step, op, error)) return false;
+                if (!parse_compact_add_step(item, generated_index, seen_ids, previous_step, op, authorized_step_ids, error)) return false;
                 result.proposed_plan_operations.push_back(std::move(op));
             }
         }
@@ -331,7 +372,7 @@ bool common_reflection_parse_json(
             if (!j["replace_steps"].is_array() || j["replace_steps"].size() > max_operations) { error = "too many reflection replace_steps"; return false; }
             for (const auto & item : j["replace_steps"]) {
                 common_plan_operation op;
-                if (!parse_compact_replace_step(item, op, error, inferred_replace_step_id)) return false;
+                if (!parse_compact_replace_step(item, op, error, inferred_replace_step_id, authorized_step_ids)) return false;
                 result.proposed_plan_operations.push_back(std::move(op));
             }
         }

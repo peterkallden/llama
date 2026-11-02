@@ -233,7 +233,7 @@ common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & op
     policy.agent_trace = options.agent_trace;
     policy.enable_reflection = true;
     policy.max_iterations = 2;
-    policy.max_reflection_rounds = 1;
+    policy.max_reflection_rounds = static_cast<size_t>(std::max(0, options.max_reflection_rounds));
     // A zero value in host/bootstrap configuration means "use the safe
     // default". Keep daemon turns consistent with the CLI/runtime policy;
     // callers can still select a smaller positive budget explicitly.
@@ -402,6 +402,8 @@ agent_host_tool_selection_request make_daemon_tool_request(
         ? std::string()
         : std::filesystem::weakly_canonical(options.repository_root).string();
     tool_request.diagnostics = options.diagnostics;
+    tool_request.clangd_provider = options.clangd_provider;
+    tool_request.file_watch_service = options.file_watch_service;
     tool_request.resource_store_config = {
         options.resource_blob_backend,
         options.resource_blob_root,

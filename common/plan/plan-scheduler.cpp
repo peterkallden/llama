@@ -1,4 +1,5 @@
 #include "plan/plan-scheduler.h"
+#include "plan/plan-workflow-state.h"
 
 #include <algorithm>
 
@@ -25,7 +26,8 @@ bool common_plan_step_dependencies_ready(
     if (blocked_dependency) blocked_dependency->clear();
     for (const auto & dependency : step.depends_on) {
         const auto * prerequisite = find_step(plan, dependency);
-        if (!prerequisite || prerequisite->status != common_plan_step_status::completed) {
+        if (!prerequisite || (prerequisite->status != common_plan_step_status::completed &&
+                !common_plan_workflow_failure_handled(plan, *prerequisite))) {
             if (blocked_dependency) *blocked_dependency = dependency;
             return false;
         }
@@ -44,7 +46,8 @@ common_plan_schedule_result common_plan_schedule(const common_plan_state & plan)
 
     for (const auto & step : plan.steps) {
         if (step.status == common_plan_step_status::active) has_active = true;
-        if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped) has_incomplete_mandatory = true;
+        if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped &&
+                !common_plan_workflow_failure_handled(plan, step)) has_incomplete_mandatory = true;
         if (step.status != common_plan_step_status::pending) continue;
 
         bool ready = common_plan_step_dependencies_ready(plan, step);

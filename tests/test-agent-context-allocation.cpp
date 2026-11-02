@@ -1,4 +1,5 @@
 #include "agent/agent-context-allocation.h"
+#include "agent/agent-resource-chunk-budget.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -7,6 +8,13 @@
 static void check(bool condition, const char * message) {
     if (!condition) { std::cerr << message << '\n'; std::exit(1); }
 }
+
+class chunk_budget_inference final : public common_agent_inference {
+public:
+    size_t capacity = 0;
+    bool generate(const common_agent_generation_request &, common_agent_generation_result &) override { return false; }
+    size_t context_capacity_tokens() const override { return capacity; }
+};
 
 int main() {
     const auto balanced = common_agent_allocate_context(100, 20, 10, {{10, 100}, {20, 100}});
@@ -24,4 +32,23 @@ int main() {
         "mandatory content or reserve was silently cut");
     const auto overflow = common_agent_allocate_context(100, 1, std::numeric_limits<size_t>::max(), {{1, 1}});
     check(!overflow.mandatory_fits, "reserve arithmetic overflowed");
+
+    chunk_budget_inference inference;
+    common_agent_context_budget_config budgets;
+    common_runtime_resource_chunk_policy chunk;
+    std::string error;
+    check(common_agent_resolve_resource_chunk_policy(inference, budgets, "Read this document", chunk, error) &&
+        chunk.max_bytes == 4096, "unknown context did not use a bounded fallback");
+    inference.capacity = 2048;
+    check(common_agent_resolve_resource_chunk_policy(inference, budgets, "Read this document", chunk, error) &&
+        chunk.max_bytes < 2048 && chunk.overlap_bytes < chunk.max_bytes, "small context was not respected");
+    inference.capacity = 32768;
+    check(common_agent_resolve_resource_chunk_policy(inference, budgets, "Read this document", chunk, error) &&
+        chunk.max_bytes > 4096 && chunk.max_bytes <= 8192, "large context was not allocated dynamically");
+    budgets.resource_chunk_max_bytes = 1024;
+    check(common_agent_resolve_resource_chunk_policy(inference, budgets, "Read this document", chunk, error) &&
+        chunk.max_bytes == 1024, "explicit maximum was not respected");
+    inference.capacity = 128;
+    check(!common_agent_resolve_resource_chunk_policy(inference, budgets, "Read this document", chunk, error),
+        "insufficient mandatory context was accepted");
 }

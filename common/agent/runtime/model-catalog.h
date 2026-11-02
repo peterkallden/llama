@@ -26,6 +26,10 @@ struct common_agent_model_base_spec {
     uint32_t request_timeout_ms = 120000;
     bool supports_json_schema = false;
     bool supports_native_tool_calls = false;
+    bool map_tool_names = false;
+    std::string token_limit_parameter = "max_tokens";
+    std::string reasoning_effort;
+    bool strict_json_schema = true;
 };
 
 struct common_agent_model_profile_spec {
@@ -75,6 +79,10 @@ struct common_agent_model_selection {
     uint32_t request_timeout_ms = 120000;
     bool supports_json_schema = false;
     bool supports_native_tool_calls = false;
+    bool map_tool_names = false;
+    std::string token_limit_parameter = "max_tokens";
+    std::string reasoning_effort;
+    bool strict_json_schema = true;
 };
 
 bool common_agent_validate_model_catalog(

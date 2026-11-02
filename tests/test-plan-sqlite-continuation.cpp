@@ -91,6 +91,8 @@ int main() {
     search.to_state = "searched";
     search.tool_name = "data.query";
     search.model_instruction = "Use the verified dataset code.";
+    search.failure_terminal_state = "unavailable";
+    search.handled_http_statuses = {403, 404};
     target.transitions.push_back(choice);
     target.transitions.push_back(search);
     common_plan_operation transition;
@@ -136,6 +138,8 @@ int main() {
     assert(restored->workflow_definition->transitions.front().candidate_id_json_pointer == "/code");
     assert(restored->workflow_definition->transitions.back().model_instruction ==
         "Use the verified dataset code.");
+    assert(restored->workflow_definition->transitions.back().failure_terminal_state == "unavailable");
+    assert((restored->workflow_definition->transitions.back().handled_http_statuses == std::vector<int>{403, 404}));
     assert(restored->steps.size() == 2 && restored->steps.front().artifact_binding &&
         restored->steps.front().artifact_binding->transition_id == "compose-findings" &&
         restored->steps.front().artifact_binding->profile_ref == "research-report" &&

@@ -1,4 +1,5 @@
 #include "agent-openapi-catalog.h"
+#include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <algorithm>
 #include <cctype>
@@ -752,7 +753,17 @@ bool build_agent_openapi_catalog(
             const auto policy_it = config.operations.find(operation.operation_id);
             const auto * override_policy = policy_it == config.operations.end() ? nullptr : &policy_it->second;
             if (!policy_allows(operation, config, override_policy)) continue;
-            if (override_policy != nullptr) operation.host_required_parameters = override_policy->required_parameters;
+            if (override_policy != nullptr) {
+                operation.host_required_parameters = override_policy->required_parameters;
+                operation.host_required_any_parameters = override_policy->required_any_parameters;
+                std::string schema_error;
+                if (common_project_model_input_schema_parameter_requirements(
+                        operation.input_schema_json, operation.host_required_parameters,
+                        operation.host_required_any_parameters, schema_error).empty()) {
+                    error = "invalid OpenAPI operation policy for " + operation.operation_id + ": " + schema_error;
+                    return false;
+                }
+            }
             if (override_policy != nullptr && !override_policy->access.empty()) {
                 if (override_policy->access == "read") {
                     operation.access = agent_openapi_access::read;

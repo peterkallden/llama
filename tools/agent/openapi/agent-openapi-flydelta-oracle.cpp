@@ -29,8 +29,9 @@ bool make_agent_openapi_flydelta_oracle_contract(
     }
 
     std::string schema_error;
-    const std::string model_schema = common_project_model_input_schema_required_parameters(
-        operation.input_schema_json, operation.host_required_parameters, schema_error);
+    const std::string model_schema = common_project_model_input_schema_parameter_requirements(
+        operation.input_schema_json, operation.host_required_parameters,
+        operation.host_required_any_parameters, schema_error);
     if (!schema_error.empty()) {
         error = "OpenAPI FlyDelta model-facing schema projection failed for " +
             operation.operation_id + ": " + schema_error;
@@ -95,4 +96,3 @@ bool register_agent_openapi_flydelta_oracles(
     }
     return true;
 }
-

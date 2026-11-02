@@ -3,6 +3,8 @@
 #include "tools/agent/runtime/agent-workflow-transition.h"
 #include "plan/plan-in-memory.h"
 #include "plan/plan-workflow-state.h"
+#include "plan/plan-scheduler.h"
+#include "plan/plan-context.h"
 #include "agent/agent-package-json.h"
 #include "memory/memory-in-memory.h"
 
@@ -123,6 +125,21 @@ int main() {
     invalid_fetch.arguments_template_json = R"({"url":"https://example.org","accept":5})";
     assert(!common_agent_workflow_static_tool_arguments(
         invalid_fetch, web_fetch_tool, static_arguments, static_error));
+    assert(static_error.find("static arguments violate") != std::string::npos);
+
+    common_plan_workflow_transition openalex_search{
+        "search-works", "search_pending", "works_found",
+        common_plan_workflow_transition_kind::tool, "openalex.listWorks", "{}"};
+    openalex_search.model_supplies_arguments = true;
+    common_chat_tool openalex_list_works{
+        "openalex.listWorks", "Search OpenAlex works",
+        R"({"type":"object","additionalProperties":false,"properties":{"search":{"type":"string"},"filter":{"type":"string"}},"allOf":[{"anyOf":[{"required":["search"]},{"required":["filter"]}]}]})"};
+    assert(!common_agent_workflow_static_tool_arguments(
+        openalex_search, openalex_list_works, static_arguments, static_error));
+    assert(static_error.empty() && nlohmann::json::parse(static_arguments).empty());
+    openalex_search.arguments_template_json = R"({"search":5})";
+    assert(!common_agent_workflow_static_tool_arguments(
+        openalex_search, openalex_list_works, static_arguments, static_error));
     assert(static_error.find("static arguments violate") != std::string::npos);
 
     common_plan_in_memory_store store;
@@ -490,7 +507,7 @@ int main() {
     common_plan_observation query_observation;
     query_observation.id = "query-observation";
     query_observation.source = "data.query";
-    std::vector<common_plan_step> continuation_steps;
+    common_agent_workflow_continuation continuation_steps;
     assert(continuation(document_plan, "query", query_observation,
         continuation_steps, error));
     assert(error.empty() && continuation_steps.size() == 1);
@@ -727,7 +744,7 @@ int main() {
     evidence_definition.family = "openapi";
     evidence_definition.graph_revision = "openalex-full-text@v1";
     evidence_definition.start_state = "identifier_pending";
-    evidence_definition.terminal_states = {"abstract_complete", "full_text_fetched"};
+    evidence_definition.terminal_states = {"abstract_complete", "full_text_fetched", "full_text_unavailable"};
     evidence_definition.transitions = {
         {"get-work", "identifier_pending", "work_retrieved", common_plan_workflow_transition_kind::tool,
             "openalex.getWork", "{}", {}, 1.0f},
@@ -743,6 +760,8 @@ int main() {
     evidence_definition.transitions[2].argument_bindings = {
         {"/url", "get-work", "/result/best_oa_location/pdf_url", true},
     };
+    evidence_definition.transitions[2].failure_terminal_state = "full_text_unavailable";
+    evidence_definition.transitions[2].handled_http_statuses = {403};
     common_agent_route_candidate evidence_route;
     evidence_route.id = "route:openalex-full-text";
     evidence_route.workflow_definition = evidence_definition;
@@ -775,6 +794,53 @@ int main() {
     assert(fetch_arguments["url"] == "https://example.org/paper.pdf");
     assert(continuation_steps.front().semantic_alias &&
         *continuation_steps.front().semantic_alias == "workflow-transition:choose-depth=fetch_full_text,fetch-full-text");
+
+    auto unavailable_plan = evidence_plan;
+    auto failed_fetch = continuation_steps.front();
+    failed_fetch.status = common_plan_step_status::failed;
+    unavailable_plan.steps.push_back(failed_fetch);
+    common_plan_observation failed_fetch_observation{
+        "tool:" + failed_fetch.id + ":1", "web.fetch",
+        nlohmann::ordered_json{{"failure", {{"step_id", failed_fetch.id}, {"tool", "web.fetch"}, {"http_status", 403}}}}.dump(), 0.0f};
+    unavailable_plan.observations.push_back(failed_fetch_observation);
+    common_plan_observation handled_failure;
+    assert(common_plan_workflow_handled_failure_observation(unavailable_plan, failed_fetch.id,
+        failed_fetch_observation.id, handled_failure, error));
+    common_plan_step after_failure{"answer", "Answer", "Report the limitation"};
+    after_failure.depends_on = {failed_fetch.id};
+    assert(!common_plan_step_dependencies_ready(unavailable_plan, after_failure));
+    unavailable_plan.observations.push_back(handled_failure);
+    assert(common_plan_workflow_failure_handled(unavailable_plan, unavailable_plan.steps.back()));
+    assert(common_plan_workflow_is_terminal(unavailable_plan, evidence_definition));
+    assert(common_plan_step_dependencies_ready(unavailable_plan, after_failure));
+    const auto limitation_context = common_plan_render_tool_observations(unavailable_plan, {4096});
+    assert(limitation_context.find("HTTP 403") != std::string::npos);
+    auto newer_failure = failed_fetch_observation;
+    newer_failure.id = "tool:" + failed_fetch.id + ":2";
+    newer_failure.summary = nlohmann::ordered_json{{"failure", {{"step_id", failed_fetch.id}, {"tool", "web.fetch"}, {"http_status", 500}}}}.dump();
+    unavailable_plan.observations.push_back(newer_failure);
+    assert(!common_plan_workflow_failure_handled(unavailable_plan, unavailable_plan.steps.back()));
+    assert(!common_plan_step_dependencies_ready(unavailable_plan, after_failure));
+
+    auto finish_with_abstract = make_agent_workflow_graph_continuation(evidence_route,
+        [](const auto &, const auto &, std::string & id, std::string & selection_error) {
+            id = "answer_from_abstract"; selection_error.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(finish_with_abstract(evidence_plan, "get-work-step", openalex_observation, continuation_steps, error));
+    assert(continuation_steps.empty() && continuation_steps.terminal_choice);
+    common_plan_observation terminal_observation;
+    const auto terminal_choice = *continuation_steps.terminal_choice;
+    assert(common_plan_workflow_terminal_choice_observation(evidence_plan, terminal_choice.transition_id,
+        terminal_choice.choice_id, terminal_choice.source_step_id, terminal_choice.source_observation_id,
+        terminal_observation, error));
+    auto finished_evidence_plan = evidence_plan;
+    finished_evidence_plan.observations.push_back(terminal_observation);
+    assert(common_plan_workflow_is_terminal(finished_evidence_plan, evidence_definition));
+    finished_evidence_plan.observations.back().evidence_ids = {"tool:other:1"};
+    assert(!common_plan_workflow_is_terminal(finished_evidence_plan, evidence_definition));
+    assert(!common_plan_workflow_terminal_choice_observation(evidence_plan, terminal_choice.transition_id,
+        terminal_choice.choice_id, terminal_choice.source_step_id, "tool:other:1", terminal_observation, error));
 
     auto missing_url_observation = openalex_observation;
     missing_url_observation.summary = R"({"ok":true,"result":{"abstract_text":"Short abstract"}})";

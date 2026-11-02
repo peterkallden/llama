@@ -8,6 +8,7 @@
 #include <cctype>
 #include <exception>
 #include <future>
+#include <fstream>
 #include <map>
 #include <thread>
 #include <utility>
@@ -89,7 +90,10 @@ bool agent_clangd_session::ensure_started(std::string & error) {
     }
     agent_clangd_json response;
     const auto root_uri = config_.repository_root.empty() ? agent_clangd_json(nullptr) : agent_clangd_json(agent_clangd_file_uri(std::filesystem::absolute(config_.repository_root)));
-    const auto params = agent_clangd_json{{"processId", nullptr}, {"rootUri", root_uri}, {"capabilities", {{"window", {{"workDoneProgress", true}}}}}, {"workspaceFolders", agent_clangd_json::array()}};
+    const auto params = agent_clangd_json{{"processId", nullptr}, {"rootUri", root_uri},
+        {"capabilities", {{"window", {{"workDoneProgress", true}}},
+            {"workspace", {{"didChangeWatchedFiles", {{"dynamicRegistration", false}}}}}}},
+        {"workspaceFolders", agent_clangd_json::array()}};
     if (!send_request("initialize", params, response, error)) return false;
     if (!response.contains("result")) { error = "clangd initialize response did not contain result"; return false; }
     if (!send_notification("initialized", agent_clangd_json::object(), error)) return false;
@@ -221,6 +225,79 @@ bool agent_clangd_session::open_document(const std::string & uri, const std::str
         }, error)) { state_->initialized = false; shutdown_locked(); return false; }
     state_->open_documents.emplace(uri, impl::document{1, text});
     return true;
+}
+
+bool agent_clangd_session::apply_file_changes(const std::vector<agent_project_file_change> & changes,
+        std::string & error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!state_->initialized) return true;
+    agent_clangd_json notifications = agent_clangd_json::array();
+    for (const auto & change : changes) {
+        if (change.kind == agent_project_file_change_kind::rescan_required) {
+            shutdown_locked();
+            error.clear();
+            return true;
+        }
+        const auto path = std::filesystem::u8path(change.path);
+        const auto uri = agent_clangd_file_uri(path);
+        if (change.kind == agent_project_file_change_kind::moved) {
+            const auto old_uri = agent_clangd_file_uri(std::filesystem::u8path(change.previous_path));
+            auto old = state_->open_documents.find(old_uri);
+            if (old != state_->open_documents.end()) {
+                if (!send_notification("textDocument/didClose", { {"textDocument", {{"uri", old_uri}}} }, error)) return false;
+                state_->open_documents.erase(old);
+            }
+            // Atomic replacement can target an already-open document. Close
+            // its old overlay so clangd reads the replacement from disk.
+            auto replaced = state_->open_documents.find(uri);
+            if (replaced != state_->open_documents.end()) {
+                if (!send_notification("textDocument/didClose", {{"textDocument", {{"uri", uri}}}}, error)) return false;
+                state_->open_documents.erase(replaced);
+            }
+            notifications.push_back({{"uri", old_uri}, {"type", 3}});
+            notifications.push_back({{"uri", uri}, {"type", 1}});
+        } else if (change.kind == agent_project_file_change_kind::removed) {
+            auto old = state_->open_documents.find(uri);
+            if (old != state_->open_documents.end()) {
+                if (!send_notification("textDocument/didClose", {{"textDocument", {{"uri", uri}}}}, error)) return false;
+                state_->open_documents.erase(old);
+            }
+            notifications.push_back({{"uri", uri}, {"type", 3}});
+        } else {
+            auto opened = state_->open_documents.find(uri);
+            if (opened != state_->open_documents.end()) {
+                std::error_code ec;
+                const auto size = std::filesystem::file_size(path, ec);
+                if (!ec && size <= 4 * 1024 * 1024) {
+                    std::ifstream input(path, std::ios::binary);
+                    if (!input) { error = "changed clangd document could not be opened"; return false; }
+                    std::string text(static_cast<size_t>(size) + 1, '\0');
+                    input.read(&text[0], static_cast<std::streamsize>(text.size()));
+                    text.resize(static_cast<size_t>(input.gcount()));
+                    if (input.bad() || text.size() != size) { error = "changed clangd document could not be read consistently"; return false; }
+                    if (!input.bad() && text.size() <= 4 * 1024 * 1024 && text != opened->second.text) {
+                        const auto version = opened->second.version + 1;
+                        if (!send_notification("textDocument/didChange", {
+                                {"textDocument", {{"uri", uri}, {"version", version}}},
+                                {"contentChanges", agent_clangd_json::array({{{"text", text}}})}}, error)) return false;
+                        opened->second = {version, std::move(text)};
+                    }
+                } else { error = "changed clangd document is unavailable or exceeds the size limit"; return false; }
+            }
+            const int type = change.kind == agent_project_file_change_kind::created ? 1 : 2;
+            notifications.push_back({{"uri", uri}, {"type", type}});
+        }
+    }
+    if (!notifications.empty() && !send_notification("workspace/didChangeWatchedFiles", {{"changes", std::move(notifications)}}, error)) {
+        shutdown_locked();
+        return false;
+    }
+    return true;
+}
+
+void agent_clangd_session::stop_for_refresh() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    shutdown_locked();
 }
 
 void agent_clangd_session::shutdown() {

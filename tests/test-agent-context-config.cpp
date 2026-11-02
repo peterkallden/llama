@@ -11,7 +11,9 @@ int main() {
     }
     agent_host_config roundtrip;
     if (!parse_agent_host_config_json(agent_host_config_to_json(config), roundtrip, error) ||
-            roundtrip.runtime_context_size != 0 || !roundtrip.context_budgets.configured_prompt_values.empty()) return 2;
+            roundtrip.runtime_context_size != 0 || roundtrip.context_budgets.resource_chunk_max_bytes != 0 ||
+            agent_host_config_to_json(config)["runtime"]["context_budgets"].contains("resource_chunk_max_bytes") ||
+            !roundtrip.context_budgets.configured_prompt_values.empty()) return 2;
     json explicit_config = {{"runtime", {{"context_size", 8192},
         {"context_budgets", {{"memory_chars", 4096}}}}}};
     if (!parse_agent_host_config_json(explicit_config, config, error) || config.runtime_context_size != 8192 ||
@@ -21,4 +23,12 @@ int main() {
             roundtrip.context_budgets.configured_prompt_values.size() != 1) return 3;
     explicit_config["runtime"]["context_size"] = -1;
     if (parse_agent_host_config_json(explicit_config, config, error)) return 4;
+    explicit_config["runtime"]["context_size"] = 8192;
+    explicit_config["runtime"]["context_budgets"]["resource_chunk_max_bytes"] = 4096;
+    if (!parse_agent_host_config_json(explicit_config, config, error) ||
+            !parse_agent_host_config_json(agent_host_config_to_json(config), roundtrip, error) ||
+            roundtrip.context_budgets.resource_chunk_max_bytes != 4096 ||
+            roundtrip.context_budgets.configured_prompt_values.count("resource_chunk_max_bytes") != 1) return 5;
+    explicit_config["runtime"]["context_budgets"]["resource_chunk_max_bytes"] = 0;
+    if (parse_agent_host_config_json(explicit_config, config, error) && validate_agent_host_config(config, error)) return 6;
 }

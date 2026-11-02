@@ -13,7 +13,9 @@
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <cstdio>
 #include <limits>
+#include <unordered_map>
 
 namespace {
 using json = nlohmann::ordered_json;
@@ -71,11 +73,79 @@ void set_timeouts(Client & client, uint32_t connect_ms, uint32_t request_ms) {
     client.set_follow_location(false);
 }
 
+bool locally_validated_dsl_purpose(common_agent_generation_purpose purpose) {
+    switch (purpose) {
+        case common_agent_generation_purpose::planner:
+        case common_agent_generation_purpose::tool_family_selection:
+        case common_agent_generation_purpose::route_selection:
+        case common_agent_generation_purpose::operation_selection:
+        case common_agent_generation_purpose::plan_selection:
+        case common_agent_generation_purpose::blueprint_selection:
+        case common_agent_generation_purpose::blueprint_binding:
+        case common_agent_generation_purpose::reflection:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool is_media_mime_type(const std::string & mime_type) {
     std::string normalized = mime_type;
     std::transform(normalized.begin(), normalized.end(), normalized.begin(),
         [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return normalized.rfind("image/", 0) == 0 || normalized.rfind("audio/", 0) == 0;
+}
+
+// Escape every non-alphanumeric byte, including underscores, so that
+// distinct internal names cannot collapse into the same external name.
+bool external_tool_name(const std::string & name, std::string & external) {
+    static constexpr char hex[] = "0123456789abcdef";
+    external.clear();
+    for (const unsigned char ch : name) {
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') || ch == '-') external += static_cast<char>(ch);
+        else { external += '_'; external += hex[ch >> 4]; external += hex[ch & 15]; }
+        if (external.size() > 64) return false;
+    }
+    return !external.empty();
+}
+
+// OpenAI-compatible Chat Completions requires a JSON Schema object at the
+// response_format root. Workflow action selection currently expresses each
+// authorized tool as a root-level oneOf branch. Keep that internal contract,
+// but project it into a supported flat object for HTTP providers. The host
+// still validates the returned tool/args pair against the selected tool's
+// original schema after generation.
+bool normalize_response_schema(const json & input, json & output) {
+    if (!input.is_object() || !input.contains("oneOf")) {
+        output = input;
+        return input.is_object();
+    }
+    const auto & branches = input["oneOf"];
+    if (!branches.is_array() || branches.empty()) return false;
+
+    json tool_names = json::array();
+    json argument_schemas = json::array();
+    for (const auto & branch : branches) {
+        if (!branch.is_object() || !branch.contains("properties") || !branch["properties"].is_object()) return false;
+        const auto & properties = branch["properties"];
+        if (!properties.contains("tool") || !properties["tool"].is_object() ||
+                !properties["tool"].contains("enum") || !properties["tool"]["enum"].is_array() ||
+                properties["tool"]["enum"].size() != 1 || !properties["tool"]["enum"][0].is_string() ||
+                !properties.contains("args") || !properties["args"].is_object()) return false;
+        tool_names.push_back(properties["tool"]["enum"][0]);
+        argument_schemas.push_back(properties["args"]);
+    }
+    output = {
+        {"type", "object"},
+        {"additionalProperties", false},
+        {"required", json::array({"tool", "args"})},
+        {"properties", {
+            {"tool", {{"type", "string"}, {"enum", std::move(tool_names)}}},
+            {"args", {{"oneOf", std::move(argument_schemas)}}},
+        }},
+    };
+    return true;
 }
 
 class http_inference final : public common_agent_inference {
@@ -103,7 +173,13 @@ public:
             return true;
         }
         if (!selection_.token_env.empty() && token_.empty()) return fail("HTTP inference bearer-token environment variable is unset");
-        if (request.grammar.size()) return fail("HTTP inference backend does not support GBNF grammar constraints");
+        if (!request.grammar.empty()) {
+            if ((selection_.tool_output_format_configured &&
+                    selection_.tool_output_format != common_agent_tool_output_format::compact_dsl) ||
+                    !locally_validated_dsl_purpose(request.purpose) || !request.json_schema.empty())
+                return fail("HTTP inference backend does not support GBNF grammar constraints");
+            std::fprintf(stderr, "agent: HTTP inference using unconstrained text for a locally validated DSL request; GBNF is unavailable\n");
+        }
         if ((request.flydelta_activation && request.flydelta_activation->gate.apply) ||
                 (request.flydelta_capture && request.flydelta_capture->enabled) || request.residual_patch ||
                 (request.flydelta_device_diagnostics && request.flydelta_device_diagnostics->enabled))
@@ -123,17 +199,44 @@ public:
         if ((!request.tools.empty() || request.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE) &&
                 !selection_.supports_native_tool_calls)
             return fail("HTTP model profile does not declare native tool-call support");
+        if (selection_.token_limit_parameter != "max_tokens" && selection_.token_limit_parameter != "max_completion_tokens")
+            return fail("HTTP inference has an invalid token limit parameter");
 
         endpoint_parts endpoint;
         std::string error;
         if (!split_endpoint(selection_.endpoint, endpoint, error)) return fail(error);
+        auto messages = request.messages;
+        auto tools = request.tools;
+        std::unordered_map<std::string, std::string> internal_names;
+        if (selection_.map_tool_names) {
+            for (auto & tool : tools) {
+                std::string mapped;
+                if (!external_tool_name(tool.name, mapped) || !internal_names.emplace(mapped, tool.name).second)
+                    return fail("HTTP inference cannot map tool names uniquely within the 64-character limit");
+                tool.name = std::move(mapped);
+            }
+            for (auto & msg : messages) {
+                for (auto & call : msg.tool_calls) {
+                    std::string mapped;
+                    if (!external_tool_name(call.name, mapped)) return fail("HTTP inference cannot map a historical tool name");
+                    call.name = std::move(mapped);
+                }
+                if (!msg.tool_name.empty()) {
+                    std::string mapped;
+                    if (!external_tool_name(msg.tool_name, mapped)) return fail("HTTP inference cannot map a historical tool name");
+                    msg.tool_name = std::move(mapped);
+                }
+            }
+        }
         json body;
+        json response_schema;
         try {
             body["model"] = selection_.model_id;
-            body["messages"] = json::parse(common_chat_msgs_to_json_oaicompat(request.messages).dump());
+            body["messages"] = json::parse(common_chat_msgs_to_json_oaicompat(messages).dump());
             body["stream"] = false;
-            if (request.options.n_predict > 0) body["max_tokens"] = request.options.n_predict;
-            if (!request.tools.empty()) body["tools"] = json::parse(common_chat_tools_to_json_oaicompat(request.tools).dump());
+            if (request.options.n_predict > 0) body[selection_.token_limit_parameter] = request.options.n_predict;
+            if (!selection_.reasoning_effort.empty()) body["reasoning_effort"] = selection_.reasoning_effort;
+            if (!tools.empty()) body["tools"] = json::parse(common_chat_tools_to_json_oaicompat(tools).dump());
             if (!request.tools.empty()) {
                 if (request.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED) body["tool_choice"] = "required";
                 else if (request.tool_choice == COMMON_CHAT_TOOL_CHOICE_NONE) body["tool_choice"] = "none";
@@ -141,12 +244,37 @@ public:
             }
             if (!request.json_schema.empty()) {
                 const auto schema = json::parse(request.json_schema);
+                if (!normalize_response_schema(schema, response_schema))
+                    return fail("HTTP inference cannot map the requested JSON schema to the provider's object-root contract");
                 body["response_format"] = {{"type", "json_schema"}, {"json_schema", {
-                    {"name", "agent_response"}, {"strict", true}, {"schema", schema}}}};
+                    {"name", "agent_response"}, {"strict", selection_.strict_json_schema}, {"schema", response_schema}}}};
             }
         } catch (const std::exception &) {
             return fail("HTTP inference request contains invalid message or JSON-schema data");
         }
+
+        // Generation tracing is opt-in and may include prompt and model content.
+        // Never log authentication headers or a literal bearer token.
+        const auto trace_payload = [&](const char * label, const std::string & payload) {
+            if (!request.options.generation_trace) return;
+            std::string safe = payload;
+            if (!token_.empty()) {
+                size_t pos = 0;
+                while ((pos = safe.find(token_, pos)) != std::string::npos) {
+                    safe.replace(pos, token_.size(), "[REDACTED]");
+                    pos += sizeof("[REDACTED]") - 1;
+                }
+            }
+            constexpr size_t max_trace_bytes = 65536;
+            const bool truncated = safe.size() > max_trace_bytes;
+            if (truncated) safe.resize(max_trace_bytes);
+            std::fprintf(stderr, "agent HTTP generation trace: purpose=%s trace_id=%s %s bytes=%zu%s begin\n",
+                common_agent_generation_purpose_name(request.purpose), request.trace_id.value_or("").c_str(),
+                label, safe.size(), truncated ? " truncated" : "");
+            if (!safe.empty()) std::fwrite(safe.data(), 1, safe.size(), stderr);
+            std::fprintf(stderr, "\nagent HTTP generation trace: %s end\n", label);
+        };
+        trace_payload("request", body.dump());
 
         httplib::Headers headers;
         if (!token_.empty()) headers.emplace("Authorization", "Bearer " + token_);
@@ -190,6 +318,7 @@ public:
             return fail(std::string(timeout ? "HTTP inference timeout: " : "HTTP inference transport failure: ") +
                 httplib::to_string(transport_error));
         }
+        if (response->status >= 200 && response->status < 300) trace_payload("response", response->body);
         if (request.options.should_stop && request.options.should_stop()) {
             result.status = common_agent_generation_status::cancelled;
             result.stop_reason = common_agent_generation_stop_reason::cancelled;
@@ -206,7 +335,9 @@ public:
                     std::string normalized_message = server_message;
                     std::transform(normalized_message.begin(), normalized_message.end(), normalized_message.begin(),
                         [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-                    detail += normalized_message.find("context") != std::string::npos ||
+                    detail += normalized_message.find("context length") != std::string::npos ||
+                        normalized_message.find("context window") != std::string::npos ||
+                        normalized_message.find("context limit") != std::string::npos ||
                         normalized_message.find("token limit") != std::string::npos ||
                         normalized_message.find("too many tokens") != std::string::npos
                         ? " (server reported a context limit)" : " (server rejected the request)";
@@ -251,7 +382,13 @@ public:
                 else return fail("HTTP inference tool call arguments are not a JSON object or string");
                 const auto parsed = json::parse(arguments, nullptr, false);
                 if (!parsed.is_object()) return fail("HTTP inference tool-call arguments are invalid JSON object data");
-                assistant.tool_calls.push_back({call["function"]["name"].get<std::string>(), arguments, call["id"].get<std::string>()});
+                auto name = call["function"]["name"].get<std::string>();
+                if (selection_.map_tool_names) {
+                    const auto found = internal_names.find(name);
+                    if (found == internal_names.end()) return fail("HTTP inference returned an undeclared tool name");
+                    name = found->second;
+                }
+                assistant.tool_calls.push_back({std::move(name), arguments, call["id"].get<std::string>()});
             }
         }
         if (!assistant.tool_calls.empty() &&
@@ -263,7 +400,7 @@ public:
             return fail("HTTP inference response rejected by requested JSON schema: expected JSON content without tool calls");
         if (!request.json_schema.empty()) {
             std::string normalized;
-            if (!common_schema_normalize_and_validate_object(result.content, request.json_schema, normalized, error))
+            if (!common_schema_normalize_and_validate_object(result.content, response_schema.dump(), normalized, error))
                 return fail("HTTP inference response rejected by requested JSON schema: " + error);
             result.content = std::move(normalized);
             assistant.content = result.content;

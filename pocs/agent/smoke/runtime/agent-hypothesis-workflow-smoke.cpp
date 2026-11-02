@@ -43,7 +43,7 @@ static bool smoke_source(const common_plan_workflow_definition & definition, con
             error.clear();
             return challenge_requested;
         });
-    std::vector<common_plan_step> steps;
+    common_agent_workflow_continuation steps;
     std::string error;
     if (!continuation(plan, first.id, observation, steps, error) || !challenge_requested || steps.size() != 1 ||
             !steps.front().tool_call || steps.front().tool_call->name != tool) {

@@ -252,6 +252,10 @@ struct common_plan_workflow_transition {
     // An unavailable optional capability removes this branch from choices.
     // Once selected, its execution remains mandatory unless optional is set.
     bool optional_availability = false;
+    // Explicitly declared HTTP failures may terminate this workflow with a
+    // recorded limitation. Empty fields preserve ordinary failure semantics.
+    std::string failure_terminal_state;
+    std::vector<int> handled_http_statuses;
 };
 
 // A declared handoff from a completed workflow observation to another

@@ -155,7 +155,8 @@ bool common_agent_research_chunk_evidence_from_observations(
             }
 
             common_agent_research_evidence item;
-            item.evidence_id = resource.uri + ":finding:" + std::to_string(++finding_index);
+            item.evidence_id = resource.uri + ":chunk:" + std::to_string(lineage.chunk_index) +
+                ":finding:" + std::to_string(++finding_index);
             item.source_id = resource.uri;
             item.claim_id = claim_id;
             item.statement = pending_finding;

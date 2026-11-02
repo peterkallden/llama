@@ -101,6 +101,8 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
                 {"kind", transition.kind == common_plan_workflow_transition_kind::model_choice ? "model_choice" : transition.kind == common_plan_workflow_transition_kind::artifact_compose ? "artifact_compose" : "tool"},
                 {"model_supplies_arguments", transition.model_supplies_arguments},
                 {"optional_availability", transition.optional_availability},
+                {"failure_terminal_state", transition.failure_terminal_state},
+                {"handled_http_statuses", transition.handled_http_statuses},
                 {"model_instruction", transition.model_instruction},
                 {"artifact_profile_ref", transition.artifact_profile_ref},
                 {"artifact_profile_revision", transition.artifact_profile_revision},
@@ -170,6 +172,8 @@ static common_plan_workflow_definition parse_workflow_definition(const json & de
         transition.candidate_id_json_pointer = item.value("candidate_id", std::string("/id"));
         transition.model_supplies_arguments = item.value("model_supplies_arguments", false);
         transition.optional_availability = item.value("optional_availability", false);
+        transition.failure_terminal_state = item.value("failure_terminal_state", std::string{});
+        transition.handled_http_statuses = item.value("handled_http_statuses", std::vector<int>{});
         transition.model_instruction = item.value("model_instruction", std::string{});
         transition.artifact_profile_ref = item.value("artifact_profile_ref", std::string{});
         transition.artifact_profile_revision = item.value("artifact_profile_revision", std::string{});
