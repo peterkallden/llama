@@ -93,6 +93,39 @@ VITE_AGENT_DEV_PROXY=http://127.0.0.1:8080 npm run dev -- --host 127.0.0.1
 The browser then uses `http://127.0.0.1:5173`; Vite serves the Vue source with
 hot reload and proxies authenticated `/api` requests to the adapter.
 
+### Local workspace setup and troubleshooting
+
+The full workspace needs all three processes: the daemon, the web adapter, and
+the Vue client. Open the root URL above for chat, projects, Resources, and the
+application launcher. Opening `investigation-workspace.html` directly only
+previews the embedded Analysis app; it is not the complete workspace and does
+not provide its host services. In the full client, use **Connected →
+Applications** to open Analysis, Data Explorer, and the document editor.
+
+For durable investigations, configure the daemon's `stores.data` with a
+persistent backend and path, as well as the resource blob and metadata stores
+used for case sources. Configure persistent memory and plan stores when the
+workspace should retain its other state across restarts. The configuration
+bootstrap helper described in the daemon guide provides a starting point; the
+starter-library package is configured with `bootstrap.package` and its
+procedures require a compatible embedding model.
+
+If Analysis reports **Investigation storage is unavailable**, check the
+daemon's `stores.data` configuration and startup diagnostics. Tool discovery or
+the client showing **Connected** alone does not establish that the store is
+configured. After changing a daemon configuration, restart the daemon and
+reload the app. Bootstrap import and embedding generation can delay readiness;
+wait for the daemon's TCP listener and adapter before diagnosing a connection
+failure. If a restart invalidates a chat or project that was held in an
+in-memory store, select an available project and open a new chat. Use persistent
+stores for state that must survive restarts.
+
+For the native adapter, ensure that its daemon authorization matches the
+daemon's TCP caller policy. The daemon reads the token from the configured
+`token_env`; the adapter's authorization value includes the `Bearer ` prefix.
+Keep tokens out of configuration files and command history. The Vite proxy
+target must match the adapter's listening port.
+
 ## Minimal Nginx setup
 
 For a local or internal Linux installation, Nginx can serve `dist/` and proxy
