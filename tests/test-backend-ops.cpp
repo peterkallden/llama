@@ -7486,6 +7486,28 @@ struct test_mul_mat_pos : public test_mul_mat {
     }
 };
 
+// Model weights live in a separate WEIGHTS buffer; exercise that upload path for Maxwell Q4 kernels.
+struct test_mul_mat_maxwell_weights : public test_mul_mat_pos {
+    using test_mul_mat_pos::test_mul_mat_pos;
+
+    bool use_weight_context() override { return true; }
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        return test_mul_mat_pos::build_graph(ctx);
+    }
+
+    ggml_tensor * build_graph(ggml_context * ctx, ggml_context * ctx_weights) override {
+        GGML_ASSERT(ctx_weights != nullptr);
+        ggml_tensor * a = ggml_new_tensor_2d(ctx_weights, type_a, k, m);
+        ggml_tensor * b = ggml_new_tensor_2d(ctx, type_b, k, n);
+        ggml_set_name(a, "a");
+        ggml_set_name(b, "b");
+        ggml_tensor * out = ggml_mul_mat(ctx, a, b);
+        ggml_set_name(out, "out");
+        return out;
+    }
+};
+
 enum mul_mat_add_mode {
     MUL_MAT_ADD_MM_RES,     // mm + res
     MUL_MAT_ADD_RES_MM,     // res + mm
@@ -10899,6 +10921,16 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_0, GGML_TYPE_F32, 576, 512, 576, {1,1}, {1,1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q4_0, GGML_TYPE_F32, 1, 2048, 8192, {1,  1}, {1, 1}));
+    for (ggml_type type : {GGML_TYPE_Q4_0, GGML_TYPE_Q4_K}) {
+        for (int64_t rows : {1, 3, 8, 9}) {
+            test_cases.emplace_back(new test_mul_mat_maxwell_weights(type, GGML_TYPE_F32, rows, 1, 256, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat_maxwell_weights(type, GGML_TYPE_F32, rows, 1, 512, {1, 1}, {1, 1}));
+        }
+    }
+    test_cases.emplace_back(new test_mul_mat_pos(GGML_TYPE_Q4_0, GGML_TYPE_F32, 3, 1, 288, {1, 1}, {1, 1}));
+    for (ggml_type type : {GGML_TYPE_Q4_0, GGML_TYPE_Q4_K}) {
+        test_cases.emplace_back(new test_mul_mat_maxwell_weights(type, GGML_TYPE_F32, 4097, 9, 4096, {1, 1}, {1, 1}));
+    }
     for (ggml_type type_a : all_types) {
         test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 1, 64, 256, {1,  1}, {1, 1}));
     }

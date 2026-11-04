@@ -205,6 +205,18 @@ performance matters, try following the split build used in our release workflow
 is built with clang (`cmake/arm64-windows-llvm.cmake`) and the CUDA backend with MSVC
 (`cmake/arm64-windows-msvc-cuda.cmake`), and the artifacts are merged afterwards.
 
+#### Maxwell quantized matrix-vector path
+
+The CUDA backend includes an experimental `sm_50` path for Q4_0 and Q4_K weights. A complete upload to a weight buffer can create a device-owned Maxwell cache made of 256-weight tiles. Q4_0 tiles place their eight FP16 scales after 128 contiguous quant bytes. Q4_K tiles expand their eight scale/minimum pairs once, avoiding six-bit metadata extraction in every dot product. The original GGML allocation remains authoritative for views, copies, reads, and CUDA operations which do not understand the cache.
+
+The decode kernel uses scalar integer products and reuses each activation load across two output rows. It is selected automatically for cached, contiguous, single-vector operations with a column count divisible by 256, without expert IDs or fused operations. Other devices, types, views, and shapes use the existing native-weight paths. Overlapping host writes invalidate the cache; complete uploads and device copies can rebuild it. Cache entries are released with their CUDA buffer. Cache publication waits for packing to finish so another CUDA stream cannot consume an incomplete entry. CUDA graphs are disabled on pre-Volta devices by the existing backend.
+
+For contiguous Q4_0 and Q4_K multi-token operations on `sm_50` that dispatch to cuBLAS, prefill expands rows directly from the Maxwell cache into an FP32 temporary. Smaller batches can instead use the existing native-weight MMVQ path. Each converted chunk contains at most 64 MiB of weights when one row fits in that budget. The CUDA memory pool may reserve more than the converted data size. A row larger than the budget and unsupported batched shapes use the existing native-weight fallback.
+
+This first implementation retains native weights alongside the cache so existing backend operations keep their byte-layout contract. The packed cache is limited to 64 MiB per physical GPU across CUDA buffers, avoiding a second full model but optimizing only the tensors that fit in that budget. The cache is the same size as native Q4_0 data and about 2.8% larger than native Q4_K data. The budget is not currently included in the model fitting estimate, so available memory for inference can be lower by up to 64 MiB. An allocation failure leaves the tensor on the native CUDA path. The CUDA and Vulkan build completed with this implementation; runtime correctness on a GPU and performance against the existing path have not yet been verified.
+
+For a Maxwell build, use a CUDA 12.x toolkit and include compute capability 5.0, for example with `-DCMAKE_CUDA_ARCHITECTURES=50`. CUDA 13 removed offline compilation and library support for Maxwell. If CUDA and Vulkan are both enabled, the model must use the CUDA device for this path to run.
+
 ### Non-Native Builds
 
 By default llama.cpp will be built for the hardware that is connected to the system at that time.

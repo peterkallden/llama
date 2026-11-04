@@ -33,6 +33,8 @@
 #include "ggml-cuda/mmq.cuh"
 #include "ggml-cuda/mmvf.cuh"
 #include "ggml-cuda/mmvq.cuh"
+#include "ggml-cuda/mmvq-maxwell.cuh"
+#include "ggml-cuda/maxwell-layout.cuh"
 #include "ggml-cuda/moe-weighted-reduction.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
@@ -91,6 +93,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
@@ -718,10 +721,32 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
 
 // cuda buffer
 
+static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer);
+
+std::recursive_mutex & ggml_cuda_maxwell_cache_mutex() {
+    static std::recursive_mutex mutex;
+    return mutex;
+}
+
+// A bounded device-wide cache prevents a second resident model on memory-constrained Maxwell devices.
+static constexpr size_t ggml_cuda_maxwell_cache_limit = 64ull * 1024 * 1024;
+static size_t ggml_cuda_maxwell_cache_bytes[GGML_CUDA_MAX_DEVICES] = {};
+
 struct ggml_backend_cuda_buffer_context {
+    struct maxwell_weight_cache {
+        void * data = nullptr;
+        size_t size = 0;
+        size_t native_size = 0;
+        ggml_type type = GGML_TYPE_COUNT;
+        int64_t ncols = 0;
+        int64_t nrows = 0;
+    };
+
     int device;
     void * dev_ptr = nullptr;
     std::string name;
+    std::unordered_map<const void *, maxwell_weight_cache> maxwell_weights;
+    std::unordered_map<const void *, size_t> maxwell_upload_prefix;
 
     ggml_backend_cuda_buffer_context(int device, void * dev_ptr) :
         device(device), dev_ptr(dev_ptr),
@@ -729,9 +754,120 @@ struct ggml_backend_cuda_buffer_context {
     }
 
     ~ggml_backend_cuda_buffer_context() {
+        std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
+        ggml_cuda_set_device(device);
+        for (const auto & item : maxwell_weights) {
+            CUDA_CHECK(cudaFree(item.second.data));
+            ggml_cuda_maxwell_cache_bytes[ggml_cuda_get_physical_device(device)] -= item.second.size;
+        }
         CUDA_CHECK(cudaFree(dev_ptr));
     }
 };
+
+static bool ggml_cuda_maxwell_cache_eligible(const ggml_backend_cuda_buffer_context * ctx, const ggml_tensor * tensor) {
+    return ggml_cuda_info().devices[ctx->device].cc == 500 && tensor->view_src == nullptr &&
+        (tensor->type == GGML_TYPE_Q4_0 || tensor->type == GGML_TYPE_Q4_K) &&
+        tensor->buffer != nullptr && ggml_backend_buffer_get_usage(tensor->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
+        tensor->ne[0] > 0 && tensor->ne[0] % 256 == 0 && ggml_is_contiguous(tensor);
+}
+
+// Keep the native allocation authoritative for every existing CUDA operation. The cache is rebuilt only after a
+// complete tensor write, so asynchronous and partial mutations can never expose a mixture of old and new tiles.
+static void ggml_cuda_maxwell_cache_update(
+        ggml_backend_cuda_buffer_context * ctx, const ggml_tensor * tensor, cudaStream_t stream) {
+    ctx->maxwell_upload_prefix.erase(tensor->data);
+    auto old = ctx->maxwell_weights.find(tensor->data);
+    if (old != ctx->maxwell_weights.end()) {
+        CUDA_CHECK(cudaFree(old->second.data));
+        ggml_cuda_maxwell_cache_bytes[ggml_cuda_get_physical_device(ctx->device)] -= old->second.size;
+        ctx->maxwell_weights.erase(old);
+    }
+    if (!ggml_cuda_maxwell_cache_eligible(ctx, tensor)) {
+        return;
+    }
+
+    const int64_t nrows = ggml_nelements(tensor) / tensor->ne[0];
+    const size_t tile_size = tensor->type == GGML_TYPE_Q4_0 ? sizeof(maxwell_q4_0_tile) : sizeof(maxwell_q4_k_tile);
+    const size_t packed_size = size_t(tensor->ne[0] / 256) * size_t(nrows) * tile_size;
+    void * packed = nullptr;
+    ggml_cuda_set_device(ctx->device);
+    const int physical = ggml_cuda_get_physical_device(ctx->device);
+    const size_t used = ggml_cuda_maxwell_cache_bytes[physical];
+    if (packed_size > ggml_cuda_maxwell_cache_limit - used) {
+        return;
+    }
+    const cudaError_t alloc_status = ggml_cuda_device_malloc(&packed, packed_size, ctx->device);
+    if (alloc_status != cudaSuccess) {
+        (void) cudaGetLastError();
+        GGML_LOG_WARN_ONCE("Maxwell packed-weight cache is incomplete because device memory is exhausted; "
+                           "uncached tensors will use the native CUDA paths.\n");
+        return;
+    }
+    ggml_cuda_maxwell_pack(tensor->data, packed, tensor->type, tensor->ne[0], nrows, stream);
+    CUDA_CHECK(cudaGetLastError());
+    // Other backend instances can immediately consume the published pointer on another stream.
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+    ggml_cuda_maxwell_cache_bytes[physical] += packed_size;
+    ctx->maxwell_weights.emplace(tensor->data,
+        ggml_backend_cuda_buffer_context::maxwell_weight_cache{packed, packed_size, ggml_nbytes(tensor), tensor->type, tensor->ne[0], nrows});
+}
+
+static const ggml_backend_cuda_buffer_context::maxwell_weight_cache * ggml_cuda_maxwell_cache_find(const ggml_tensor * tensor) {
+    if (tensor->view_src != nullptr || tensor->buffer == nullptr || tensor->ne[0] <= 0 || !ggml_backend_buffer_is_cuda(tensor->buffer)) {
+        return nullptr;
+    }
+    auto * ctx = (ggml_backend_cuda_buffer_context *) tensor->buffer->context;
+    const auto found = ctx->maxwell_weights.find(tensor->data);
+    return found == ctx->maxwell_weights.end() || found->second.type != tensor->type ||
+        found->second.ncols != tensor->ne[0] || found->second.nrows != ggml_nelements(tensor) / tensor->ne[0]
+        ? nullptr : &found->second;
+}
+
+static void ggml_cuda_maxwell_cache_invalidate(
+        ggml_backend_cuda_buffer_context * ctx, const ggml_tensor * tensor, cudaStream_t stream = nullptr) {
+    const uintptr_t begin = reinterpret_cast<uintptr_t>(tensor->data);
+    const size_t length = ggml_nbytes(tensor);
+    for (auto it = ctx->maxwell_weights.begin(); it != ctx->maxwell_weights.end();) {
+        const uintptr_t cached_begin = reinterpret_cast<uintptr_t>(it->first);
+        const bool overlap = begin <= cached_begin ? cached_begin - begin < length : begin - cached_begin < it->second.native_size;
+        if (overlap) {
+            CUDA_CHECK(cudaFree(it->second.data));
+            ggml_cuda_maxwell_cache_bytes[ggml_cuda_get_physical_device(ctx->device)] -= it->second.size;
+            it = ctx->maxwell_weights.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (tensor->view_src != nullptr) {
+        ctx->maxwell_upload_prefix.clear();
+    }
+    GGML_UNUSED(stream);
+}
+
+// Model loaders may upload a tensor in consecutive chunks. Pack exactly once when the complete native byte range is
+// present; an out-of-order or mutating write leaves the cache invalid until a later complete upload starts at zero.
+static bool ggml_cuda_maxwell_upload_complete(
+        ggml_backend_cuda_buffer_context * ctx, const ggml_tensor * tensor, size_t offset, size_t size) {
+    size_t & prefix = ctx->maxwell_upload_prefix[tensor->data];
+    if (offset == 0) {
+        prefix = size;
+    } else if (offset == prefix) {
+        prefix += size;
+    } else {
+        prefix = 0;
+    }
+    if (prefix < ggml_nbytes(tensor)) {
+        return false;
+    }
+    ctx->maxwell_upload_prefix.erase(tensor->data);
+    return true;
+}
+
+// The MMVQ translation unit uses this narrow query rather than depending on buffer implementation details.
+const void * ggml_cuda_maxwell_packed_weights(const ggml_tensor * tensor) {
+    const auto * cached = ggml_cuda_maxwell_cache_find(tensor);
+    return cached == nullptr ? nullptr : cached->data;
+}
 
 static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
@@ -770,19 +906,28 @@ static enum ggml_status ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer
 }
 
 static void ggml_backend_cuda_buffer_memset_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
+    std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
 
     ggml_cuda_set_device(ctx->device);
     CUDA_CHECK(cudaMemsetAsync((char *) tensor->data + offset, value, size, cudaStreamPerThread));
     CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+    ggml_cuda_maxwell_cache_invalidate(ctx, tensor);
+    ctx->maxwell_upload_prefix.erase(tensor->data);
 }
 
 static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+    std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
 
     ggml_cuda_set_device(ctx->device);
     CUDA_CHECK(cudaMemcpyAsync((char *) tensor->data + offset, data, size, cudaMemcpyHostToDevice, cudaStreamPerThread));
     CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+    ggml_cuda_maxwell_cache_invalidate(ctx, tensor);
+    if (ggml_cuda_maxwell_upload_complete(ctx, tensor, offset, size)) {
+        ggml_cuda_maxwell_cache_update(ctx, tensor, cudaStreamPerThread);
+        CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+    }
 }
 
 static void ggml_backend_cuda_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
@@ -795,12 +940,15 @@ static void ggml_backend_cuda_buffer_get_tensor(ggml_backend_buffer_t buffer, co
 
 static void ggml_backend_cuda_buffer_set_tensor_2d(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, const void * data,
         size_t offset, size_t size, size_t n_copies, size_t stride_tensor, size_t stride_data) {
+    std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
 
     ggml_cuda_set_device(ctx->device);
     CUDA_CHECK(cudaMemcpy2DAsync(
         (char *) tensor->data + offset, stride_tensor, data, stride_data, size, n_copies, cudaMemcpyHostToDevice, cudaStreamPerThread));
     CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+    ggml_cuda_maxwell_cache_invalidate(ctx, tensor);
+    ctx->maxwell_upload_prefix.erase(tensor->data);
 }
 
 static void ggml_backend_cuda_buffer_get_tensor_2d(ggml_backend_buffer_t buffer, const struct ggml_tensor * tensor, void * data,
@@ -814,6 +962,7 @@ static void ggml_backend_cuda_buffer_get_tensor_2d(ggml_backend_buffer_t buffer,
 }
 
 static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * src, ggml_tensor * dst) {
+    std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
     if (ggml_backend_buffer_is_cuda(src->buffer)) {
         ggml_backend_cuda_buffer_context * src_ctx = (ggml_backend_cuda_buffer_context *)src->buffer->context;
         ggml_backend_cuda_buffer_context * dst_ctx = (ggml_backend_cuda_buffer_context *)dst->buffer->context;
@@ -831,6 +980,10 @@ static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, co
 #endif
         }
         CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+        ggml_cuda_set_device(dst_ctx->device);
+        ggml_cuda_maxwell_cache_invalidate(dst_ctx, dst);
+        ggml_cuda_maxwell_cache_update(dst_ctx, dst, cudaStreamPerThread);
+        CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
         return true;
     }
     return false;
@@ -839,11 +992,18 @@ static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, co
 }
 
 static void ggml_backend_cuda_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
+    std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
 
     ggml_cuda_set_device(ctx->device);
     CUDA_CHECK(cudaMemsetAsync(ctx->dev_ptr, value, buffer->size, cudaStreamPerThread));
     CUDA_CHECK(cudaStreamSynchronize(cudaStreamPerThread));
+    for (const auto & item : ctx->maxwell_weights) {
+        CUDA_CHECK(cudaFree(item.second.data));
+        ggml_cuda_maxwell_cache_bytes[ggml_cuda_get_physical_device(ctx->device)] -= item.second.size;
+    }
+    ctx->maxwell_weights.clear();
+    ctx->maxwell_upload_prefix.clear();
 }
 
 static const ggml_backend_buffer_i ggml_backend_cuda_buffer_interface = {
@@ -1620,6 +1780,7 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
 }
 
 static void ggml_cuda_mul_mat_cublas(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    std::lock_guard<std::recursive_mutex> maxwell_lock(ggml_cuda_maxwell_cache_mutex());
     const int cc = ggml_cuda_info().devices[ctx.device].cc;
     const ggml_prec prec = (ggml_prec) ggml_get_op_params_i32(dst, 0);
     ggml_type compute_type = src0->type;
@@ -1659,11 +1820,58 @@ static void ggml_cuda_mul_mat_cublas(ggml_backend_cuda_context & ctx, const ggml
         }
     }
 
-    constexpr size_t max_src0_convert_size = 512ull * 1024 * 1024;
+    // Maxwell prefill expands one bounded row chunk directly from the packed cache. cuBLAS sees an ordinary F32
+    // matrix, while the complete converted model is never resident on the device.
+    const auto * maxwell_weights = ggml_cuda_maxwell_cache_find(src0);
+    if (maxwell_weights != nullptr && compute_type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && src1->ne[1] > 1 &&
+            src0->ne[2] == 1 && src0->ne[3] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1 &&
+            ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && ggml_is_contiguous(dst) &&
+            size_t(src0->ne[0]) * sizeof(float) <= 64ull * 1024 * 1024) {
+        constexpr size_t maxwell_prefill_bytes = 64ull * 1024 * 1024;
+        const size_t row_bytes = size_t(src0->ne[0]) * sizeof(float);
+        GGML_ASSERT(row_bytes <= maxwell_prefill_bytes);
+        const int64_t rows_per_chunk = std::min<int64_t>(src0->ne[1], std::max<int64_t>(1, maxwell_prefill_bytes / row_bytes));
+        ggml_cuda_pool_alloc<float> converted(ctx.pool(), size_t(rows_per_chunk) * size_t(src0->ne[0]));
+
+        for (int64_t first_row = 0; first_row < src0->ne[1]; first_row += rows_per_chunk) {
+            const int64_t rows = std::min(rows_per_chunk, src0->ne[1] - first_row);
+            ggml_cuda_maxwell_to_f32(maxwell_weights->data, converted.ptr, src0->type,
+                src0->ne[0], first_row, rows, ctx.stream());
+
+            ggml_tensor src0_chunk = *src0;
+            src0_chunk.type = GGML_TYPE_F32;
+            src0_chunk.ne[1] = rows;
+            src0_chunk.ne[2] = 1;
+            src0_chunk.ne[3] = 1;
+            src0_chunk.nb[0] = sizeof(float);
+            src0_chunk.nb[1] = size_t(src0_chunk.ne[0]) * src0_chunk.nb[0];
+            src0_chunk.nb[2] = size_t(src0_chunk.ne[1]) * src0_chunk.nb[1];
+            src0_chunk.nb[3] = src0_chunk.nb[2];
+            src0_chunk.data = converted.ptr;
+
+            ggml_tensor dst_chunk = *dst;
+            dst_chunk.ne[0] = rows;
+            dst_chunk.data = (char *) dst->data + first_row * dst->nb[0];
+            ggml_cuda_mul_mat_cublas_impl<GGML_TYPE_F32>(ctx, &src0_chunk, src1, &dst_chunk);
+        }
+        return;
+    }
+
+    // Limit the temporary F32 expansion of native Q4 weights during Maxwell prefill.
+    constexpr size_t max_src0_convert_size_default = 512ull * 1024 * 1024;
+    constexpr size_t max_src0_convert_size_maxwell = 64ull * 1024 * 1024;
     const size_t src0_f32_size = ggml_nelements(src0) * sizeof(float);
+    const bool maxwell_quantized_prefill = cc == 500 &&
+            (src0->type == GGML_TYPE_Q4_0 || src0->type == GGML_TYPE_Q4_K) &&
+            src1->type == GGML_TYPE_F32 && src1->ne[1] > 1 &&
+            src0->ne[2] == 1 && src0->ne[3] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1 &&
+            ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && ggml_is_contiguous(dst) &&
+            src0->ne[0] > 0 && uint64_t(src0->ne[0]) <= max_src0_convert_size_maxwell / sizeof(float);
+    const size_t max_src0_convert_size =
+            maxwell_quantized_prefill ? max_src0_convert_size_maxwell : max_src0_convert_size_default;
 
     if (compute_type == GGML_TYPE_F32 &&
-            (src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16) &&
+            (src0->type == GGML_TYPE_F16 || src0->type == GGML_TYPE_BF16 || maxwell_quantized_prefill) &&
             src0_f32_size > max_src0_convert_size) {
         const size_t f32_row_size = src0_f32_size / src0->ne[1];
         const int64_t rows_per_chunk = std::max<int64_t>(1, (int64_t) (max_src0_convert_size / f32_row_size));
@@ -2529,12 +2737,18 @@ static void ggml_backend_cuda_free(ggml_backend_t backend) {
 }
 
 static void ggml_backend_cuda_set_tensor_async(ggml_backend_t backend, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+    std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
 
     GGML_ASSERT(buf->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) && "unsupported buffer type");
 
     CUDA_CHECK(cudaMemcpyAsync((char *) tensor->data + offset, data, size, cudaMemcpyHostToDevice, cuda_ctx->stream()));
+    auto * buffer_ctx = (ggml_backend_cuda_buffer_context *) buf->context;
+    ggml_cuda_maxwell_cache_invalidate(buffer_ctx, tensor, cuda_ctx->stream());
+    if (ggml_cuda_maxwell_upload_complete(buffer_ctx, tensor, offset, size)) {
+        ggml_cuda_maxwell_cache_update(buffer_ctx, tensor, cuda_ctx->stream());
+    }
 }
 
 static void ggml_backend_cuda_get_tensor_async(ggml_backend_t backend, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
@@ -2548,6 +2762,7 @@ static void ggml_backend_cuda_get_tensor_async(ggml_backend_t backend, const ggm
 
 static void ggml_backend_cuda_set_tensor_2d_async(ggml_backend_t backend, struct ggml_tensor * tensor, const void * data,
         size_t offset, size_t size, size_t n_copies, size_t stride_tensor, size_t stride_data) {
+    std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
 
@@ -2555,6 +2770,9 @@ static void ggml_backend_cuda_set_tensor_2d_async(ggml_backend_t backend, struct
 
     CUDA_CHECK(cudaMemcpy2DAsync(
         (char *) tensor->data + offset, stride_tensor, data, stride_data, size, n_copies, cudaMemcpyHostToDevice, cuda_ctx->stream()));
+    auto * buffer_ctx = (ggml_backend_cuda_buffer_context *) buf->context;
+    ggml_cuda_maxwell_cache_invalidate(buffer_ctx, tensor, cuda_ctx->stream());
+    buffer_ctx->maxwell_upload_prefix.erase(tensor->data);
 }
 
 static void ggml_backend_cuda_get_tensor_2d_async(ggml_backend_t backend, const struct ggml_tensor * tensor, void * data,
@@ -2569,6 +2787,7 @@ static void ggml_backend_cuda_get_tensor_2d_async(ggml_backend_t backend, const 
 }
 
 static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, const ggml_tensor * src, ggml_tensor * dst) {
+    std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
     ggml_backend_buffer_t buf_src = src->view_src ? src->view_src->buffer : src->buffer;
     ggml_backend_buffer_t buf_dst = dst->view_src ? dst->view_src->buffer : dst->buffer;
 
@@ -2624,6 +2843,9 @@ static bool ggml_backend_cuda_cpy_tensor_async(ggml_backend_t backend_src, ggml_
         // src and dst are on the same backend
         CUDA_CHECK(cudaMemcpyAsync(dst->data, src->data, ggml_nbytes(dst), cudaMemcpyDeviceToDevice, cuda_ctx_src->stream()));
     }
+    ggml_cuda_set_device(buf_ctx_dst->device);
+    ggml_cuda_maxwell_cache_invalidate(buf_ctx_dst, dst, cuda_ctx_dst->stream());
+    ggml_cuda_maxwell_cache_update(buf_ctx_dst, dst, cuda_ctx_dst->stream());
     return true;
 }
 

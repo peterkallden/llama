@@ -1,4 +1,5 @@
 #include "mmvq.cuh"
+#include "mmvq-maxwell.cuh"
 #include "quantize.cuh"
 #include "unary.cuh"
 #include "vecdotq.cuh"
@@ -1535,6 +1536,22 @@ void ggml_cuda_mul_mat_vec_q(
         const int64_t s13 = src1->nb[3] / ts_src1;
         quantize_row_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
     }
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    const int cc = ggml_cuda_info().devices[ctx.device].cc;
+    // Use scalar two-row GEMV on sm_50 for the formats and shapes supported by the Maxwell kernel.
+    if (cc == 500 && (src0->type == GGML_TYPE_Q4_0 || src0->type == GGML_TYPE_Q4_K) &&
+            !ids && !fusion && ne11 == 1 && ne02 == 1 && ne03 == 1 && ne12 == 1 && ne13 == 1 &&
+            ne00 > 0 && ne00 <= INT32_MAX && ne00 % QK_K == 0 && ne01 > 0 && ne01 <= INT32_MAX &&
+            ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && ggml_is_contiguous(dst)) {
+        std::lock_guard<std::recursive_mutex> lock(ggml_cuda_maxwell_cache_mutex());
+        const void * packed = ggml_cuda_maxwell_packed_weights(src0);
+        if (packed != nullptr) {
+            ggml_cuda_mul_mat_vec_q_maxwell(packed, (const block_q8_1 *) src1_q8_1.get(), dst_d, src0->type, ne00, ne01, stream);
+            return;
+        }
+    }
+#endif
 
     const int64_t s01 = src0->nb[1] / ts_src0;
     const int64_t s11 = ne10_padded / QK8_1;
