@@ -1,9 +1,9 @@
-import type { AgentEvent, DaemonStatus, ToolCallResult, TurnRequest, UploadedResource } from "../types/agent";
+import type { AgentEvent, DaemonStatus, ToolCallResult, TurnRequest, UploadedResource, UnverifiedDraft } from "../types/agent";
 
 export type EventSink = (event: AgentEvent) => void;
 export type WebProject = { id: string; name: string; created_at: number; last_active_at: number };
 export type WebChat = { id: string; project_id: string; title: string; created_at: number; last_active_at: number; active_turn_id?: string; attachments?: Array<{ uri: string; name: string; mime_type?: string }> };
-export type WebChatMessage = { id: string; turn_id: string; role: "user" | "assistant"; content: string; recorded_at: number; sequence?: number; evidence_refs?: string[] };
+export type WebChatMessage = { id: string; turn_id: string; role: "user" | "assistant"; content: string; recorded_at: number; sequence?: number; evidence_refs?: string[]; unverified_draft?: UnverifiedDraft };
 
 export class AgentApiError extends Error {
   constructor(message: string, readonly status: number, readonly payload: unknown) {

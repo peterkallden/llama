@@ -18,6 +18,10 @@ public:
             std::optional<common_agent_context_checkpoint> & checkpoint,
             uint64_t & epoch, std::string & error) const;
     bool append(common_agent_conversation_segment segment, std::string & error);
+    // Display-only turn artifact. load() deliberately excludes this purpose
+    // from model conversation segments and compaction checkpoints.
+    bool append_unverified_draft(const std::string & request_id,const std::string & turn_id,
+        const nlohmann::ordered_json & draft,std::string & error);
     bool save_checkpoint(common_agent_context_checkpoint & checkpoint, std::string & error);
     bool begin_new_epoch(std::string & error);
     bool persistent() const { return store != nullptr && persist; }

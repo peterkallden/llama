@@ -1,3 +1,4 @@
+#include "../tooling/agent-result-view.h"
 #include "agent-host-config.h"
 #include "tools/agent/resource/agent-resource-processor-defaults.h"
 #include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
@@ -317,6 +318,10 @@ bool read_openapi_provider(
     read_optional(value, "spec_path", provider.spec_path);
     read_optional(value, "base_url", provider.base_url);
     read_optional(value, "prefix", provider.prefix);
+    if (value.contains("result_adapter")) {
+        error = "result_adapter is no longer supported; configure result_view per operation";
+        return false;
+    }
     read_optional(value, "additional_families", provider.additional_families);
     if (provider.additional_families.size() > 32 ||
             std::any_of(provider.additional_families.begin(), provider.additional_families.end(),
@@ -359,6 +364,21 @@ bool read_openapi_provider(
                 read_optional(it.value(), "enabled", operation.enabled);
                 read_optional(it.value(), "access", operation.access);
                 read_optional(it.value(), "default_projection", operation.default_projection);
+                if (it.value().contains("parameter_prefixes")) {
+                    if (!it.value()["parameter_prefixes"].is_object() ||
+                            it.value()["parameter_prefixes"].dump().size() > 8192) {
+                        error = "OpenAPI operation parameter_prefixes must be a bounded object";
+                        return false;
+                    }
+                    operation.parameter_prefixes_json = it.value()["parameter_prefixes"].dump();
+                }
+                if (it.value().contains("result_view")) {
+                    if (!it.value()["result_view"].is_object() || it.value()["result_view"].dump().size() > 32768) {
+                        error = "OpenAPI operation result_view must be a bounded object";
+                        return false;
+                    }
+                    operation.result_view_json = it.value()["result_view"].dump();
+                }
                 if (it.value().contains("required_parameters") &&
                         !read_string_array(it.value()["required_parameters"],
                             operation.required_parameters,
@@ -1649,6 +1669,13 @@ nlohmann::ordered_json agent_host_config_to_json(
                 {"required_parameters", operation.second.required_parameters},
                 {"required_any_parameters", operation.second.required_any_parameters},
             };
+            const auto parameter_prefixes = json::parse(operation.second.parameter_prefixes_json, nullptr, false);
+            if (parameter_prefixes.is_object() && !parameter_prefixes.empty()) {
+                operations[operation.first]["parameter_prefixes"] = parameter_prefixes;
+            }
+            if (!operation.second.result_view_json.empty()) {
+                operations[operation.first]["result_view"] = json::parse(operation.second.result_view_json);
+            }
             const auto bound_arguments = json::parse(
                 operation.second.bound_arguments_json, nullptr, false);
             if (!bound_arguments.is_discarded() && bound_arguments.is_object() &&
@@ -2769,6 +2796,28 @@ bool validate_agent_host_config(
                      operation.second.access != "write" &&
                      operation.second.access != "destructive")) {
                 error = "OpenAPI operation policy has an invalid access value: " + operation.first;
+                return false;
+            }
+            const auto prefixes = json::parse(operation.second.parameter_prefixes_json, nullptr, false);
+            if (!prefixes.is_object() || prefixes.size() > 32 || operation.second.parameter_prefixes_json.size() > 8192) {
+                error = "OpenAPI operation parameter_prefixes must be a bounded object: " + operation.first;
+                return false;
+            }
+            for (const auto & entry : prefixes.items()) {
+                const auto & rule = entry.value();
+                if (entry.key().empty() || entry.key().size() > 128 || !rule.is_object() || rule.size() != 2 ||
+                        !rule.contains("if_starts_with") || !rule["if_starts_with"].is_string() ||
+                        !rule.contains("prepend") || !rule["prepend"].is_string() ||
+                        rule["if_starts_with"].get<std::string>().empty() ||
+                        rule["if_starts_with"].get<std::string>().size() > 128 ||
+                        rule["prepend"].get<std::string>().empty() || rule["prepend"].get<std::string>().size() > 512) {
+                    error = "invalid OpenAPI path parameter prefix rule for " + operation.first + ": " + entry.key();
+                    return false;
+                }
+            }
+            if (!operation.second.result_view_json.empty() &&
+                    !agent_result_view_validate(operation.second.result_view_json, error)) {
+                error = "invalid result_view for provider " + provider.id + " operation " + operation.first + ": " + error;
                 return false;
             }
             const auto bound_arguments = json::parse(

@@ -19,7 +19,7 @@ set(AGENT_RUNTIME_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/daemon/agent-daemon-event-collector.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-host-config.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-provider.cpp
-    ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-result-projection.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-result-view.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-http.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-flydelta-oracle.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/host/agent-sandbox-assembly.cpp
@@ -184,6 +184,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES
 
 set(AGENT_TOOL_PROVIDER_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-route-compiler.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-result-view.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-tool-provider.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-tool-result-json-contracts.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-tool-runtime-adapter.cpp
@@ -1178,6 +1179,7 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/eurostat-sdmx-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-host-config-openalex.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openalex-openapi.json
+        ${PROJECT_SOURCE_DIR}/docs/examples/openalex-result-views.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openalex-works-openapi.json
         ${PROJECT_SOURCE_DIR}/docs/examples/openapi-openalex-generated.json
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-flydelta-dataset-question-suite.json

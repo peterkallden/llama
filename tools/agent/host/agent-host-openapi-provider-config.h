@@ -15,6 +15,11 @@ struct agent_host_openapi_operation_policy {
     bool enabled = true;
     std::string access;
     std::string default_projection;
+    // Host-owned per-operation result view, empty when not configured.
+    std::string result_view_json;
+    // Host-configured canonicalization of path parameters before URI encoding.
+    // Each entry declares an input prefix and the prefix to prepend.
+    std::string parameter_prefixes_json = "{}";
     std::vector<std::string> required_parameters;
     // At least one of these declared parameters must be supplied. An empty
     // list disables this additional host-use constraint.

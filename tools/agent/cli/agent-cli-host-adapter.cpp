@@ -990,14 +990,29 @@ bool resolve_agent_host_tool_selection(
                 agent_openapi_execution_result & result,
             std::string & materializer_error) {
             const bool json_response = result.mime_type.rfind("application/json", 0) == 0;
-            if (json_response && openapi_data_store != nullptr) {
+            const auto view = operation.result_view_json.empty() ? json::object() :
+                json::parse(operation.result_view_json);
+            const bool session_resource = view.value("resource_scope", std::string("turn")) == "session";
+            if (session_resource && (context.scope.namespace_id.empty() || context.scope.session_id.empty())) {
+                materializer_error = "session-scoped OpenAPI results require a host session";
+                return false;
+            }
+            const bool force_resource = !operation.result_view_json.empty() &&
+                view.value("materialize", std::string("resource")) == "resource";
+            std::string materialization_reason;
+            if (!operation.result_view_json.empty() && !force_resource && openapi_data_store == nullptr) {
+                materialization_reason = "dataset store is unavailable";
+            }
+            if (json_response && openapi_data_store != nullptr && !force_resource) {
                 agent_openapi_result_projection projection;
                 if (!classify_agent_openapi_result_json(
                         result.structured_content_json,
                         agent_openapi_result_projection_limits{}, projection,
-                        materializer_error, operation.result_schema_json)) {
+                        materializer_error, operation.result_schema_json,
+                        view.value("items_pointer", std::string{}))) {
                     return false;
                 }
+                materialization_reason = projection.reason;
                 if (projection.kind == agent_openapi_result_projection_kind::dataset) {
                     if (resource_store == nullptr) {
                         materializer_error = "OpenAPI dataset materialization requires a resource store";
@@ -1008,7 +1023,7 @@ bool resolve_agent_host_tool_selection(
                     source_request.name = provider_id + "-" + operation.operation_id + ".json";
                     source_request.description = "Raw bounded response from OpenAPI operation " + operation.operation_id;
                     source_request.mime_type = result.mime_type;
-                    source_request.scope = common_runtime_resource_scope::turn;
+                    source_request.scope = session_resource ? common_runtime_resource_scope::session : common_runtime_resource_scope::turn;
                     source_request.namespace_id = context.scope.namespace_id;
                     source_request.session_id = context.scope.session_id;
                     source_request.project_id = context.scope.project_id;
@@ -1086,7 +1101,7 @@ bool resolve_agent_host_tool_selection(
             // resource as well. Keeping it inline would make the model see a
             // complex response without a stable resource handle, while the
             // dataset path above deliberately returns a compact summary.
-            if (json_response && openapi_data_store == nullptr &&
+            if (json_response && openapi_data_store == nullptr && operation.result_view_json.empty() &&
                     result.structured_content_json.size() <= 2048) return true;
             if (resource_store == nullptr) {
                 materializer_error = "OpenAPI result materialization requires a resource store";
@@ -1097,7 +1112,7 @@ bool resolve_agent_host_tool_selection(
             request.name = provider_id + "-" + operation.operation_id + ".result";
             request.description = "Bounded result from OpenAPI operation " + operation.operation_id;
             request.mime_type = result.mime_type;
-            request.scope = common_runtime_resource_scope::turn;
+            request.scope = session_resource ? common_runtime_resource_scope::session : common_runtime_resource_scope::turn;
             request.namespace_id = context.scope.namespace_id;
             request.session_id = context.scope.session_id;
             request.project_id = context.scope.project_id;
@@ -1139,6 +1154,11 @@ bool resolve_agent_host_tool_selection(
                 {"size_bytes", resource_size},
                 {"representation", "openapi:resource"},
             }.dump();
+            if (!materialization_reason.empty()) {
+                auto metadata = json::parse(result.structured_content_json);
+                metadata["materialization_reason"] = materialization_reason;
+                result.structured_content_json = metadata.dump();
+            }
             result.text_content = "OpenAPI response stored as resource " + resource_uri;
             return true;
         };

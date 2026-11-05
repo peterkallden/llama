@@ -89,6 +89,9 @@ int main() {
         assert(request.get_param_value("limit") == (sale_requests == 1 ? "5" : "10"));
         response.set_content(R"({"id":42,"total":7})", "application/json");
     });
+    server.Get("/sales/canonical-raw-42", [](const httplib::Request &, httplib::Response & response) {
+        response.set_content(R"({"id":"canonical-raw-42"})", "application/json");
+    });
     server.Get(R"(/errors/([a-zA-Z0-9-]+))", [](const httplib::Request & request, httplib::Response & response) {
         const std::string token = request.matches[1];
         const int status = std::stoi(token.substr(0, 3));
@@ -168,6 +171,7 @@ int main() {
     config.max_page_size = 10;
     config.allow_private_network = true;
     config.operations["getSale"].required_parameters = {"id"};
+    config.operations["getSale"].parameter_prefixes_json = R"({"id":{"if_starts_with":"raw-","prepend":"canonical-"}})";
     agent_openapi_catalog catalog = make_get_sale_catalog(config);
 
     int observed_status = 0;
@@ -197,6 +201,8 @@ int main() {
     assert(result.content_json.find("\"total\":7") != std::string::npos);
     assert(observed_status == 200);
     assert(observed_mime == "application/json");
+    const auto normalized = view->call({"http-normalized", "sales.getSale", R"({"id":"raw-42"})"}, error);
+    assert(normalized.ok && normalized.content_json.find("canonical-raw-42") != std::string::npos);
     const auto sdmx = view->call({"sdmx-structure", "sales.getSdmxStructure", "{}"}, error);
     assert(sdmx.ok);
     assert(observed_mime == "application/vnd.sdmx.structure+xml");

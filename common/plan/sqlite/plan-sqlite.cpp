@@ -90,6 +90,8 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
         value["continuation_links"] = json::array();
         for (const auto & link : definition.continuation_links) {
             json item = {{"workflow_ref", link.target_workflow_ref}, {"workflow_revision", link.target_workflow_revision}, {"bindings", json::array()}};
+            if (link.optional) item["optional"] = true;
+            if (link.max_uses) item["max_uses"] = link.max_uses;
             if (!link.source_transition_id.empty()) item["from_transition"] = link.source_transition_id;
             if (!link.source_terminal_state.empty()) item["from_terminal_state"] = link.source_terminal_state;
             for (const auto & binding : link.argument_bindings) {
@@ -97,6 +99,7 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
                     {"tool", binding.target_tool_name}, {"target", binding.target_json_pointer},
                     {"source", binding.source_json_pointer}, {"required", binding.required}};
                 if (!binding.source_transition_id.empty()) binding_json["from_transition"] = binding.source_transition_id;
+                if (!binding.candidate_id_json_pointer.empty()) binding_json["candidate_id"] = binding.candidate_id_json_pointer;
                 item["bindings"].push_back(std::move(binding_json));
             }
             value["continuation_links"].push_back(std::move(item));
@@ -131,7 +134,7 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
                 item["choices"] = json::array();
                 for (const auto & choice : transition.choices) item["choices"].push_back({
                     {"id", choice.id}, {"description", choice.description}, {"to", choice.to_state},
-                    {"requires", choice.required_observation_json_pointers}});
+                    {"requires", choice.required_observation_json_pointers}, {"max_uses", choice.max_uses}});
             }
             if (!transition.argument_bindings.empty()) {
                 item["bindings"] = json::array();
@@ -164,11 +167,13 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
         link.source_transition_id = item.value("from_transition", std::string{});
         link.source_terminal_state = item.value("from_terminal_state", std::string{});
         link.target_workflow_revision = item.value("workflow_revision", std::string{});
+        link.optional = item.value("optional", false);
+        link.max_uses = item.value("max_uses", size_t{0});
         for (const auto & binding : item.value("bindings", json::array())) link.argument_bindings.push_back({
             binding.value("transition", std::string{}),
             binding.value("tool", std::string{}), binding.value("target", std::string{}),
             binding.value("source", std::string{}), binding.value("required", true),
-            binding.value("from_transition", std::string{})});
+            binding.value("from_transition", std::string{}), binding.value("candidate_id", std::string{})});
         value.continuation_links.push_back(std::move(link));
     }
     if (definition.value("resource_read_policy", std::string("single_range")) == "chunked") {
@@ -206,6 +211,7 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
             choice.description = choice_json.value("description", std::string{});
             choice.to_state = choice_json.value("to", std::string{});
             choice.required_observation_json_pointers = choice_json.value("requires", std::vector<std::string>{});
+            choice.max_uses = choice_json.value("max_uses", size_t(0));
             transition.choices.push_back(std::move(choice));
         }
         for (const auto & binding_json : item.value("bindings", json::array())) transition.argument_bindings.push_back({
@@ -275,7 +281,7 @@ json serialize_plan(const common_plan_state & plan) {
         {"source_workflow_revision", item.source_workflow_revision},
         {"source_terminal_state", item.source_terminal_state},
         {"target_workflow_ref", item.target_workflow_ref},
-        {"target_workflow_revision", item.target_workflow_revision}});
+        {"target_workflow_revision", item.target_workflow_revision}, {"source_observation_id", item.source_observation_id}});
     json procedures = plan.procedure_refs;
     json value = {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"selection_description", plan.selection_description}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"workflow_policy", workflow_policy_name(plan.workflow_policy)}, {"procedure_refs", procedures}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"workflow_bindings", bindings}, {"workflow_continuation_history", continuation_history}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
     if (plan.selected_workflow) value["selected_workflow"] = common_plan_workflow_binding_to_json(*plan.selected_workflow);
@@ -321,7 +327,7 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
         item.value("link_id", std::string{}), item.value("source_fingerprint", std::string{}),
         item.value("source_workflow_ref", std::string{}), item.value("source_workflow_revision", std::string{}),
         item.value("source_terminal_state", std::string{}), item.value("target_workflow_ref", std::string{}),
-        item.value("target_workflow_revision", std::string{})});
+        item.value("target_workflow_revision", std::string{}), item.value("source_observation_id", std::string{})});
     if (value.contains("selected_workflow") && value["selected_workflow"].is_object()) plan.selected_workflow = common_plan_workflow_binding_from_json(value["selected_workflow"]);
     if (value.contains("workflow_definition") && value["workflow_definition"].is_object()) plan.workflow_definition = parse_workflow_definition(value["workflow_definition"]);
     if (value.contains("route_binding") && value["route_binding"].is_object()) { const auto & binding = value["route_binding"]; plan.route_binding = common_plan_route_binding{binding.value("route_id", std::string{}), binding.value("blueprint_ref", std::string{}), binding.value("blueprint_revision", std::string{}), binding.value("workflow_ref", std::string{}), binding.value("workflow_revision", std::string{}), binding.value("graph_revision", std::string{}), binding.value("execution_envelope_fingerprint", std::string{}), binding.value("policy_revision", std::string{}), binding.value("continuation_link_id", std::string{}), binding.value("continuation_source_fingerprint", std::string{}), binding.value("workflow_step_start_index", size_t(0))}; }
@@ -381,6 +387,13 @@ json serialize_event(const common_plan_event & event, const common_plan_operatio
     if (operation.workflow_definition) result["workflow_definition"] = serialize_workflow_definition(*operation.workflow_definition);
     if (!operation.route_required_capabilities.empty()) result["route_required_capabilities"] = operation.route_required_capabilities;
     if (!operation.route_procedure_refs.empty()) result["route_procedure_refs"] = operation.route_procedure_refs;
+    if (!operation.route_steps.empty() || operation.route_handoff) {
+        common_plan_state entry;
+        entry.id = operation.plan_id;
+        entry.steps = operation.route_steps;
+        if (operation.route_handoff) entry.observations.push_back(*operation.route_handoff);
+        result["route_entry"] = serialize_plan(entry);
+    }
     return result;
 }
 
@@ -434,6 +447,14 @@ bool common_plan_sqlite_store::load_cache(std::string & error) {
         if (value.contains("workflow_definition") && value["workflow_definition"].is_object()) event.operation.workflow_definition = parse_workflow_definition(value["workflow_definition"]);
         event.operation.route_required_capabilities = value.value("route_required_capabilities", std::vector<std::string>{});
         event.operation.route_procedure_refs = value.value("route_procedure_refs", std::vector<std::string>{});
+        if (value.contains("route_entry")) {
+            common_plan_state entry;
+            if (!deserialize_plan(value["route_entry"].dump(), entry)) {
+                error = "sqlite route event contains invalid entry work"; return false;
+            }
+            event.operation.route_steps = std::move(entry.steps);
+            if (!entry.observations.empty()) event.operation.route_handoff = std::move(entry.observations.front());
+        }
         histories[plan_id].push_back(std::move(event));
     }
     if (!error.empty()) return false;
@@ -471,9 +492,22 @@ bool common_plan_sqlite_store::apply(const common_plan_operation & operation, co
     if (!cache_.apply(operation, updated_plan, error)) return false;
     const auto events = cache_.history(operation.plan_id, error);
     if (events.empty()) return false;
-    common_sqlite_transaction transaction(database_);
-    if (!transaction.begin(error) || !persist_plan(updated_plan, error) || !persist_event(operation.plan_id, events.back(), operation, error) || !transaction.commit(error)) return false;
-    return true;
+    bool committed = false;
+    {
+        common_sqlite_transaction transaction(database_);
+        committed = transaction.begin(error) && persist_plan(updated_plan, error) &&
+            persist_event(operation.plan_id, events.back(), operation, error) && transaction.commit(error);
+    }
+    if (committed) return true;
+    const auto failure = error;
+    cache_.close();
+    std::string reload_error;
+    if (!load_cache(reload_error)) {
+        error = failure + "; plan cache reload failed: " + reload_error;
+        return false;
+    }
+    error = failure;
+    return false;
 }
 
 bool common_plan_sqlite_store::erase(const std::string & plan_id, std::string & error) {

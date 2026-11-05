@@ -23,7 +23,26 @@ struct common_agent_workflow_action_selection_result {
     std::optional<common_agent_tool_argument_binding> action;
     std::string reason;
     std::optional<common_agent_generated_text_result> generation;
+    bool missing_grounded_identifier = false;
 };
+
+// Interpret an explicit source preference independently from tool arguments.
+// An empty result means that the user did not name a specific source.
+bool select_agent_research_source(common_agent_inference &, const common_agent_generation_config &,
+    const common_agent_request &, const std::string & task,
+    const std::vector<std::string> & available_sources, std::vector<std::string> & sources, std::string & error);
+
+bool select_agent_research_assessment(common_agent_inference &, const common_agent_generation_config &,
+    const common_agent_request &, const common_agent_research_gap &, const common_agent_research_evidence &,
+    common_agent_research_assessment &, int & decoded_tokens, std::string & error);
+
+bool select_agent_research_comparison(common_agent_inference &, const common_agent_generation_config &,
+    const common_agent_request &, const common_agent_research_gap &,
+    const std::vector<common_agent_research_evidence> &, common_agent_research_source_comparison &,
+    int & decoded_tokens, std::string & error);
+
+bool select_agent_research_no_action(common_agent_inference &, const common_agent_generation_config &,
+    const common_agent_request &, std::string & message, std::string & error);
 
 // Eligibility derives only from declared tool prerequisites and host context.
 bool common_agent_workflow_tool_eligible(const common_agent_request &,
@@ -40,7 +59,8 @@ common_agent_workflow_action_selection_result select_agent_planning_workflow_act
     const std::vector<common_agent_tool_argument_binding> & fixed_bindings,
     const std::vector<std::string> & host_resolved_dataset_tools,
     common_agent_tool_output_format output_format,
-    std::string & error);
+    std::string & error,
+    bool research_context = false);
 
 // Interpret the result independently, through the existing DSL/JSON selection
 // boundary. The runtime owns persistence and subsequent contract checks.
@@ -57,7 +77,7 @@ bool select_agent_planning_workflow_transition_arguments(
     const common_agent_request &, const std::vector<common_chat_tool> &,
     const common_plan_state &, const common_plan_observation &,
     const common_plan_workflow_transition &, const std::string &,
-    std::string &, std::string &);
+    std::string &, std::string &, const agent_tool_view * tool_view = nullptr);
 
 // Choose one exact entity id from a host-recorded observation.  The caller
 // validates the result against the same observation before binding it.
@@ -82,7 +102,8 @@ common_agent_route_selection_result select_agent_planning_route(
     const common_agent_generation_config & generation_config,
     const common_agent_request & request,
     const common_agent_route_catalog & catalog,
-    std::string & error);
+    std::string & error,
+    bool continuation_choice = false);
 
 common_agent_workflow_selection_result select_agent_planning_blueprint_workflow(
     common_agent_inference & inference,

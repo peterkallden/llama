@@ -218,6 +218,35 @@ subject to their existing policy. Multiple objective success criteria become
 separate research gaps. The normalized result preserves source, evidence,
 comparison and provenance data for later verification.
 
+The runtime host can supply a research operation selector through the request.
+For semantic searches it uses the normal family index, then an operation
+description, then the selected operation's argument contract. It filters the
+catalog through the active execution envelope and read-only policy before
+selection; execution validates the chosen arguments again. One host-validation
+failure can be sent back for a same-operation repair. Host-bound resource reads
+and their continuation positions remain deterministic. A model may decline
+to select an operation, leaving the gap unresolved.
+
+For semantic acquisition the model interprets an explicit source request
+from the original and current user questions, and the host resolves its
+selection against the registered provider and family view. A named source
+that is unavailable is reported rather than replaced silently. This selector
+currently supports one exact registered identifier per decision, not provider
+aliases or a set of explicitly named sources. Previously discovered web
+candidates are scheduled separately and do not yet re-evaluate a later explicit
+source constraint; callers must not treat source filtering as complete across
+all resumed acquisition paths. OpenAPI
+collection/item relations are projected from the provider's declared API
+structure; recognized collection results retain up to five candidate
+identities as discovery sources, not evidence. Lookup identities must be
+present in the user request or a candidate returned by that provider. The
+existing workspace checkpoint carries these candidates across continuations.
+An automatically selected workflow whose entry lookup lacks a grounded
+identity is excluded and route selection is retried within a bounded budget,
+before an instance is published. An explicitly selected workflow instead
+reports the missing prerequisite. Hosts that do not supply a model selector
+retain the legacy deterministic research adapter.
+
 The bounded research slice now also includes source comparison, a bounded
 synthesis context, and a separate answer-verification contract. Tool success
 is distinct from gap completion: a typed assessment can be sufficient,
@@ -2385,6 +2414,26 @@ column and group records for statistics, and uses bounded field paths for
 other nested result families. It never emits nested JSON objects or arrays to
 the model.
 
+Draft synthesis and ordinary reflection allocate this projection from the
+active inference context, reserving space for instructions, the output schema
+and generation. Explicit `tool_observation_chars` configuration remains the
+starting limit. Individual observations use the available allocation rather
+than a separate fixed 900-character ceiling. Existing nesting and fact-count
+limits still apply; a reduced view carries an explicit truncation marker.
+Draft generation uses the configured output token limit, capped when necessary
+to fit the known context after mandatory instructions and an evidence marker.
+An output-limited draft is not accepted as complete: the host can request a
+more concise regeneration within the existing iteration and review budgets.
+
+Research keeps web search candidates distinct from evidence: a candidate may
+be scheduled for host-authorized fetching and reading before its content can
+support a claim. An OpenAlex work record can provide a reconstructed abstract;
+this remains abstract-level evidence and does not imply the full paper was
+read. When a bounded research run stops without full coverage but has a
+resource-backed source, the host may request a partial answer with explicit
+limitations. The research result remains incomplete, and policy failures,
+cancellation and execution errors do not become partial success.
+
 This follows the research separation between authoritative sources/evidence
 and bounded workspace summaries, and the deliberate separation between an
 intermediate observation and a user-visible answer. Trace entries remain
@@ -3682,13 +3731,11 @@ the URL or `accept` value. The Eurostat catalogue graph therefore fetches its
 TOC as `text/plain`, while ordinary model-selected `web.fetch` calls continue
 to use the tool's model-facing schema and default `*/*` when omitted.
 
-`resource.read` returns one caller-bounded range at a time (up to 32 KiB per
-call, subject to the runtime tool-result budget). The runtime's automatic
-resource-chunk continuation currently applies to large text resources attached
-as turn/plan inputs; it does not yet continue over text resources materialized
-by a workflow tool such as `web.fetch` followed by PDF OCR. Workflow consumers
-must not interpret one successful bounded read as proof that the entire
-derived resource was read.
+`resource.read` returns one bounded page of at most 8192 bytes per call. A
+chunked workflow can hand a successfully materialized text resource to the
+host chunk continuation. Research-acquired text uses the host extraction
+contract and its own persisted progress. One successful page is not proof
+that the entire derived resource was read.
 
 External processor arguments must be introduced as typed processor options,
 not as arbitrary command-line text. The `pdf.page_image` command validates
@@ -5080,6 +5127,18 @@ The chat driver handles ordinary chat generation plus bounded synchronous tool f
 
 These drivers should not know whether the caller was CLI, a resident process, or a future MCP-facing host.
 
+The agent driver carries the host-owned `research_draft` and
+`research_workspace_seed` through both direct driver inputs and session-host
+execution. Rebuilding a request for routing or continuation preserves the
+draft identity and base revision. A later slice without research retains the
+last produced research checkpoint; a continuing slice resumes that workspace.
+Both complete and partial research produce checkpoints, refreshed after answer
+verification or reopening so persistence receives the latest collected state.
+Only daemon persistence advances the durable draft revision. If persistence
+fails after a runtime failure, the returned diagnostic retains both errors.
+The iteration ceiling includes iterations from previous slices; a resumed run
+may only spend the additional budget granted by its current request.
+
 ### Inference Backend
 
 `common_agent_inference` is the abstraction for model generation.
@@ -5191,6 +5250,18 @@ The embedding callback that sits underneath memory-oriented native tools is also
 That provider result path now also carries host-owned resource refs for native tools, not only MCP-shaped ones. In the first concrete slice, larger `web.search` payloads can now be externalized into the configured resource store and returned as `resources` alongside a shorter inline result. The full search payload remains host-addressable by resource URI, while the inline tool result can stay bounded for the model.
 
 That evidence path now continues one step further into planning state. Tool observations can now retain resolved `resource_refs` alongside their bounded inline summary, and the read-only `resource.read` native tool gives later steps a host-owned way to load the deferred payload back by opaque URI instead of forcing the earlier tool to keep everything inline.
+
+`resource.read` accepts a range of up to 10 MiB and returns pages of at most 8192 bytes, keeping JSON-escaped output inside the tool-result budget. The `range` result distinguishes remaining bytes in the requested range from whether the resource itself has more data; a caller can continue with the returned next offset. Text page boundaries preserve complete UTF-8 characters. A resource descriptor by itself does not establish that the whole resource was read. This pagination is independent of the host's document chunk processing and does not by itself schedule or analyze every page.
+
+For resource text acquired during research, the runtime driver supplies the same bounded model extraction and host excerpt verification used for workflow chunks. Research reads host-planned overlapping chunks under the resolved context budget, charges each additional read to its tool-call budget, and records verified excerpts with their source ranges. In a daemon-bound research draft, each successfully analyzed chunk and its next byte offset are checkpointed together through the existing revisioned draft store. The offset identifies the first new byte; the saved overlap is read-only context. A changed content hash, task, representation, or incompatible chunk policy makes the position stale. Incomplete findings remain contextual and cannot by themselves establish a research gap. Structured API/JSON records are assembled under the read and tool budgets before JSON parsing; fragments are not treated as complete records, and their page collection is not yet resumable. Nonpersistent hosts do not acquire a durable checkpoint merely by using this interface.
+
+Model invocation and excerpt verification for a text chunk are shared by deliberate/workflow and research in `resource-chunk-extraction.cpp`. After an authorized resource read, research requests the same host text chunk plan used by workflow processing; page reads acquire those planned ranges, rather than defining separate chunk boundaries. The host exposes these capabilities independently of research workspaces. Workflow plan observations and research draft checkpoints retain their separate owners and persistence semantics.
+
+Research interprets explicit source names against registered family and provider identities, using the original and current user questions rather than generated gap text as authority. Multiple named sources can be exposed together; an unavailable name is reported rather than silently replaced. The current identity check accepts registered names case-insensitively and does not infer unregistered aliases. Provider collection candidates are host-recorded observations, and a selected candidate is materialized in place when its registered lookup identity and provider match. A candidate discovered for an older gap does not automatically preempt a new question.
+
+Evidence assessment and source comparison use bounded model calls; source text is untrusted input, and source/evidence identities remain host-owned. Without a valid semantic assessment, a word match or a successful read cannot establish coverage. The host does not invent agreement from source count. A model-declared no-tool decision can provide a clarification question or describe an answer based on existing context, without claiming completed research. Research token accounting conservatively reserves each selection, assessment, comparison and chunk-extraction completion limit before inference, including failed calls. Reservations are stored in the research draft and may exceed actual decoded tokens; they are not exact usage measurements. A failed checkpoint blocks the corresponding inference call.
+
+The host-owned continuation position uses an explicit unit (bytes, rows, pages, or a provider cursor reference), source and task fingerprints, and a tri-state more-data indicator. Only byte positions for research text are connected to the durable draft path. Document page locations, dataset rows, and OpenAPI cursors retain their existing provider-specific behavior and are not yet resumed by this contract. Whole structured-record reads follow `resource_complete` and the next resource offset, independently of whether the requested interval itself has more bytes; an incomplete structured record is not evidence.
 
 There is now also a first MCP-shaped provider slice beside the native one. `mcp_agent_tool_provider` sits behind a narrow `agent_mcp_tool_client` interface, resolves model-visible `common_chat_tool` values from listed MCP-style tool definitions, namespaces exposed tool names, applies the same host-owned policy gate at exposure time, and normalizes tool-call results back into the shared `agent_tool_result` shape.
 

@@ -100,7 +100,8 @@ bool maybe_select_agent_route(
     const common_agent_orchestration_runtime_context & context,
     common_agent_route_candidate & selected_route,
     bool & route_selected,
-    std::string & error);
+    std::string & error,
+    const std::vector<std::string> & excluded_routes = {});
 
 std::vector<common_chat_tool> common_agent_workflow_action_candidates(
     const std::vector<common_chat_tool> & route_tools,

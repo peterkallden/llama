@@ -20,6 +20,21 @@ bool terminal(const common_plan_workflow_definition & definition, const std::str
         definition.terminal_states.end();
 }
 
+size_t completed_choice_uses(const common_plan_state & plan,
+        const std::string & transition_id, const std::string & choice_id) {
+    const auto marker = transition_id + "=" + choice_id + ",";
+    const size_t first = plan.route_binding ? plan.route_binding->workflow_step_start_index : 0;
+    size_t uses = 0;
+    for (size_t i = first; i < plan.steps.size(); ++i) {
+        const auto & step = plan.steps[i];
+        if (step.status != common_plan_step_status::completed || !step.semantic_alias) continue;
+        const auto & alias = *step.semantic_alias;
+        if (alias.rfind("workflow-transition:", 0) == 0 && alias.find(marker) != std::string::npos)
+            ++uses;
+    }
+    return uses;
+}
+
 bool is_required_parameter_alternatives(const json & schema) {
     if (!schema.is_object() || schema.size() != 1 || !schema.contains("anyOf") ||
             !schema["anyOf"].is_array() || schema["anyOf"].empty()) return false;
@@ -338,9 +353,13 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
         if (next->kind == common_plan_workflow_transition_kind::model_choice) {
             if (!select_choice) { error = "workflow graph needs a model choice selector"; return false; }
             std::set<std::string> ids;
+            auto available = *next;
             if (!next->choices.empty()) {
-                const auto observed = json::parse(observation.summary, nullptr, false);
-                for (const auto & option : next->choices) {
+                available.choices.erase(std::remove_if(available.choices.begin(), available.choices.end(),
+                    [&](const auto & option) {
+                        return option.max_uses && completed_choice_uses(plan, next->id, option.id) >= option.max_uses;
+                    }), available.choices.end());
+                for (const auto & option : available.choices) {
                     const bool available = common_plan_workflow_choice_available(observation, option);
                     if (available) ids.insert(option.id);
                 }
@@ -349,7 +368,7 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
                     next->candidate_id_json_pointer, ids, error)) {
                 return false;
             }
-            if (!select_choice(observation, *next, choice, error)) return false;
+            if (!select_choice(observation, available, choice, error)) return false;
             if (!ids.count(choice)) { error = "workflow choice selected an id outside the host observation"; return false; }
             if (!next->choices.empty()) {
                 const auto selected = std::find_if(next->choices.begin(), next->choices.end(),
@@ -409,7 +428,10 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
             return false;
         }
         auto step = make_tool_step(plan, *next, completed_step_id, choice, observation, select_arguments, error);
-        if (!error.empty()) return false;
+        if (!error.empty()) {
+            error = "workflow transition " + next->id + " (" + next->tool_name + "): " + error;
+            return false;
+        }
         step.depends_on.push_back(completed_step_id);
         step.semantic_alias = "workflow-transition:" + aliases + next->id;
         steps.push_back(std::move(step));

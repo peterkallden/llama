@@ -259,7 +259,8 @@ bool common_agent_install_bootstrap_package(
                             binding.target_transition_id.size() > 64 || binding.target_tool_name.size() > 128 ||
                             binding.source_transition_id.size() > 64 ||
                             binding.target_json_pointer.empty() || binding.target_json_pointer.front() != '/' ||
-                            binding.source_json_pointer.empty() || binding.source_json_pointer.front() != '/') {
+                            binding.source_json_pointer.empty() || binding.source_json_pointer.front() != '/' ||
+                            (!binding.candidate_id_json_pointer.empty() && binding.candidate_id_json_pointer.front() != '/')) {
                         error = "bootstrap workflow contains an invalid continuation argument binding";
                         return false;
                     }

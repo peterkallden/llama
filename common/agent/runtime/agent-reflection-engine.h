@@ -13,6 +13,8 @@ enum class common_reflection_decision { accept, revise, request_action, replan, 
 struct common_reflection_issue {
     std::string kind, description, correction;
     float severity = 0.5f;
+    std::string previous_issue_id;
+    std::vector<std::string> evidence_ids;
 };
 struct common_reflection_learning_hint {
     std::string category, statement;
@@ -29,6 +31,8 @@ struct common_reflection_result {
     bool ready_to_answer = false;
     float confidence = 0.5f;
     std::optional<common_agent_generated_text_result> generation;
+    std::vector<std::string> advisory_notes, resolved_issue_ids;
+    bool structured_review = false;
 };
 
 class common_reflection_engine {

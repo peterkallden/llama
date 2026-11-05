@@ -153,7 +153,28 @@ int main() {
     }
 
     csv_resource_tools tools(sales, income);
-    common_agent_research_runtime_adapter adapter(tools);
+    // Keep this a model-free orchestration smoke while making semantic
+    // assessment explicit. The deterministic assessor validates the fixture
+    // path; it does not change production's no-assessor behavior.
+    common_agent_research_bounded_assessor smoke_assessor(
+        [](const common_agent_research_gap &, const common_agent_research_evidence & evidence) {
+            const bool has_source_excerpt = !evidence.supporting_excerpt.empty();
+            return common_agent_research_assessment{
+                has_source_excerpt ? common_agent_research_assessment_status::sufficient
+                    : common_agent_research_assessment_status::inconclusive,
+                has_source_excerpt ? 0.9 : 0.0,
+                has_source_excerpt ? "The bounded CSV fixture contains a verified excerpt."
+                    : "The CSV fixture did not yield a verified excerpt."};
+        },
+        [](const common_agent_research_gap &,
+                const std::vector<common_agent_research_evidence> & evidence,
+                common_agent_research_source_comparison & comparison) {
+            if (evidence.size() < 2) return false;
+            comparison.relation = common_agent_research_comparison_relation::qualify;
+            comparison.summary = "The two bounded CSV sources provide distinct parts of the comparison.";
+            return true;
+        });
+    common_agent_research_runtime_adapter adapter(tools, &smoke_assessor);
     common_agent_research_runner runner;
     const auto result = runner.run(workspace, adapter, error);
     if (!error.empty() || !result.complete ||
@@ -161,7 +182,10 @@ int main() {
             tools.calls != 2 || workspace.sources.size() != 2 || workspace.evidence.size() != 2 ||
             workspace.comparisons.size() != 1 || result.coverage.answered_gaps != 1 ||
             result.coverage.source_diversity != 1.0) {
-        std::fprintf(stderr, "CSV research completion failed: %s\n", error.c_str());
+        std::fprintf(stderr, "CSV research completion failed: %s (complete=%s stop=%d calls=%zu sources=%zu evidence=%zu comparisons=%zu answered=%d diversity=%.3f)\n",
+            error.c_str(), result.complete ? "true" : "false", static_cast<int>(result.stop_reason),
+            tools.calls, workspace.sources.size(), workspace.evidence.size(), workspace.comparisons.size(),
+            result.coverage.answered_gaps, result.coverage.source_diversity);
         return 1;
     }
     if (tools.call_names != std::vector<std::string>{"resource.read", "resource.read"}) {

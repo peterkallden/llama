@@ -222,6 +222,11 @@ struct common_agent_generation_result {
         std::string artifact_id;
         std::string content_hash;
     } flydelta_runtime;
+    // The server completed generation, but the returned content failed the
+    // requested output schema. This remains a failed result; an owning
+    // structured caller may spend its existing bounded regeneration budget.
+    // Transport, cancellation and protocol failures never set this flag.
+    bool output_schema_rejected = false;
 };
 
 // A bounded teacher-forced comparison over one model-facing choice slot.
@@ -317,6 +322,11 @@ struct common_agent_teacher_forced_choice_batch_result {
 
 inline bool common_agent_generation_succeeded(const common_agent_generation_result & result) {
     return result.status == common_agent_generation_status::completed;
+}
+
+inline bool common_agent_generation_is_schema_rejection(const common_agent_generation_result & result) {
+    return result.output_schema_rejected && result.status == common_agent_generation_status::errored &&
+        result.stop_reason == common_agent_generation_stop_reason::error;
 }
 
 inline common_agent_generated_text_result common_agent_generated_text_result_from_generation_result(

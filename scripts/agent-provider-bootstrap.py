@@ -108,6 +108,38 @@ def parse_operation_values(values, option_name):
     return parsed
 
 
+def validate_path_parameter_prefixes(spec_output, prefixes):
+    """Ensure provider rules refer to paths declared by the actual contract."""
+    document = json.loads(pathlib.Path(spec_output).read_text(encoding="utf-8"))
+    components = document.get("components", {})
+    named = components.get("parameters", {}) if isinstance(components, dict) else {}
+    found = set()
+    for path, path_item in document.get("paths", {}).items():
+        if not isinstance(path_item, dict):
+            continue
+        for method in ("get", "post", "put", "patch", "delete", "head", "options"):
+            operation = path_item.get(method)
+            if not isinstance(operation, dict) or operation.get("operationId") not in prefixes:
+                continue
+            operation_id = operation["operationId"]
+            parameters = list(path_item.get("parameters", [])) + list(operation.get("parameters", []))
+            for parameter in parameters:
+                if not isinstance(parameter, dict):
+                    continue
+                reference = parameter.get("$ref", "")
+                prefix = "#/components/parameters/"
+                if isinstance(reference, str) and reference.startswith(prefix):
+                    parameter = named.get(reference[len(prefix):], {})
+                name = parameter.get("name", "") if isinstance(parameter, dict) else ""
+                if isinstance(parameter, dict) and parameter.get("in") == "path" and name in prefixes[operation_id] and "{" + name + "}" in path:
+                    found.add((operation_id, name))
+    missing = sorted((operation, name) for operation, rules in prefixes.items() for name in rules
+                     if (operation, name) not in found)
+    if missing:
+        raise ValueError("parameter prefix names an undeclared path parameter: " +
+                         ", ".join(operation + "." + name for operation, name in missing))
+
+
 def update_openapi_parameter_descriptions(spec_output, overrides):
     if not overrides:
         return
@@ -151,6 +183,60 @@ def update_openapi_parameter_descriptions(spec_output, overrides):
     path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
+def validate_result_views(views):
+    """Check the portable shape; the host performs authoritative validation."""
+    def pointer(value):
+        if not isinstance(value, str) or not value.startswith("/") or len(value) > 1024:
+            return False
+        position = 0
+        while position < len(value):
+            if value[position] == "~":
+                if position + 1 == len(value) or value[position + 1] not in "01":
+                    return False
+                position += 1
+            position += 1
+        return True
+
+    allowed = {"kind", "items_pointer", "output_pointer", "fields", "derived_fields", "max_items", "max_text_bytes", "max_bytes", "materialize", "resource_scope"}
+    reserved = {"resource_ref", "dataset", "source_resource", "materialized", "representation", "pagination", "host_item_parameter", "host_item_candidates", "host_item_candidates_truncated", "result_count", "preview_omitted_items", "view_truncated", "view_invalid_fields", "materialization_reason", "mime_type", "size_bytes", "rows", "columns", "resources", "dataset_refs"}
+    for operation, view in views.items():
+        if not isinstance(operation, str) or not operation or not isinstance(view, dict):
+            raise ValueError("result views must map operation IDs to objects")
+        if set(view) - allowed or view.get("kind") not in ("object", "collection"):
+            raise ValueError(f"invalid result view for {operation}")
+        if view["kind"] == "collection" and view.get("items_pointer") != "" and not pointer(view.get("items_pointer")):
+            raise ValueError(f"invalid items_pointer for {operation}")
+        if "output_pointer" in view and (view["kind"] != "collection" or not pointer(view["output_pointer"])):
+            raise ValueError(f"invalid output_pointer for {operation}")
+        if view["kind"] == "object" and ("items_pointer" in view or "max_items" in view):
+            raise ValueError(f"object view has collection settings for {operation}")
+        if view["kind"] == "collection":
+            output = view.get("output_pointer", view["items_pointer"] or "/items")
+            if any(output == "/" + key or output.startswith("/" + key + "/") for key in reserved):
+                raise ValueError(f"output pointer collides with host metadata for {operation}")
+        fields = view.get("fields")
+        if not isinstance(fields, dict) or len(fields) > 64 or any(not isinstance(k, str) or not k or len(k) > 128 or k in reserved or not pointer(v) for k, v in fields.items()):
+            raise ValueError(f"invalid fields for {operation}")
+        derived = view.get("derived_fields", {})
+        if not isinstance(derived, dict) or len(derived) > 32:
+            raise ValueError(f"invalid derived_fields for {operation}")
+        for name, transform in derived.items():
+            if not isinstance(name, str) or not name or len(name) > 128 or name in reserved or name in fields or not isinstance(transform, dict) or set(transform) != {"transform", "from"}:
+                raise ValueError(f"invalid derived field for {operation}")
+            kind, source = transform["transform"], transform["from"]
+            if kind == "inverted_index_to_text" and pointer(source):
+                continue
+            if kind == "first_nonempty_url" and isinstance(source, list) and 0 < len(source) <= 16 and all(pointer(p) for p in source) and name + "_source" not in fields and name + "_source" not in derived:
+                continue
+            raise ValueError(f"invalid transform for {operation}.{name}")
+        if view.get("resource_scope", "turn") not in ("turn", "session"):
+            raise ValueError(f"invalid resource_scope for {operation}")
+        if view.get("materialize", "resource") not in ("resource", "dataset_if_tabular"):
+            raise ValueError(f"invalid materialize policy for {operation}")
+        for key, maximum in (("max_items", 100), ("max_text_bytes", 32768), ("max_bytes", 65536)):
+            if key in view and (type(view[key]) is not int or not 0 < view[key] <= maximum):
+                raise ValueError(f"invalid {key} for {operation}")
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--type", choices=("openapi", "mcp"), required=True)
@@ -174,11 +260,17 @@ def main():
     parser.add_argument("--default-projection", action="append", default=[],
                         metavar="OPERATION_ID=FIELDS",
                         help="Host default for a declared select parameter (repeatable)")
+    parser.add_argument("--required-any", action="append", default=[], metavar="OPERATION_ID=PARAMETER,...",
+                        help="Require at least one declared parameter for an operation")
     parser.add_argument("--parameter-description", action="append", default=[],
                         metavar="OPERATION_ID.PARAMETER=TEXT",
                         help="Override one operation's inline parameter description (repeatable)")
     parser.add_argument("--default-page-size", type=int)
     parser.add_argument("--max-page-size", type=int)
+    parser.add_argument("--result-views-file", metavar="PATH",
+                        help="JSON object mapping operation IDs to host result-view policies")
+    parser.add_argument("--parameter-prefixes-file", metavar="PATH",
+                        help="JSON object mapping operation IDs to bounded path parameter prefix rules")
     parser.add_argument("--required", action="store_true",
                         help="Fail host startup if this provider cannot be loaded")
     parser.add_argument("--prefix", default="")
@@ -228,8 +320,54 @@ def main():
             spec, parse_operation_values(args.parameter_description, "--parameter-description"))
         provider["spec_path"] = spec
         projections = parse_operation_values(args.default_projection, "--default-projection")
-        if args.allowed_operation or projections:
+        required_any = parse_operation_values(args.required_any, "--required-any")
+        if args.allowed_operation and not set(required_any).issubset(args.allowed_operation):
+            parser.error("required-any operation must be in the allowlist")
+        views = {}
+        if args.result_views_file:
+            try:
+                views = json.loads(pathlib.Path(args.result_views_file).read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                parser.error(f"cannot read result views: {exc}")
+            if not isinstance(views, dict):
+                parser.error("result views must map operation IDs to objects")
+            try:
+                validate_result_views(views)
+            except ValueError as exc:
+                parser.error(str(exc))
+            if args.allowed_operation and not set(views).issubset(args.allowed_operation):
+                parser.error("result view operation must be in the allowlist")
+        prefixes = {}
+        if args.parameter_prefixes_file:
+            try:
+                prefixes = json.loads(pathlib.Path(args.parameter_prefixes_file).read_text(encoding="utf-8"))
+                if not isinstance(prefixes, dict) or len(prefixes) > 256:
+                    raise ValueError("parameter prefixes must map operation IDs to rule objects")
+                for operation, rules in prefixes.items():
+                    if not isinstance(operation, str) or not operation or not isinstance(rules, dict) or len(rules) > 32:
+                        raise ValueError("invalid parameter prefix operation")
+                    for name, rule in rules.items():
+                        if (not isinstance(name, str) or not name or len(name) > 128 or
+                                not isinstance(rule, dict) or set(rule) != {"if_starts_with", "prepend"} or
+                                not isinstance(rule["if_starts_with"], str) or not 0 < len(rule["if_starts_with"]) <= 128 or
+                                not isinstance(rule["prepend"], str) or not 0 < len(rule["prepend"]) <= 512):
+                            raise ValueError(f"invalid parameter prefix rule for {operation}.{name}")
+                if args.allowed_operation and not set(prefixes).issubset(args.allowed_operation):
+                    raise ValueError("parameter prefix operation must be in the allowlist")
+                validate_path_parameter_prefixes(spec, prefixes)
+            except (OSError, ValueError) as exc:
+                parser.error(f"invalid parameter prefixes: {exc}")
+        if args.allowed_operation or projections or views or required_any or prefixes:
             operations = {operation_id: {"enabled": True} for operation_id in args.allowed_operation}
+            for operation_id, values in required_any.items():
+                parameters = [value.strip() for value in values.split(",")]
+                if any(not value for value in parameters) or len(set(parameters)) != len(parameters):
+                    parser.error("--required-any requires distinct nonempty parameter names")
+                operations.setdefault(operation_id, {"enabled": True})["required_any_parameters"] = parameters
+            for operation_id, view in views.items():
+                operations.setdefault(operation_id, {"enabled": True})["result_view"] = view
+            for operation_id, rules in prefixes.items():
+                operations.setdefault(operation_id, {"enabled": True})["parameter_prefixes"] = rules
             for operation_id, projection in projections.items():
                 operations.setdefault(operation_id, {"enabled": True})
                 operations[operation_id]["default_projection"] = projection
@@ -246,6 +384,8 @@ def main():
         if limits:
             provider["limits"] = limits
     else:
+        if args.result_views_file or args.parameter_prefixes_file:
+            parser.error("result view and parameter prefix files apply only to OpenAPI providers")
         if args.transport == "stdio" and not args.command:
             parser.error("stdio MCP providers require --command")
         if args.transport != "stdio" and not args.url:

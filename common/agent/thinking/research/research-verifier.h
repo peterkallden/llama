@@ -94,8 +94,8 @@ public:
             result.summary = "research draft is empty";
             return result;
         }
-        if (!research.complete || !research.unresolved_claim_ids.empty() ||
-                research.coverage.unresolved_critical_gaps > 0) {
+        if ((!research.complete || !research.unresolved_claim_ids.empty() ||
+                research.coverage.unresolved_critical_gaps > 0) && !research.partial_answer_available) {
             result.decision = common_agent_research_verification_decision::gather_evidence;
             result.more_research_required = true;
             result.summary = "research result still has unresolved knowledge gaps";
@@ -177,12 +177,14 @@ public:
         }
 
         result.decision = common_agent_research_verification_decision::accept;
-        result.answer_sufficient = true;
+        result.answer_sufficient = research.complete;
         result.confidence = std::clamp(
             research.coverage.evidence_quality * research.coverage.objective_coverage,
             0.0,
             1.0);
-        result.summary = "research draft passed bounded evidence and coverage assurance";
+        result.summary = research.partial_answer_available
+            ? "partial research draft has source-backed evidence; unresolved gaps remain"
+            : "research draft passed bounded evidence and coverage assurance";
         return result;
     }
 };

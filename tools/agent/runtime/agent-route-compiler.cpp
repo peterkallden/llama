@@ -234,6 +234,13 @@ common_agent_execution_phase_policy make_phase(
 
 } // namespace
 
+bool common_agent_route_has_capability(const common_agent_runtime_tooling & tooling,
+        const std::string & capability, const common_plan_workflow_definition * workflow) {
+    if (capability.rfind("workflow.", 0) == 0)
+        return workflow != nullptr && workflow_capability_matches(capability, *workflow);
+    return has_host_capability(tooling, capability);
+}
+
 bool common_agent_resolve_workflow_tools(
         const common_plan_workflow_definition & workflow,
         const common_agent_runtime_tooling & tooling,

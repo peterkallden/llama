@@ -79,7 +79,13 @@ bool verify(const common_agent_bootstrap_package & package,const common_agent_te
     std::string expected,actual;
     if(!project_package(package,manifest,expected_memories,expected_plans,expected,error)||
             !project_package(package,manifest,memories,plans,actual,error))return false;
-    if(actual!=expected){error="immutable library definitions differ from their package receipt";return false;}
+    if(actual!=expected){
+        error="immutable library definitions differ from their package receipt";
+        const auto differences = json::diff(json::parse(expected), json::parse(actual));
+        // Report the first differing field, not stored source or user content.
+        if (!differences.empty()) error += " at " + differences.front().value("path", std::string{});
+        return false;
+    }
     return true;
 }
 std::string fingerprint(const common_agent_template_library_config & c,const std::string & canonical){

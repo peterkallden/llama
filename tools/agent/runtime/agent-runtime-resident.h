@@ -54,6 +54,11 @@ common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime
     std::shared_ptr<common_agent_runtime_model_residency> model_residency = nullptr,
     std::string model_profile_id = {});
 
+void set_agent_runtime_turn_research_context(common_agent_runtime_turn_request & request,
+        std::optional<common_agent_research_draft_ref> draft,
+        std::optional<common_agent_research_workspace> seed,
+        std::function<bool(const common_agent_research_workspace &, std::string &)> progress_sink);
+
 class common_agent_runtime_resident_runtime {
 public:
     explicit common_agent_runtime_resident_runtime(common_agent_runtime_resident_runtime_config config);
@@ -70,6 +75,10 @@ public:
             bool require_tool_execution,
             std::optional<common_agent_resource_read_binding> resource_read_binding = std::nullopt,
             std::optional<common_investigation_context_binding> investigation_context = std::nullopt);
+    void set_research_context(
+            std::optional<common_agent_research_draft_ref> draft,
+            std::optional<common_agent_research_workspace> seed,
+            std::function<bool(const common_agent_research_workspace &, std::string &)> progress_sink);
     void set_current_plan_id(std::string plan_id) { resident_current_plan_id = std::move(plan_id); }
 
     // Load the configured inference model without executing a user turn.

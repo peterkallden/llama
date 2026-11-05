@@ -14,6 +14,19 @@
     if (!test_result) { std::fprintf(stderr, "TEST_ASSERT failed at line %d: %s\n", __LINE__, #expr); return 1; } \
 } while (false)
 
+class chunk_test_inference final : public common_agent_inference {
+public:
+    int calls = 0;
+    bool generate(const common_agent_generation_request &, common_agent_generation_result & result) override {
+        ++calls;
+        result.status = common_agent_generation_status::completed;
+        result.decoded_tokens = 7;
+        result.content = calls == 1 ? "status: findings\nevidence: not in the text" :
+            "status: findings\nevidence: Radiation flux increased.";
+        return true;
+    }
+};
+
 int main() {
     common_agent_failure http_failure;
     http_failure.code = "tool.web_fetch.request_failed";
@@ -40,6 +53,13 @@ int main() {
         {"P1", "Radiation flux increased.", 0, 26},
         {"P2", "The camera remained\noperational during the campaign.", 27, 54},
     };
+    chunk_test_inference chunk_inference;
+    common_agent_generation_options chunk_options;
+    chunk_options.n_predict = 384;
+    int decoded_tokens = 0;
+    TEST_ASSERT(common_agent_extract_resource_chunk(chunk_inference, "inspect radiation", generation_chunk,
+        std::nullopt, chunk_options, "chunk-test", 2, chunk_extraction, decoded_tokens, chunk_error));
+    TEST_ASSERT(chunk_inference.calls == 2 && decoded_tokens == 14 && chunk_extraction.findings.size() == 1);
     TEST_ASSERT(common_agent_parse_resource_chunk_extraction(
         "status: findings\nfinding: The radiation result is reported.\nevidence: Radiation flux\n"
         "finding: The camera stayed operational.\nevidence: The camera remained\noperational during the campaign.",
@@ -98,6 +118,15 @@ int main() {
     TEST_ASSERT(synthesis.missing_chunk_indexes.size() == 2);
     TEST_ASSERT(synthesis.unresolved_chunk_indexes.size() == 1);
     TEST_ASSERT(synthesis.unobserved_chunk_indexes.size() == 1);
+    auto resolved_retry = unresolved_observation;
+    resolved_retry.id = "resolved-retry";
+    resolved_retry.source = "resource_chunk";
+    resolved_retry.summary = "verified retry";
+    TEST_ASSERT(common_plan_chunk_synthesis_from_observations(
+        {unresolved_observation, resolved_retry}, "resource://source/pdf", synthesis, chunk_error));
+    TEST_ASSERT(synthesis.completed_chunk_indexes.size() == 1 && synthesis.unresolved_chunk_indexes.empty());
+    TEST_ASSERT(!common_plan_chunk_synthesis_from_observations(
+        {resolved_retry, resolved_retry}, "resource://source/pdf", synthesis, chunk_error));
     auto visited_unresolved = unresolved_observation;
     visited_unresolved.resource_refs.front().lineage.chunk_index = 1;
     visited_unresolved.source = "resource_chunk";
@@ -295,6 +324,16 @@ int main() {
         changed,
         error));
     TEST_ASSERT(error.find("search") != std::string::npos);
+
+    {
+        auto conflicting_hosts = request;
+        conflicting_hosts.tool_argument_bindings.push_back({"openalex.listWorks",
+            R"({"search":"different host value"})", "host-test", false});
+        TEST_ASSERT(!common_agent_runtime_apply_host_tool_arguments_to_json(
+            conflicting_hosts, "openalex.listWorks", nlohmann::ordered_json::object(),
+            bound_arguments, changed, error));
+        TEST_ASSERT(error == "conflicting host tool argument bindings: search");
+    }
 
     nlohmann::ordered_json normalized;
     changed = false;

@@ -1,5 +1,5 @@
 #include "agent-openapi-provider.h"
-#include "agent-openapi-result-projection.h"
+#include "../tooling/agent-result-view.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <algorithm>
@@ -10,20 +10,78 @@ namespace {
 
 using json = nlohmann::ordered_json;
 
-// An OpenAPI document can declare a very wide response object.  The full
-// schema remains authoritative for host validation and result handling, but
-// serializing it into every model tool catalog needlessly turns a simple
-// operation choice into a provider-specific schema-reading task.  All
-// OpenAPI calls are wrapped by the common tool result contract: `result`
-// carries the bounded response and `resources` carries host-owned materialized
-// representations when available.
-constexpr const char * openapi_model_result_schema = R"({
-    "type":"object",
-    "properties":{
-        "result":{"description":"Bounded provider response."},
-        "resources":{"type":"array","description":"Host-owned materialized result resources.","items":{"type":"object"}}
+// Plan observations and JSON-pointer bindings use the provider result body as
+// their root. Keep the model schema small, but describe host-owned fields that
+// are guaranteed by a declared collection relation. The common `{ok, result}`
+// execution envelope is added later by the tool runtime.
+std::string openapi_model_result_schema(
+        const agent_openapi_catalog & catalog,
+        const agent_openapi_operation & operation) {
+    json schema = {
+        {"type", "object"},
+        {"description", "Bounded response body returned by this provider operation."},
+        {"additionalProperties", true},
+    };
+    if (!operation.result_view_json.empty()) {
+        const auto view = json::parse(operation.result_view_json);
+        json fields = json::object();
+        for (const auto & field : view["fields"].items()) fields[field.key()] = json::object();
+        if (view.contains("derived_fields")) {
+            for (const auto & field : view["derived_fields"].items()) {
+                fields[field.key()] = {{"type", "string"}};
+                if (field.value()["transform"] == "first_nonempty_url") fields[field.key() + "_source"] = {{"type", "string"}};
+                if (field.value()["transform"] == "inverted_index_to_text") fields[field.key() + "_truncated"] = {{"type", "boolean"}};
+            }
+        }
+        schema["properties"] = json::object();
+        if (view["kind"] == "object") schema["properties"] = std::move(fields);
+        else {
+            // Describe the output at the configured pointer, including nested envelopes.
+            auto * properties = &schema["properties"];
+            auto pointer = view["items_pointer"].get<std::string>();
+            pointer = view.value("output_pointer", pointer.empty() ? std::string("/items") : pointer);
+            json::json_pointer parsed(pointer);
+            (void) parsed;
+            size_t begin = 1;
+            while (begin <= pointer.size()) {
+                const size_t end = pointer.find('/', begin);
+                auto key = pointer.substr(begin, end == std::string::npos ? end : end - begin);
+                for (size_t i = 0; i + 1 < key.size(); ++i) if (key[i] == '~') { key.replace(i, 2, key[i + 1] == '1' ? "/" : "~"); }
+                if (end == std::string::npos) {
+                    (*properties)[key] = {{"type", "array"}, {"items", {{"type", "object"}, {"properties", fields}}}};
+                    break;
+                }
+                (*properties)[key] = {{"type", "object"}, {"properties", json::object()}};
+                properties = &(*properties)[key]["properties"];
+                begin = end + 1;
+            }
+        }
+        schema["properties"]["resource_ref"] = {{"type", "string"}};
+        schema["properties"]["pagination"] = {{"type", "object"}};
+        schema["properties"]["result_count"] = {{"type", "integer"}};
+        schema["properties"]["preview_omitted_items"] = {{"type", "integer"}};
+        schema["properties"]["view_truncated"] = {{"type", "boolean"}};
+        schema["properties"]["view_invalid_fields"] = {{"type", "integer"}};
     }
-})";
+    const auto relation = std::find_if(catalog.relations.begin(), catalog.relations.end(),
+        [&](const auto & item) { return item.collection_operation_id == operation.operation_id; });
+    if (relation != catalog.relations.end()) {
+        schema["properties"]["host_item_parameter"] = {{"type", "string"}};
+        schema["properties"]["host_item_candidates"] = {
+                {"type", "array"},
+                {"description", "Host-validated item identities for a subsequent lookup."},
+                {"items", {
+                    {"type", "object"},
+                    {"properties", {{relation->item_parameter, {
+                        {"type", "string"},
+                        {"description", "Identity accepted by the related item lookup."},
+                    }}}},
+                }},
+            };
+        schema["properties"]["host_item_candidates_truncated"] = {{"type", "boolean"}};
+    }
+    return schema.dump();
+}
 
 std::string paging_description(const agent_openapi_operation & operation) {
     const auto & paging = operation.paging;
@@ -83,11 +141,15 @@ public:
             }
             for (const auto & relation : catalog.relations) {
                 if (relation.collection_operation_id == operation.operation_id) {
+                    definition.collection_item_parameter = relation.item_parameter;
+                    definition.collection_items_pointer = "/host_item_candidates";
                     definition.description += " workflow: " + catalog.prefix + "." +
                         relation.collection_operation_id + " -> choose/bind " +
                         relation.item_parameter + " -> " + catalog.prefix + "." +
-                        relation.item_operation_id + ".";
+                        relation.item_operation_id +
+                        ". Use host_item_candidates for validated lookup identities.";
                 } else if (relation.item_operation_id == operation.operation_id) {
+                    definition.item_lookup_parameter = relation.item_parameter;
                     definition.description += " workflow input: " + catalog.prefix + "." +
                         relation.collection_operation_id + " produces " +
                         relation.item_parameter + ".";
@@ -106,8 +168,11 @@ public:
                     operation.operation_id + ": " + model_schema_error;
                 return false;
             }
-            definition.result_schema_json = operation.result_schema_json;
-            definition.model_result_schema_json = openapi_model_result_schema;
+            definition.model_result_schema_json = openapi_model_result_schema(catalog, operation);
+            // Dataflow bindings consume the projected body, while dataset
+            // classification continues to use the upstream response schema.
+            definition.result_schema_json = operation.result_view_json.empty()
+                ? operation.result_schema_json : definition.model_result_schema_json;
             definition.read_only = operation.read_only;
             // OpenAPI operations are model tools by default. Empty visibility
             // remains an explicit provider choice to hide a tool.
@@ -146,8 +211,14 @@ private:
         }
         agent_openapi_execution_result execution;
         auto arguments = json::parse(arguments_json, nullptr, false);
-        if (!executor || !arguments.is_object() ||
-                !executor(context, *it, arguments_json, execution, error)) return false;
+        if (!executor || !arguments.is_object()) return false;
+        if (requested_page_limit > 1 && it->read_only && it->paging.kind == agent_openapi_paging_kind::cursor &&
+                !it->paging.initial_cursor.empty() && !arguments.contains(it->paging.cursor_parameter) &&
+                (it->paging.page_parameter.empty() || !arguments.contains(it->paging.page_parameter))) {
+            arguments[it->paging.cursor_parameter] = it->paging.initial_cursor;
+        }
+        const auto effective_arguments_json = arguments.dump();
+        if (!executor(context, *it, effective_arguments_json, execution, error)) return false;
         if (execution.ok && requested_page_limit > 1 && it->read_only &&
                 it->paging.kind == agent_openapi_paging_kind::cursor &&
                 !it->paging.cursor_parameter.empty()) {
@@ -161,63 +232,38 @@ private:
         // Materialization replaces the body with a resource descriptor. Preserve
         // the response for a bounded discovery preview before that happens.
         const auto source_content_json = execution.structured_content_json;
-        if (materializer && !materializer(context, *it, arguments_json, execution, error)) return false;
-        execution.structured_content_json = agent_openapi_project_model_result(
-            execution.structured_content_json, catalog.prefix == "openalex");
-        if (execution.ok && catalog.prefix == "openalex" && !execution.resource_refs.empty()) {
-            const auto body = json::parse(agent_openapi_project_model_result(source_content_json, true), nullptr, false);
-            if (body.is_object() && body.contains("results") &&
-                    body["results"].is_array()) {
-                json candidates = json::array();
-                const size_t preview_count = std::min<size_t>(5, body["results"].size());
-                for (size_t index = 0; index < preview_count; ++index) {
-                    const auto & item = body["results"][index];
-                    json candidate = json::object();
-                    for (const char * key : {"id", "display_name", "title", "publication_year", "doi",
-                            "full_text_url", "full_text_url_source"}) {
-                        if (item.is_object() && item.contains(key) &&
-                                item[key].dump().size() <= 512) candidate[key] = item[key];
-                    }
-                    if (item.is_object() && item.contains("abstract_text") && item["abstract_text"].is_string()) {
-                        const auto & abstract = item["abstract_text"].get_ref<const std::string &>();
-                        size_t bytes = std::min<size_t>(1200, abstract.size());
-                        if (bytes < abstract.size()) {
-                            while (bytes > 0 && (static_cast<unsigned char>(abstract[bytes]) & 0xc0) == 0x80) --bytes;
-                        }
-                        candidate["abstract_text"] = abstract.substr(0, bytes);
-                        if (bytes < abstract.size()) candidate["abstract_truncated"] = true;
-                    }
-                    candidates.push_back(std::move(candidate));
-                }
-                json preview = {
-                    {"result_count", body["results"].size()},
-                    {"candidates", std::move(candidates)},
-                    {"preview_omitted_items", body["results"].size() - preview_count},
-                    {"resource_ref", execution.resource_refs.front().uri},
-                };
-                if (body.contains("pagination") && body["pagination"].is_object()) preview["pagination"] = body["pagination"];
-                execution.structured_content_json = preview.dump();
-            } else if (it->operation_id == "getWork" && body.is_object()) {
-                // Preserve the host-derived fields needed by workflow choices
-                // and bindings without duplicating the complete work record.
-                json preview = {{"resource_ref", execution.resource_refs.front().uri}};
-                for (const char * key : {"id", "display_name", "title", "publication_year",
-                        "publication_date", "doi", "full_text_url", "full_text_url_source"}) {
-                    if (body.contains(key) && (body[key].is_string() || body[key].is_number()) &&
-                            body[key].dump().size() <= 1024) preview[key] = body[key];
-                }
-                if (body.contains("abstract_text") && body["abstract_text"].is_string()) {
-                    const auto & abstract = body["abstract_text"].get_ref<const std::string &>();
-                    size_t bytes = std::min<size_t>(1200, abstract.size());
-                    if (bytes < abstract.size()) {
-                        while (bytes > 0 && (static_cast<unsigned char>(abstract[bytes]) & 0xc0) == 0x80) --bytes;
-                    }
-                    preview["abstract_text"] = abstract.substr(0, bytes);
-                    if (bytes < abstract.size()) preview["abstract_truncated"] = true;
-                }
-                execution.structured_content_json = preview.dump();
+        if (execution.ok && materializer && !materializer(context, *it, effective_arguments_json, execution, error)) return false;
+        if (execution.ok && !it->result_view_json.empty()) {
+            if (execution.resource_refs.empty() && execution.dataset_refs.empty()) {
+                execution.structured_content_json = "{}";
+            } else if (!execution.resource_refs.empty()) {
+                auto metadata = json::parse(execution.structured_content_json, nullptr, false);
+                if (!metadata.is_object()) metadata = json::object();
+                metadata["resource_ref"] = execution.resource_refs.front().uri;
+                execution.structured_content_json = metadata.dump();
             }
-        } else if (requested_page_limit > 1 && !execution.resource_refs.empty()) {
+        }
+        if (execution.ok && !it->result_view_json.empty() && requested_page_limit > 1) {
+            const auto source = json::parse(source_content_json, nullptr, false);
+            auto metadata = json::parse(execution.structured_content_json, nullptr, false);
+            if (source.is_object() && source.contains("pagination") && source["pagination"].is_object()) {
+                if (!metadata.is_object()) metadata = json::object();
+                metadata["pagination"] = source["pagination"];
+                execution.structured_content_json = metadata.dump();
+            }
+        }
+        if (execution.ok && !it->result_view_json.empty() &&
+                !agent_result_view_project(it->result_view_json, source_content_json, execution.structured_content_json, error)) {
+            execution.ok = false;
+            execution.failure_code = "openapi.result_view_invalid_response";
+            execution.safe_summary = "Provider response did not match the configured result view.";
+            execution.raw_diagnostic = error;
+            error.clear();
+        }
+        if (!it->result_view_json.empty()) {
+            execution.text_content = execution.ok ? "Bounded provider result view." : execution.safe_summary;
+        }
+        if (requested_page_limit > 1 && !execution.resource_refs.empty() && it->result_view_json.empty()) {
             auto preview = json::parse(execution.structured_content_json, nullptr, false);
             const json::json_pointer path(it->paging.items_pointer);
             if (preview.is_object() && preview.contains("pagination") &&
@@ -235,6 +281,48 @@ private:
                 preview[path] = std::move(selected);
                 annotate_pagination(preview, {{"preview_omitted_items", omitted},
                     {"resource_ref", execution.resource_refs.front().uri}});
+                execution.structured_content_json = preview.dump();
+            }
+        }
+        // Project identity candidates from the original provider response,
+        // before a materializer replaces it with a resource descriptor. The
+        // catalog relation, rather than a provider name, defines the lookup
+        // parameter. The original body remains in the host-owned resource.
+        const auto relation = std::find_if(catalog.relations.begin(), catalog.relations.end(),
+                [&](const auto & item) { return item.collection_operation_id == it->operation_id; });
+        if (execution.ok && relation != catalog.relations.end()) {
+            std::vector<agent_openapi_item_reference> references;
+            std::string reference_error;
+            agent_openapi_result_projection_limits limits;
+            if (!make_agent_openapi_item_references(catalog, it->operation_id, source_content_json,
+                    limits, references, reference_error)) {
+                execution.ok = false;
+                execution.failure_code = "openapi.collection_projection_unavailable";
+                execution.failure_class = common_tool_failure_class::execution;
+                execution.safe_summary = "The provider collection did not match its declared response layout.";
+                execution.raw_diagnostic = reference_error;
+            } else {
+                auto preview = json::parse(execution.structured_content_json, nullptr, false);
+                if (!preview.is_object()) preview = json::object();
+                preview["host_item_parameter"] = relation->item_parameter;
+                preview["host_item_candidates"] = json::array();
+                const auto body = json::parse(source_content_json, nullptr, false);
+                for (const auto & reference : references) {
+                    if (preview["host_item_candidates"].size() >= 5) break;
+                    json candidate = {{reference.item_parameter, reference.item_value}};
+                    try {
+                        const json::json_pointer rows(it->paging.items_pointer);
+                        if (body.contains(rows) && body.at(rows).is_array() && reference.row_index < body.at(rows).size()) {
+                            const auto & row = body.at(rows).at(reference.row_index);
+                            for (const char * key : {"display_name", "title"}) {
+                                if (row.is_object() && row.contains(key) && row[key].is_string() && row[key].get<std::string>().size() <= 512)
+                                    candidate[key] = row[key];
+                            }
+                        }
+                    } catch (const json::exception &) { /* Identity remains valid without a display title. */ }
+                    preview["host_item_candidates"].push_back(std::move(candidate));
+                }
+                preview["host_item_candidates_truncated"] = references.size() > 5;
                 execution.structured_content_json = preview.dump();
             }
         }

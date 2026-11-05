@@ -90,6 +90,12 @@ int main() {
             return;
         }
         if (body.contains("response_format")) {
+            if (prompt == "scalar-schema" || prompt == "scalar-schema-invalid") {
+                const auto value = prompt == "scalar-schema" ? "openalex.listWorks" : "not.allowed";
+                response.set_content(json{{"choices", json::array({{{"finish_reason", "stop"},
+                    {"message", {{"role", "assistant"}, {"content", json{{"value", value}}.dump()}}}}})}}.dump(), "application/json");
+                return;
+            }
             if (prompt == "invalid-schema") {
                 response.set_content(R"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"wrong\":\"fixture\"}"}}]})", "application/json");
                 return;
@@ -357,6 +363,25 @@ int main() {
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("does not declare native tool-call support") != std::string::npos);
 
+    request = {};
+    request.messages = {{"user", "scalar-schema"}};
+    request.json_schema = R"({"type":"string","enum":["openalex.listWorks","openalex.getWork"]})";
+    assert(schema_inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::completed);
+    assert(result.content == R"("openalex.listWorks")");
+    {
+        std::lock_guard<std::mutex> lock(seen_mutex);
+        const auto & schema = seen["response_format"]["json_schema"]["schema"];
+        assert(schema["type"] == "object" && schema["additionalProperties"] == false);
+        assert(schema["required"] == json::array({"value"}));
+        assert(schema["properties"]["value"]["type"] == "string");
+    }
+    request.messages.front().content = "scalar-schema-invalid";
+    assert(schema_inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::errored);
+    assert(result.error_message.find("rejected by requested JSON schema") != std::string::npos);
+    assert(result.output_schema_rejected);
+
     selection.supports_json_schema = false;
     auto text_only = make_agent_http_inference(selection);
     request.json_schema = R"({"type":"object"})";
@@ -370,14 +395,17 @@ int main() {
     assert(schema_inference->generate(request, result));
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("rejected by requested JSON schema") != std::string::npos);
+    assert(result.output_schema_rejected);
     assert(nonstrict_inference->generate(request, result));
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("rejected by requested JSON schema") != std::string::npos);
+    assert(result.output_schema_rejected);
     request.json_schema.clear();
     request.messages.front().content = "malformed-json";
     assert(inference->generate(request, result));
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("invalid JSON") != std::string::npos);
+    assert(!result.output_schema_rejected);
     request.messages.front().content = "missing-choice";
     assert(inference->generate(request, result));
     assert(result.status == common_agent_generation_status::errored);
@@ -386,6 +414,7 @@ int main() {
     assert(inference->generate(request, result));
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("context limit") != std::string::npos);
+    assert(!result.output_schema_rejected);
     request.messages.front().content = "schema-context-error";
     assert(inference->generate(request, result));
     assert(result.status == common_agent_generation_status::errored);

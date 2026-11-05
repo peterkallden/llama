@@ -1,4 +1,5 @@
 #pragma once
+#include "agent-response.h"
 
 #include <cstdio>
 #include <nlohmann/json.hpp>
@@ -83,6 +84,7 @@ struct common_agent_jsonl_turn_result {
     std::string error;
     std::string failure_class;
     int event_count = 0;
+    std::optional<common_agent_unverified_draft> unverified_draft;
 };
 
 bool common_agent_jsonl_read_message(

@@ -82,6 +82,19 @@ when the host can resolve them in the active tool view; those resolved tools
 are part of the route envelope and its fingerprint from route selection.
 Context requirements are checked separately and do not grant tool authority.
 Legacy `continuation_workflow_targets` remain supported for dataset handoffs.
+When a linked target's entry does not declare `model_supplies_arguments`, the
+host uses the same deterministic argument materializer as later graph steps.
+The tool, static inputs and observed candidate identity are validated without
+an extra argument-generation call. Missing or conflicting inputs fail closed;
+the host does not ask the model to invent replacements.
+
+A model-driven entry that requires an unbound record identifier can return
+`selection.decline` with empty arguments. This is a selection result, never an
+executable tool. Automatic routing can then exclude that route and ask the
+model to select an available discovery workflow. An existing host-bound
+identifier removes this decline option. The same contract applies to native
+JSON and compact DSL.
+
 New cross-workflow handoffs use `continuation_links`, which bind a source
 transition and terminal state to a target workflow revision and may carry
 JSON-pointer bindings from successful structured observations, including a
@@ -90,7 +103,15 @@ persisted as a host-validated structured observation after its following tool
 action succeeds. Model prose cannot satisfy a binding or create a verified
 resource/dataset reference. The host recompiles only declared targets against
 current applicability and execution-envelope policy. A unique eligible route
-is deterministic; multiple routes use the bounded route selector. If a
+is deterministic; multiple routes use the bounded route selector. A link may
+set `optional: true` to offer finishing with the current evidence alongside
+eligible continuations; the model chooses using the task and completed
+observation. An optional link does not grant capabilities or override budgets.
+A binding may set `candidate_id` to a JSON pointer within each item of the
+array at `source`. The model selects an ID from that host-observed array, and
+the host verifies membership before binding it to the target tool. This does
+not make a candidate a verified fact. Existing links without these fields keep
+their prior behavior. If a
 required source value is missing, the host records the gap and leaves the
 source route active instead of inventing a value. Typed links can carry
 structured resource/API metadata even when the source result is not a dataset;
@@ -134,6 +155,62 @@ transition, whose stable transition ID is retained in the plan. In both cases
 completed source steps remain in plan history and the final-answer step waits
 for the appended work. Join workflows remain eligible only when at least two
 distinct datasets are present and the request selects that route.
+
+A transition with a declared handled failure may also trigger a continuation.
+The failed call remains failed; its host-recorded terminal outcome supplies the
+link evidence. When the workflow was entered from a bounded candidate array,
+the host carries that original handoff into the failure outcome and removes
+identities already attempted by the target lookup tool. A recovery link can
+therefore select another observed candidate without repeating discovery or
+allowing the model to reconstruct an identifier. Exhausting the bounded
+frontier ends recovery and leaves the source limitation visible.
+Terminal model choices can retain the same host-verified entry handoff as
+handled tool failures. A choice records its terminal state and source tool
+observation; continuation resolution only accepts outcomes from the active
+route segment. A continuation without `from_transition` can handle a shared
+terminal state reached either by a tool failure or by a model choice, sharing
+one persisted `max_uses` limit across both paths.
+
+The OpenAlex full-text workflow offers `try_another_candidate` when the task
+requires deeper evidence but the current record has no usable full-text
+location. This is a model choice, not semantic routing in host code. The record
+and abstract remain shallow evidence; absence of a URL is not an HTTP failure.
+The same mandatory alternative-candidate link handles this outcome and declared
+HTTP access failures. Abstract-only requests may still select
+`answer_from_abstract`. When the bounded alternative is exhausted, synthesis
+must disclose the evidence limits rather than imply full-text inspection.
+
+The bounded synthesis/review projection retains failed-request URL paths
+(without credentials, query or fragment) and host-validated terminal choices
+with their source evidence. These are acquisition limitations and method
+decisions, not successful content observations. Review can therefore distinguish
+a rejected fetch from a record without a usable locator without guessing which
+article a generic HTTP status belongs to.
+An optional positive `max_uses` on a continuation link bounds transitions of
+that link across the persisted plan history. If omitted, the global host
+continuation budget is the only use limit. A link with no remaining candidates
+or an exhausted use limit is not applicable and does not consume that budget.
+
+The route binding, continuation history, bound entry steps and handoff snapshot
+are committed as one plan operation. Final synthesis is made dependent on that
+entry in the same operation. Restarting after this checkpoint restores the
+selected route and candidate without repeating model selection. A handled
+failure remains a satisfied dependency across route changes only when its exact
+host observation is recorded in the durable continuation history.
+
+Host argument bindings carry an explicit lifetime. Execution constraints remain
+applicable across routes; static entry arguments, selected candidate identities
+and generated entry arguments belong to the current workflow route. A route
+transition drops these route-local bindings before constructing the next entry.
+This permits a different observed candidate for the same lookup tool without
+weakening argument conflict validation or removing attempted identities from
+plan history. The diagnostic source label does not determine binding lifetime.
+
+Research keeps discovered candidate records separate from materialized sources
+for budget accounting. `max_candidates` limits retained candidates and
+`max_sources` limits sources; materializing a candidate consumes a source slot.
+Follow-up executions preserve existing records while receiving a bounded new
+allocation, rather than failing solely because an earlier turn filled a limit.
 
 Host-provided read-only memory tools (`memory.search`, `memory.get`,
 `memory.inspect`, and `memory.conflict_check`) remain ambient in a scoped route
@@ -587,14 +664,17 @@ through the operation's `x-agent-pagination` metadata. No OpenAlex-specific
 workflow name or blueprint binding is required. Other pagination methods are
 reported as unsupported for automatic collection and remain single-request.
 
-The broad work-search and literature-review workflows may follow the OpenAlex
-cursor for at most five pages. This host-only limit is attached to those
-workflow transitions; direct `openalex.listWorks` calls and narrower lookups
-remain single-request. The host uses the configured page size, records page and
-HTTP provenance, materializes the combined raw JSON as a resource, and sends it
-through the existing chunked-read path. A page cap, missing/repeated cursor, or
-later-page failure is marked `complete: false` with a stop reason. No request is
-retried automatically, and a bounded result is never described as exhaustive.
+The bundled work-search and literature-review workflows use one bounded
+OpenAlex page. OpenAlex now requires a configured API key for cursor requests
+beyond the first page, so the unauthenticated starter profile does not request
+hidden follow-up pages. An installation that configures the required
+authentication can import a workflow with generic `max_pages` collection.
+SQLite and Cozo preserve that transition limit across restarts. The host then
+records page and HTTP provenance, materializes the combined raw JSON as a
+resource, and sends it through the existing chunked-read path. A page cap,
+missing/repeated cursor, or later-page failure is marked `complete: false` with
+a stop reason. No request is retried automatically, and a bounded result is
+never described as exhaustive.
 
 The full-text workflow is deliberately layered. `openalex.getWork` supplies
 identity, bibliographic metadata and declared open-access locations. The host
@@ -607,6 +687,10 @@ open-access file, the host projects `full_text_url`, preferring
 exact returned value to `web.fetch`; the model does not repeat or invent a URL,
 and a `landing_page_url` is not treated as the content URL. Fetch, inspect and
 read are then workflow-materialized steps.
+If a declared 401, 403, 404 or 410 prevents fetching that content, the starter
+workflow retains the original bounded search handoff and continues with a
+different, untried host-observed work identity while continuation budget and
+candidates remain. It reports the access failure when no candidate succeeds.
 `web.fetch` stores the authoritative fetched body as a typed host resource,
 rather than a text-preview wrapper. Text/HTML/XML can be read directly; a PDF
 can use the existing host text-representation processor through

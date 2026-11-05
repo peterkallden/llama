@@ -4,6 +4,7 @@
 #include "agent/tooling/contracts/tool-result-contracts.h"
 #include "base64.hpp"
 
+#include <algorithm>
 #include <ctime>
 #include <memory>
 
@@ -58,7 +59,7 @@ bool common_try_register_resource_tool_adapter(
         const auto representation = args.value("representation", std::string("text"));
         const int64_t offset = args.value("offset", int64_t{0});
         const int max_bytes = args.value("max_bytes", 8192);
-        if (uri.empty() || uri.size() > 512 || representation.empty() || representation.size() > 64 || offset < 0 || offset > 1073741824LL || max_bytes < 1 || max_bytes > 32768) return common_adapter_validation_failure("tool.resource_read.out_of_bounds", "resource_read arguments are out of bounds", "Resource read arguments are out of bounds.");
+        if (uri.empty() || uri.size() > 512 || representation.empty() || representation.size() > 64 || offset < 0 || offset > 1073741824LL || max_bytes < 1 || max_bytes > 10485760) return common_adapter_validation_failure("tool.resource_read.out_of_bounds", "resource_read arguments are out of bounds", "Resource read arguments are out of bounds.");
         if (representation != "text" && representation != "bytes") return common_adapter_not_found_failure("tool.resource_read.representation_unavailable", "resource representation is not available in the current runtime", "The requested resource representation is not available.");
         const auto read_authority = authority(bindings);
         agent_resource_descriptor descriptor;
@@ -82,14 +83,39 @@ bool common_try_register_resource_tool_adapter(
             return common_adapter_not_found_failure("tool.resource_read.representation_unavailable", "text representation is not available for resource media type " + descriptor.mime_type, "The requested resource representation is not available.");
         }
 
+        // Bound even short logical ranges: JSON escaping can otherwise make
+        // a 32 KiB text page exceed the tool's 64 KiB result budget.
+        const size_t page_limit = std::min<size_t>(static_cast<size_t>(max_bytes), 8192);
         std::string content, encoding;
         if (representation == "bytes") {
-            if (!bindings.resource_runtime.store->read_bytes_range(uri, read_authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, error)) return common_adapter_execution_failure("tool.resource_read.read_failed", std::move(error), "Resource bytes could not be read.");
-            content = base64::encode(content); encoding = "base64";
-        } else if (!bindings.resource_runtime.store->read_text_range(descriptor.uri, read_authority, static_cast<size_t>(offset), static_cast<size_t>(max_bytes), content, error)) {
+            if (!bindings.resource_runtime.store->read_bytes_range(uri, read_authority, static_cast<size_t>(offset), page_limit, content, error)) return common_adapter_execution_failure("tool.resource_read.read_failed", std::move(error), "Resource bytes could not be read.");
+        } else if (!bindings.resource_runtime.store->read_text_range(descriptor.uri, read_authority, static_cast<size_t>(offset), page_limit, content, error)) {
             return common_adapter_execution_failure("tool.resource_read.read_failed", std::move(error), "Resource content could not be read.");
         }
+        // Do not split a UTF-8 character between text pages.
+        if (representation == "text" && !content.empty() && static_cast<size_t>(offset) + content.size() < descriptor.size_bytes) {
+            size_t start = content.size() - 1;
+            while (start > 0 && (static_cast<unsigned char>(content[start]) & 0xc0) == 0x80) --start;
+            const auto lead = static_cast<unsigned char>(content[start]);
+            const size_t width = lead < 0x80 ? 1 : (lead & 0xe0) == 0xc0 ? 2 : (lead & 0xf0) == 0xe0 ? 3 : (lead & 0xf8) == 0xf0 ? 4 : 1;
+            if (content.size() - start < width) content.resize(start);
+        }
+        if (content.empty() && static_cast<size_t>(offset) < descriptor.size_bytes) {
+            return common_adapter_validation_failure("tool.resource_read.page_too_small",
+                "resource read did not advance; increase max_bytes or request bytes",
+                "The requested page is too small to return a complete text character.");
+        }
+        const size_t bytes_read = content.size();
+        if (representation == "bytes") { content = base64::encode(content); encoding = "base64"; }
         auto output = common_tool_resource_read_result_to_json({descriptor, representation, content, encoding});
+        const size_t available = static_cast<size_t>(offset) < descriptor.size_bytes ? descriptor.size_bytes - static_cast<size_t>(offset) : 0;
+        const size_t requested = std::min(static_cast<size_t>(max_bytes), available);
+        const bool resource_complete = static_cast<size_t>(offset) + bytes_read >= descriptor.size_bytes;
+        output["range"] = {{"offset", offset}, {"bytes_read", bytes_read}, {"requested_bytes", requested},
+            {"remaining_bytes", requested - std::min(requested, bytes_read)},
+            {"has_more", bytes_read < requested}, {"resource_complete", resource_complete},
+            {"resource_has_more", !resource_complete}};
+        if (!resource_complete) output["range"]["next_offset"] = static_cast<size_t>(offset) + bytes_read;
         if (representation == "text") {
             std::vector<common_runtime_resource_ref> refs{
                 static_cast<const common_runtime_resource_ref &>(descriptor)};

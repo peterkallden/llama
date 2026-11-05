@@ -1,7 +1,9 @@
 #pragma once
+#include "agent/synthesis-state.h"
 
 #include "agent/agent-continuation.h"
 #include "agent/agent-generation.h"
+#include "agent/resource-chunk-extraction.h"
 #include "agent/agent-scope.h"
 #include "agent/investigation-contracts.h"
 #include "agent/agent-working-state.h"
@@ -11,6 +13,7 @@
 #include "agent/thinking/deliberation-policy.h"
 #include "agent/thinking/cognitive-mode.h"
 #include "agent/thinking/research/research-contract.h"
+#include "agent/thinking/research/research-controller.h"
 #include "agent/tooling/contracts/tool-runtime-contract.h"
 #include "agent/tooling/schema/tool-output-codec.h"
 #include "memory/memory-candidate.h"
@@ -29,6 +32,8 @@
 
 struct common_flydelta_activation_result;
 struct common_flydelta_hidden_state_capture_request;
+struct common_agent_research_action;
+class common_agent_tool_runtime;
 
 struct common_agent_objective {
     std::string purpose;
@@ -89,11 +94,19 @@ struct common_agent_resource_read_binding {
 // may omit these fields, but it may not replace them with a conflicting
 // value. The JSON remains a model-facing tool argument object so the same
 // contract works for native, MCP and OpenAPI tools.
+enum class common_agent_tool_argument_binding_lifetime {
+    execution,
+    workflow_route,
+};
+
 struct common_agent_tool_argument_binding {
     std::string tool_name;
     std::string arguments_json = "{}";
     std::string source_ref;
     bool model_visible = true;
+    // Diagnostic source names are not authority or lifetime markers. Host
+    // constraints survive route changes; arguments resolved for a route do not.
+    common_agent_tool_argument_binding_lifetime lifetime = common_agent_tool_argument_binding_lifetime::execution;
 };
 
 struct common_agent_workflow_terminal_choice {
@@ -205,6 +218,25 @@ struct common_agent_request {
     bool allow_policy_gated_tool_proposals = false;
     std::function<bool()> research_should_stop;
     std::function<common_agent_research_stop_reason()> research_stop_reason;
+    std::function<bool(const common_agent_research_workspace &, std::string &)> research_progress_sink;
+    // Select semantic research operations through the host's normal model
+    // selection boundary. The tool runtime remains authoritative for policy
+    // and validation; a previous call is provided only for bounded repair.
+    std::function<bool(const common_agent_research_action &, common_agent_research_workspace &,
+        const common_agent_tool_runtime &, const common_agent_tool_call *, const std::string &,
+        std::optional<common_agent_tool_call> &, std::string & decision_message, std::string &)> research_select_tool;
+    // Semantic assessment is supplied by the host; tool execution and source
+    // identity remain under host control.
+    std::function<bool(const common_agent_research_gap &, const common_agent_research_evidence &,
+        common_agent_research_assessment &, int &, std::string &)> research_assess_evidence;
+    std::function<bool(const common_agent_research_gap &, const std::vector<common_agent_research_evidence> &,
+        common_agent_research_source_comparison &, int &, std::string &)> research_compare_evidence;
+    // Host-provided evidence extraction, never model-controlled tool access.
+    size_t resource_chunk_page_bytes = 0;
+    size_t resource_chunk_overlap_bytes = 0;
+    std::function<bool(const std::string &, const common_agent_generation_resource_chunk &,
+        common_agent_resource_chunk_extraction &, int &, std::string &)> resource_extract_chunk;
+    std::function<bool(const std::string &, common_agent_resource_chunk_plan &, std::string &)> resource_plan_chunks;
     // Per-turn activity label supplied and transitioned by the host/runtime.
     // It is prompt/trace context, not durable plan state or tool authority.
     common_agent_cognitive_state cognitive_state;
@@ -213,6 +245,8 @@ struct common_agent_request {
     // Immutable host-resolved method for ordinary planning when no executable
     // workflow is selected. Never accepted from client/model arguments.
     std::optional<common_plan_state> blueprint_definition;
+    std::optional<common_agent_synthesis_state> synthesis_state;
+    common_agent_review_checklist review_checklist;
 };
 
 inline common_agent_scope common_agent_scope_from_request(const common_agent_request & request) {

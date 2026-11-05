@@ -5,6 +5,7 @@
 enum class common_agent_research_event_type {
     task_completed,
     task_failed,
+    no_action,
     cancelled,
 };
 
@@ -44,6 +45,8 @@ struct common_agent_research_event {
     bool retryable = false;
     std::string failure_code;
     std::string failure_summary;
+    // Discovery is progress, but never evidence for a research claim.
+    size_t discovered_sources = 0;
 };
 
 enum class common_agent_research_action_kind {
@@ -63,6 +66,8 @@ struct common_agent_research_action {
 
 class common_agent_research_controller {
 public:
+    explicit common_agent_research_controller(const common_agent_research_assessor * assessor = nullptr)
+        : assessor(assessor) {}
     common_agent_research_action begin(
             common_agent_research_workspace & workspace,
             std::string & error) const;
@@ -74,4 +79,6 @@ public:
 
     common_agent_research_result finalize(
             const common_agent_research_workspace & workspace) const;
+private:
+    const common_agent_research_assessor * assessor;
 };

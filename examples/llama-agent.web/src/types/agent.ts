@@ -66,6 +66,16 @@ export type DaemonProviderStatus = {
   status?: string;
 };
 
+export type UnverifiedDraft = {
+  text: string;
+  review_status: "unverified";
+  stop_reason: string;
+  plan_id: string;
+  draft_fingerprint: string;
+  evidence_fingerprint: string;
+  issues: Array<{ id: string; description: string; correction: string; evidence_ids: string[] }>;
+};
+
 export type ChatMessage = {
   id: string;
   turnId: string;
@@ -73,6 +83,7 @@ export type ChatMessage = {
   content: string;
   sequence?: number;
   pending?: boolean;
+  unverifiedDraft?: UnverifiedDraft;
 };
 
 export type TurnRequest = {
@@ -111,6 +122,7 @@ export type TurnResult = {
   response?: string;
   error?: string;
   turn_id?: string;
+  unverified_draft?: UnverifiedDraft;
   [key: string]: unknown;
 };
 

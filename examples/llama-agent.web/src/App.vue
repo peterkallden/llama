@@ -527,6 +527,17 @@ function isArtifactEvent(event: Record<string, unknown>) {
           <div v-for="message in session.messages" :key="message.id" class="chat-entry">
             <div class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
             <template v-if="message.role === 'assistant'">
+              <section v-if="message.unverifiedDraft" class="unverified-draft" aria-label="Unapproved draft">
+                <strong>Ej godkänt utkast</strong>
+                <p>Granskningen är inte klar. Texten kan innehålla kvarvarande brister.</p>
+                <p>{{ message.unverifiedDraft.stop_reason }}</p>
+                <ul v-if="message.unverifiedDraft.issues.length">
+                  <li v-for="issue in message.unverifiedDraft.issues" :key="issue.id">
+                    {{ issue.description }} <span v-if="issue.correction && issue.correction !== issue.description">{{ issue.correction }}</span>
+                  </li>
+                </ul>
+                <div class="message-body">{{ message.unverifiedDraft.text }}</div>
+              </section>
               <section v-for="(graph, graphIndex) in codeGraphsForTurn(message.turnId)" :key="`${graph.event.sequence ?? graphIndex}-code-graph`" class="report-card code-analysis-graph">
                 <ContextGraph :visualization="graph.visualization" :tool-name="graph.event.tool_name ?? graph.event.detail ?? ''"
                   :tools="session.tools" :call-tool="session.callReadOnlyTool" />

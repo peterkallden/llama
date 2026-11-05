@@ -1316,7 +1316,7 @@ int main(int argc, char ** argv) {
                 options.mcp_shutdown_timeout_ms,
             });
             common_agent_daemon_command_result command_result;
-            if (!dispatcher.execute(command, command_result, callback_error)) {
+            if (!dispatcher.execute(command, command_result, callback_error) && !command_result.turn_result.unverified_draft) {
                 return false;
             }
             result.ok = command_result.turn_result.ok;
@@ -1330,6 +1330,8 @@ int main(int argc, char ** argv) {
                 {"event_count", command_result.turn_result.event_count},
                 {"trace_count", command_result.turn_result.trace_count},
             };
+            if(command_result.turn_result.unverified_draft)
+                result.structured_content["unverified_draft"]=common_agent_unverified_draft_json(*command_result.turn_result.unverified_draft);
             if (command_result.turn_summary.has_value()) {
                 const auto & summary = *command_result.turn_summary;
                 result.structured_content["turn_summary"] = {

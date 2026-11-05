@@ -306,6 +306,25 @@ bool common_reflection_parse_json(
             else if (action == "fail_bounded") result.next_action = common_agent_reflection_next_action::fail_bounded;
             else { error = "unsupported reflection assurance action"; return false; }
         }
+        result.structured_review=j.contains("issues") || j.contains("resolved_issue_ids");
+        if (!common_json_contract_optional_string_array(j,"advisory_notes",4,512,result.advisory_notes,error) ||
+            !common_json_contract_optional_string_array(j,"resolved_issue_ids",4,64,result.resolved_issue_ids,error)) return false;
+        if(j.contains("issues")) {
+            if(!j["issues"].is_array() || j["issues"].size()>4) {error="issues must contain at most four blockers";return false;}
+            for(const auto & item:j["issues"]) {
+                common_reflection_issue issue;
+                if(!common_json_contract_required_string(item,"description",512,issue.description,error) ||
+                    !common_json_contract_required_string(item,"correction",512,issue.correction,error) ||
+                    !common_json_contract_optional_string_array(item,"evidence_ids",8,1024,issue.evidence_ids,error)) return false;
+                if(item.contains("previous_issue_id")) {
+                    if(!item["previous_issue_id"].is_string() || item["previous_issue_id"].get<std::string>().size()>64) {
+                        error="invalid previous_issue_id";return false;
+                    }
+                    issue.previous_issue_id=item["previous_issue_id"].get<std::string>();
+                }
+                result.issues.push_back(std::move(issue));
+            }
+        }
         if (j.contains("learning_hint")) {
             const auto & hint = j["learning_hint"];
             if (!hint.is_object()) { error = "invalid reflection learning hint"; return false; }
@@ -478,6 +497,8 @@ bool common_reflection_parse_json(
             error = "reflection decision contradicts its assurance action or readiness";
             return false;
         }
+        if(result.revision_guidance.empty() && result.decision!=common_reflection_decision::accept)
+            for(const auto & issue:result.issues) result.revision_guidance.push_back(issue.correction);
         error.clear();
         return true;
     } catch (const std::exception &) {
@@ -646,6 +667,17 @@ bool common_reflection_parse_compact_dsl(
                 return false;
             }
             ++operation_count;
+        } else if (verb == "issue") {
+            json fields;
+            if(!parse_reflection_dsl_fields(argument,fields,error)) return false;
+            if(!normalized.contains("issues")) normalized["issues"]=json::array();
+            normalized["issues"].push_back(std::move(fields));
+        } else if (verb == "resolved" || verb == "advisory") {
+            std::string value;
+            if(!parse_reflection_quoted_string(argument,value,error)) return false;
+            const std::string key=verb=="resolved" ? "resolved_issue_ids" : "advisory_notes";
+            if(!normalized.contains(key)) normalized[key]=json::array();
+            normalized[key].push_back(value);
         } else if (verb == "guidance" || verb == "next_action") {
             std::string value;
             if (!parse_reflection_quoted_string(argument, value, error)) return false;
@@ -771,8 +803,10 @@ bool common_reflection_parse_compact_dsl(
 }
 
 std::string common_reflection_review_grammar() {
-    return R"gbnf(root ::= "reflect accept" | "reflect abort" | revision
-revision ::= "reflect revise" "\nassurance_action " action "\nguidance " text
+    return R"gbnf(root ::= ("reflect accept" | "reflect abort" | revision) followup{0,8}
+revision ::= "reflect revise" "\nassurance_action " action ("\nguidance " text | issue)
+followup ::= "\nresolved " text | "\nadvisory " text | issue
+issue ::= "\nissue description=" text " correction=" text (" previous_issue_id=" text)? (" evidence_ids=[" text (", " text){0,7} "]")?
 action ::= "revise_response" | "revise_plan" | "fail_bounded" | "escalate_deliberate" | "escalate_research"
 text ::= "\"" character{1,512} "\""
 character ::= [^"\\\n\r] | "\\" ["\\/bfnrt]

@@ -71,9 +71,10 @@ bool common_agent_research_add_source(
         error = "research source requires id, title and bounded quality";
         return false;
     }
-    if (workspace.budget.max_sources >= 0 &&
-            workspace.sources.size() >= static_cast<size_t>(workspace.budget.max_sources)) {
-        error = "research source budget exhausted";
+    const bool candidate = common_agent_research_is_candidate(source);
+    if ((candidate && common_agent_research_candidate_count(workspace) >= static_cast<size_t>(workspace.budget.max_candidates)) ||
+            (!candidate && common_agent_research_source_count(workspace) >= static_cast<size_t>(workspace.budget.max_sources))) {
+        error = candidate ? "research candidate budget exhausted" : "research source budget exhausted";
         return false;
     }
     if (has_item(workspace.sources, [&](const auto & item) { return item.source_id == source.source_id; })) {
@@ -81,6 +82,20 @@ bool common_agent_research_add_source(
         return false;
     }
     workspace.sources.push_back(std::move(source));
+    error.clear();
+    return true;
+}
+
+bool common_agent_research_materialize_candidate(common_agent_research_workspace & workspace,
+        common_agent_research_source & candidate, const common_runtime_resource_ref & resource, std::string & error) {
+    if (!common_agent_research_is_candidate(candidate)) { error = "research source is not a candidate"; return false; }
+    if (common_agent_research_source_count(workspace) >= static_cast<size_t>(workspace.budget.max_sources)) {
+        error = "research source budget exhausted"; return false;
+    }
+    candidate.resource_ref = resource;
+    candidate.content_hash = resource.metadata.content_hash;
+    candidate.availability = common_agent_research_source_availability::requires_acquisition;
+    candidate.role = "discovered_source";
     error.clear();
     return true;
 }

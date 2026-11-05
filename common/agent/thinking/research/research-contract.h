@@ -4,6 +4,7 @@
 #include "resource/resource-contract.h"
 #include "runtime/runtime-state.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -86,6 +87,7 @@ struct common_agent_research_source_comparison {
 
 struct common_agent_research_budget {
     int max_iterations = 4, max_tasks = 16, max_tool_calls = 16, max_sources = 16, max_sources_per_gap = 4;
+    int max_candidates = 16;
     int minimum_sources = 1;
     int64_t max_tokens = 0, max_elapsed_ms = 0;
     double minimum_coverage = 1.0, minimum_confidence = 0.0;
@@ -93,6 +95,21 @@ struct common_agent_research_budget {
 struct common_agent_research_coverage {
     int total_gaps = 0, answered_gaps = 0, blocked_gaps = 0, unresolved_critical_gaps = 0;
     double objective_coverage = 0.0, evidence_quality = 0.0, source_diversity = 0.0;
+};
+
+struct common_agent_research_resource_progress {
+    std::string source_id;
+    std::string gap_id;
+    common_resource_continuation_position position;
+    size_t chunk_bytes = 0;
+    size_t overlap_bytes = 0;
+    std::string overlap_text;
+};
+
+struct common_agent_research_source_requirement {
+    std::string gap_id;
+    std::string source_id;
+    bool searched = false;
 };
 
 struct common_agent_research_workspace {
@@ -109,10 +126,14 @@ struct common_agent_research_workspace {
     std::vector<common_agent_research_source> sources;
     std::vector<common_agent_research_evidence> evidence;
     std::vector<common_agent_research_source_comparison> comparisons;
+    std::vector<common_agent_research_source_requirement> source_requirements;
+    std::vector<common_agent_research_resource_progress> resource_progress;
     common_agent_research_coverage coverage;
     int iterations_completed = 0;
     int tool_calls = 0;
     int no_progress_iterations = 0;
+    // Conservative reserved completion-token cost; survives checkpoints.
+    int64_t generation_tokens_reserved = 0;
 };
 
 // Resource payloads hold immutable workspace JSON. The data store keeps only
@@ -224,8 +245,11 @@ struct common_agent_research_result {
     std::vector<common_agent_research_evidence> evidence;
     std::vector<common_agent_research_source_comparison> comparisons;
     std::string synthesis_context;
+    std::string no_action_message;
     common_agent_research_coverage coverage;
     bool complete = false;
+    // Host-selected limited synthesis; never implies that coverage is met.
+    bool partial_answer_available = false;
 };
 
 enum class common_agent_research_lifecycle_event_type {
@@ -260,7 +284,7 @@ inline bool common_agent_research_workspace_validate(const common_agent_research
         return false;
     }
     const auto & budget = workspace.budget;
-    if (budget.max_iterations < 0 || budget.max_tasks < 0 || budget.max_tool_calls < 0 || budget.max_sources < 0 ||
+    if (budget.max_iterations < 0 || budget.max_tasks < 0 || budget.max_tool_calls < 0 || budget.max_sources < 0 || budget.max_candidates < 0 ||
             budget.max_sources_per_gap < 0 || budget.max_tokens < 0 || budget.max_elapsed_ms < 0 ||
             budget.minimum_sources < 1 ||
             budget.minimum_coverage < 0.0 || budget.minimum_coverage > 1.0 || budget.minimum_confidence < 0.0 ||
@@ -269,9 +293,18 @@ inline bool common_agent_research_workspace_validate(const common_agent_research
         return false;
     }
     if (workspace.iterations_completed < 0 || workspace.tool_calls < 0 || workspace.no_progress_iterations < 0 ||
+            workspace.generation_tokens_reserved < 0 ||
             workspace.iterations_completed > budget.max_iterations || workspace.tool_calls > budget.max_tool_calls) {
         error = "research workspace counters exceed their budget";
         return false;
+    }
+    for (const auto & requirement : workspace.source_requirements) {
+        if (requirement.gap_id.empty() || requirement.source_id.empty() ||
+                std::none_of(workspace.gaps.begin(), workspace.gaps.end(),
+                    [&](const auto & gap) { return gap.gap_id == requirement.gap_id; })) {
+            error = "research source requirement references an unknown gap or source";
+            return false;
+        }
     }
     std::unordered_set<std::string> ids;
     for (const auto & gap : workspace.gaps) if (gap.gap_id.empty() || gap.question.empty() || gap.completion_criterion.empty() ||
@@ -301,6 +334,23 @@ inline bool common_agent_research_workspace_validate(const common_agent_research
             (source.kind == common_agent_research_source_kind::memory && source.memory_id.empty()) ||
             !ids.insert(source.source_id).second) {
         error = "research workspace contains an invalid or duplicate source"; return false;
+    }
+    ids.clear();
+    for (const auto & progress : workspace.resource_progress) {
+        if (progress.source_id.empty() || progress.gap_id.empty() || progress.chunk_bytes < 4 ||
+                progress.overlap_bytes >= progress.chunk_bytes || progress.overlap_text.size() > progress.overlap_bytes ||
+                progress.overlap_text.size() > progress.position.next_offset ||
+                !ids.insert(progress.source_id + "\n" + progress.gap_id).second ||
+                std::none_of(workspace.sources.begin(), workspace.sources.end(), [&](const auto & source) {
+                    return source.source_id == progress.source_id && source.resource_ref &&
+                        source.resource_ref->uri == progress.position.resource_uri &&
+                        (source.resource_ref->size_bytes == 0 || progress.position.next_offset <= source.resource_ref->size_bytes);
+                }) ||
+                std::none_of(workspace.gaps.begin(), workspace.gaps.end(), [&](const auto & gap) { return gap.gap_id == progress.gap_id; }) ||
+                !common_resource_continuation_position_valid(progress.position, error)) {
+            if (error.empty()) error = "research workspace contains invalid resource progress";
+            return false;
+        }
     }
     ids.clear();
     for (const auto & item : workspace.evidence) if (item.evidence_id.empty() || item.source_id.empty() || item.claim_id.empty() || item.statement.empty() ||

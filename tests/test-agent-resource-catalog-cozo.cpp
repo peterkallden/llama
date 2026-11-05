@@ -78,6 +78,19 @@ int main() {
             require(catalog.put_descriptor(derived, error), error);
             require(catalog.find_descriptor(derived.uri, restored, error), error);
             check_lineage(restored);
+            auto copy = legacy;
+            copy.uri = "agent-resource://resource/resource-4";
+            copy.resource_id = "resource-4";
+            copy.lineage.parent_uri = legacy.uri;
+            copy.lineage.derivation = "research-source-chat-retention:v1";
+            require(catalog.put_descriptor(copy, error), error);
+            require(catalog.find_descriptor(copy.uri, restored, error), error);
+            require(restored.lineage.parent_uri == legacy.uri && restored.lineage.chunk_count == 0 &&
+                    restored.lineage.derivation == copy.lineage.derivation,
+                "complete derived resource lineage was not preserved");
+            auto incomplete_chunk = copy;
+            incomplete_chunk.lineage.derivation = "host.chunk.text.v1";
+            require(!catalog.put_descriptor(incomplete_chunk, error), "chunk without coordinates was accepted");
         }
         {
             agent_cozo_resource_catalog catalog;

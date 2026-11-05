@@ -1,4 +1,5 @@
 #pragma once
+#include "agent/synthesis-state.h"
 
 #include "../runtime/agent-runtime-control.h"
 #include "../runtime/agent-runtime-tooling.h"
@@ -104,6 +105,7 @@ struct common_agent_runtime_session_host_turn_request {
     std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
     // Internal host-owned registry; never deserialized from a client request.
     std::shared_ptr<agent_openapi_dynamic_registry> dynamic_openapi_registry;
+    std::function<bool(const common_agent_research_workspace &, std::string &)> research_progress_sink;
 };
 
 struct common_agent_runtime_session_host_turn_result {
@@ -134,6 +136,7 @@ struct common_agent_runtime_session_host_turn_result {
     std::vector<common_agent_event> events;
     std::vector<common_runtime_trace_entry> trace;
     std::string error;
+    std::optional<common_agent_unverified_draft> unverified_draft;
 };
 
 struct common_agent_runtime_session_host_descriptor {

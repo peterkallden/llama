@@ -70,8 +70,17 @@ int main() {
     agent_session_context_store restarted(&resources, "ns-a", "session-a", true);
     assert(restarted.load(segments, checkpoint, epoch, error));
     assert(segments.size() == 3 && checkpoint && checkpoint->revision == 1);
+    const json unverified{{"text","UNVERIFIED REVIEW TEXT"},{"review_status","unverified"},
+        {"stop_reason","review_budget_exhausted"},{"issues",json::array()}};
+    assert(restarted.append_unverified_draft("request-2","turn-2",unverified,error));
+    agent_session_context_store after_review_restart(&resources,"ns-a","session-a",true);
+    assert(after_review_restart.load(segments,checkpoint,epoch,error));
+    assert(segments.size()==3);
+    for(const auto & segment:segments) assert(segment.content.find("UNVERIFIED REVIEW TEXT")==std::string::npos);
+    assert(!after_review_restart.append_unverified_draft("missing-request","turn-2",unverified,error));
     auto composition = compose_common_agent_conversation_context(segments, &*checkpoint, 1, 4096);
     assert(composition.used_checkpoint);
+    assert(composition.rendered_history.find("UNVERIFIED REVIEW TEXT")==std::string::npos);
     assert(composition.missing_protected_refs.empty());
     assert(common_agent_projected_conversation_context_chars(composition, 40) > composition.rendered_history.size() + 40);
     assert(composition.rendered_history.find("Always preserve this exact instruction.") != std::string::npos);

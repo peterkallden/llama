@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v43",
+  "version": "v47",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -468,12 +468,12 @@
       ]
     },
     {
-      "id": "openalex-work-search-path-v3",
-      "source_revision": "agent-workflows-starter@v42",
+      "id": "openalex-work-search-path-v4",
+      "source_revision": "agent-workflows-starter@v47",
       "workflow_ref": "workflow://openalex/work-search",
-      "workflow_revision": "v4",
+      "workflow_revision": "v7",
       "family": "openapi",
-      "graph_revision": "openalex-work-search-graph@v4",
+      "graph_revision": "openalex-work-search-graph@v7",
       "resource_read_policy": "chunked",
       "required_capabilities": [
         "openapi.read"
@@ -486,6 +486,24 @@
         "workflow://dataset/analysis",
         "workflow://dataset/quality",
         "workflow://dataset/join"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "search-works",
+          "from_terminal_state": "works_retrieved",
+          "workflow_ref": "workflow://openalex/full-text-evidence",
+          "workflow_revision": "v7",
+          "optional": true,
+          "bindings": [
+            {
+              "transition": "get-work",
+              "tool": "openalex.getWork",
+              "target": "/id",
+              "source": "/result/host_item_candidates",
+              "candidate_id": "/id"
+            }
+          ]
+        }
       ],
       "required_context": [
         "context.openapi.available"
@@ -502,8 +520,7 @@
           "tool": "openalex.listWorks",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the user's topic or explicit filters to scope the search. Supply search, filter, or both; never issue an unscoped collection request.",
-          "max_pages": 5
+          "model_instruction": "Use the user's topic or explicit filters to scope the search. Supply search, filter, or both; never issue an unscoped collection request. Return a bounded first page. Additional cursor pages require host-configured OpenAlex authentication; do not assume they are available."
         }
       ]
     },
@@ -539,12 +556,12 @@
       ]
     },
     {
-      "id": "openalex-literature-review-path-v2",
-      "source_revision": "agent-workflows-starter@v12",
+      "id": "openalex-literature-review-path-v3",
+      "source_revision": "agent-workflows-starter@v47",
       "workflow_ref": "workflow://openalex/literature-review",
-      "workflow_revision": "v3",
+      "workflow_revision": "v6",
       "family": "openapi",
-      "graph_revision": "openalex-literature-review-graph@v3",
+      "graph_revision": "openalex-literature-review-graph@v6",
       "resource_read_policy": "chunked",
       "required_capabilities": [
         "openapi.read"
@@ -557,6 +574,24 @@
         "workflow://dataset/analysis",
         "workflow://dataset/quality",
         "workflow://dataset/join"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "retrieve-candidates",
+          "from_terminal_state": "candidates_retrieved",
+          "workflow_ref": "workflow://openalex/full-text-evidence",
+          "workflow_revision": "v7",
+          "optional": true,
+          "bindings": [
+            {
+              "transition": "get-work",
+              "tool": "openalex.getWork",
+              "target": "/id",
+              "source": "/result/host_item_candidates",
+              "candidate_id": "/id"
+            }
+          ]
+        }
       ],
       "required_context": [
         "context.openapi.available"
@@ -572,7 +607,7 @@
           "to": "candidates_retrieved",
           "tool": "openalex.listWorks",
           "arguments": "{}",
-          "max_pages": 5
+          "model_instruction": "Return a bounded first page. Additional cursor pages require host-configured OpenAlex authentication; do not assume they are available."
         }
       ]
     },
@@ -670,12 +705,12 @@
     },
     {
       "id": "openalex-full-text-evidence-path-v2",
-      "source_revision": "agent-workflows-starter@v43",
+      "source_revision": "agent-workflows-starter@v47",
       "workflow_ref": "workflow://openalex/full-text-evidence",
-      "workflow_revision": "v4",
+      "workflow_revision": "v7",
       "family": "openapi",
       "preferred_thinking_mode": "research",
-      "graph_revision": "openalex-full-text-evidence-graph@v4",
+      "graph_revision": "openalex-full-text-evidence-graph@v7",
       "resource_read_policy": "chunked",
       "required_capabilities": [
         "openapi.read",
@@ -690,6 +725,23 @@
       "required_context": [
         "context.openapi.available",
         "context.network.allowed"
+      ],
+      "continuation_links": [
+        {
+          "from_terminal_state": "full_text_unavailable",
+          "max_uses": 1,
+          "workflow_ref": "workflow://openalex/full-text-evidence",
+          "workflow_revision": "v7",
+          "bindings": [
+            {
+              "transition": "get-work",
+              "tool": "openalex.getWork",
+              "target": "/id",
+              "source": "/handoff/value/result/host_item_candidates",
+              "candidate_id": "/id"
+            }
+          ]
+        }
       ],
       "start_state": "identifier_pending",
       "terminal_states": [
@@ -723,6 +775,11 @@
               "requires": [
                 "/result/full_text_url"
               ]
+            },
+            {
+              "id": "try_another_candidate",
+              "description": "Choose when full text is required but this record has no usable full-text URL, or its offered location is unsuitable. Retain its abstract and reference as shallow evidence and request the declared bounded alternative candidate attempt. Do not claim an HTTP error when no request was made.",
+              "to": "full_text_unavailable"
             }
           ]
         },
@@ -733,7 +790,12 @@
           "tool": "web.fetch",
           "arguments": "{\"max_bytes\":10485760}",
           "failure_terminal_state": "full_text_unavailable",
-          "handled_http_statuses": [401, 403, 404, 410],
+          "handled_http_statuses": [
+            401,
+            403,
+            404,
+            410
+          ],
           "bindings": [
             {
               "target": "/url",
@@ -2609,8 +2671,8 @@
       ]
     },
     {
-      "id": "openalex-work-search-v3",
-      "source_revision": "agent-workflows-starter@v42",
+      "id": "openalex-work-search-v4",
+      "source_revision": "agent-workflows-starter@v47",
       "selection_description": "Find bounded scholarly-work candidates from a configured OpenAlex provider.",
       "purpose": "Turn a research question into a traceable, bounded set of scholarly records.",
       "goal": "Return relevant OpenAlex work candidates with their retrieved bibliographic metadata.",
@@ -2627,7 +2689,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://openalex/work-search",
-          "workflow_revision": "v4"
+          "workflow_revision": "v7"
         }
       ],
       "next_action": "scope-search",
@@ -2748,8 +2810,8 @@
       ]
     },
     {
-      "id": "openalex-literature-review-v2",
-      "source_revision": "agent-workflows-starter@v12",
+      "id": "openalex-literature-review-v3",
+      "source_revision": "agent-workflows-starter@v47",
       "selection_description": "Build a bounded, reproducible literature-review candidate set from configured OpenAlex search.",
       "purpose": "Support a student or researcher who needs a transparent starting set for further reading or analysis.",
       "goal": "Produce a bounded literature-review artifact or resource with explicit scope and selection limits.",
@@ -2767,7 +2829,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://openalex/literature-review",
-          "workflow_revision": "v3"
+          "workflow_revision": "v6"
         }
       ],
       "next_action": "define-review-scope",
@@ -2898,7 +2960,7 @@
     },
     {
       "id": "openalex-full-text-evidence-v2",
-      "source_revision": "agent-workflows-starter@v43",
+      "source_revision": "agent-workflows-starter@v47",
       "selection_description": "Verify a scholarly record from OpenAlex, interpret its abstract, and retrieve open full text only when needed.",
       "purpose": "Ground a scholarly answer in the smallest available evidence layer while preserving the distinction between metadata, abstract and full text.",
       "goal": "Answer a question about a scholarly work from verified OpenAlex metadata, abstract evidence and, when necessary, a host-materialized open full-text resource.",
@@ -2916,7 +2978,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://openalex/full-text-evidence",
-          "workflow_revision": "v4"
+          "workflow_revision": "v7"
         }
       ],
       "next_action": "resolve-work",

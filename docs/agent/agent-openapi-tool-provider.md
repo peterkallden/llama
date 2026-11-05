@@ -189,6 +189,8 @@ helper can now keep those addresses separate:
   --type openapi \
   --id openalex \
   --prefix openalex \
+  --result-views-file docs/examples/openalex-result-views.json \
+  --parameter-prefixes-file docs/examples/openalex-parameter-prefixes.json \
   --base-url https://api.openalex.org \
   --spec-url https://help.openalex.org/openapi.json \
   --spec-output openalex-openapi.json \
@@ -196,6 +198,7 @@ helper can now keep those addresses separate:
   --required \
   --anonymous-public-reads \
   --allowed-operation listWorks \
+  --required-any listWorks=search,filter \
   --allowed-operation getWork \
   --allowed-operation listAuthors \
   --allowed-operation getAuthor \
@@ -203,8 +206,8 @@ helper can now keep those addresses separate:
   --allowed-operation getInstitution \
   --allowed-operation listTopics \
   --allowed-operation getTopic \
-  --default-projection listWorks=id,display_name,publication_year,doi,cited_by_count,primary_topic,topics \
-  --default-projection getWork=id,display_name,publication_year,publication_date,doi,authorships,primary_topic,topics \
+  --default-projection listWorks=id,display_name,publication_year,doi,best_oa_location,content_urls,abstract_inverted_index \
+  --default-projection getWork=id,display_name,publication_year,publication_date,doi,authorships,best_oa_location,has_content,content_urls,abstract_inverted_index \
   --default-projection listAuthors=id,display_name,works_count,cited_by_count,orcid,last_known_institutions \
   --default-projection getAuthor=id,display_name,works_count,cited_by_count,orcid,last_known_institutions \
   --default-projection listInstitutions=id,display_name,country_code,works_count,ror \
@@ -312,10 +315,22 @@ OpenAPI document (response paths use JSON Pointer syntax):
 ```json
 "x-agent-pagination": {
   "cursor_parameter": "continuation",
+  "initial_cursor": "begin",
   "items_pointer": "/payload/entries",
   "next_cursor_pointer": "/links/token"
 }
 ```
+
+The optional `initial_cursor` declares the provider's first-page marker. The
+host adds it only for bounded multi-page collection when neither a cursor nor
+an explicit page position was supplied. It never replaces a caller's cursor,
+and ordinary single-page calls retain their previous behavior. Omit it when
+the API returns a continuation token without a first-page marker. The checked-in
+OpenAlex contract declares `"initial_cursor": "*"` to start deep pagination;
+the generic executor has no OpenAlex-specific initialization rule. OpenAlex
+currently requires an API key after the first cursor page, so the bundled
+unauthenticated workflows keep their collection to one page. A host that
+configures OpenAlex authentication may import a bounded `max_pages` workflow.
 
 The optional `cursor_parameter` must name an existing query parameter. Unknown
 extension fields, invalid pointers and overlapping item/cursor paths are
@@ -331,11 +346,58 @@ partial. The item accumulation budget is 8 MiB; page/coverage metadata is
 additional. A first HTTP response exceeding that budget is kept as partial
 without fetching more pages; the executor's per-response limit still applies.
 
-The general materialized preview preserves the API's envelope and item fields,
-with at most ten items and 16 KiB of item payload. Its pagination metadata
-records omitted preview items and the full resource reference. OpenAlex alone
-uses the bibliographic candidate projection described above. Coverage records
-the fetched collection independently of how many items are displayed inline.
+A provider operation may declare `result_view` to select and rename fields,
+flatten nested scalar paths and bound the model-facing view. `object` views
+project one result; `collection` views declare an `items_pointer` and project
+bounded rows. An empty collection pointer selects a top-level array and displays
+it under `items`; an optional `output_pointer` can choose another output path.
+The full source response remains the resource used for provenance
+and later reading. Pagination and host-validated item references remain host
+metadata and are not supplied by the model. The `inverted_index_to_text` and
+`first_nonempty_url` transformations are host-validated operations; the latter
+selects a URL from the response but does not fetch it.
+
+`resource_scope` controls the lifetime of the materialized source resource: `turn`
+(the default) or `session`. Session scope requires a host session and makes the
+same resource available to later turns and the session resource browser. Both
+resource and dataset materialization preserve this source scope. No project-wide
+access is granted.
+
+An operation may configure `parameter_prefixes` for declared path parameters.
+Each rule has `if_starts_with` and `prepend` strings; matching input is prefixed
+before URI encoding, and other input is unchanged. For example a provider can
+configure `{"id":{"if_starts_with":"10.","prepend":"https://doi.org/"}}`
+when its API requires DOI URLs. This is host-owned request-format configuration,
+not source selection; the original tool argument remains available to provenance.
+The builder accepts the same rules by operation ID through
+`--parameter-prefixes-file`.
+
+`materialize: resource` keeps the response as a resource;
+`dataset_if_tabular` allows dataset import only when the original collection
+passes the host's existing tabular classifier. A filtered view alone cannot turn
+nested source rows into a dataset. Omit `result_view` to retain generic
+provider behavior, as in the Eurostat examples. Provider fragments can be
+generated with `--result-views-file`, a JSON object keyed by operation ID.
+The host rejects unknown transforms, malformed pointers, reserved output names
+and invalid limits when it loads the provider. Missing optional fields are
+omitted; incompatible present fields increment `view_invalid_fields` and
+truncation is indicated by `view_truncated`. The host does not follow any
+URL selected by a result view.
+
+For example, an operation's result policy can flatten a nested source field:
+
+```json
+{
+  "kind": "collection",
+  "items_pointer": "/payload/records",
+  "output_pointer": "/records",
+  "fields": {"id": "/id", "name": "/details/name"},
+  "max_items": 5,
+  "max_text_bytes": 1200,
+  "max_bytes": 16384,
+  "materialize": "resource"
+}
+```
 
 A host may additionally
 set `limits.default_page_size` and `limits.max_page_size` for a provider. When

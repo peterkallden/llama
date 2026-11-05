@@ -83,6 +83,7 @@ target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan
 # Transport-neutral JSONL/SSE framing. Keep this small so daemon, web and
 # mobile clients can share the wire contract without linking agent semantics.
 add_library(llama-agent-protocol STATIC
+    protocol/agent-response.cpp protocol/agent-response.h
     protocol/agent-jsonl.cpp protocol/agent-jsonl.h
     protocol/agent-sse.cpp protocol/agent-sse.h
 )
@@ -131,6 +132,7 @@ endif()
 add_library(${TARGET}
     agent-context-allocation.cpp agent-context-allocation.h
     agent-resource-chunk-budget.cpp agent-resource-chunk-budget.h
+    resource-chunk-extraction.cpp resource-chunk-extraction.h
     template-library.cpp template-library.h
     agent-bootstrap.cpp agent-bootstrap.h
     agent-package-json.cpp agent-package-json.h
@@ -150,6 +152,8 @@ add_library(${TARGET}
     agent-runtime.cpp agent-runtime.h
     grounding/workflow-grounding.cpp grounding/workflow-grounding.h
     runtime-json-contracts.cpp runtime-json-contracts.h
+    synthesis-state.cpp synthesis-state.h
+    review-checklist.cpp review-checklist.h
     learning/memory-learning.cpp learning/memory-learning.h
     adaptation/learning-observation.cpp adaptation/learning-observation.h
     adaptation/learning-case.cpp adaptation/learning-case.h

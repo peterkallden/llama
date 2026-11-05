@@ -378,7 +378,8 @@ bool maybe_select_agent_route(
         const common_agent_orchestration_runtime_context & context,
         common_agent_route_candidate & selected_route,
         bool & route_selected,
-        std::string & error) {
+        std::string & error,
+        const std::vector<std::string> & excluded_routes) {
     selected_route = {};
     route_selected = false;
     error.clear();
@@ -398,6 +399,10 @@ bool maybe_select_agent_route(
         error = "route compilation failed: " + error;
         return false;
     }
+    catalog.candidates.erase(std::remove_if(catalog.candidates.begin(), catalog.candidates.end(),
+        [&](const auto & candidate) {
+            return std::find(excluded_routes.begin(), excluded_routes.end(), candidate.id) != excluded_routes.end();
+        }), catalog.candidates.end());
 
     const auto is_normal = [](const auto & candidate) {
         return candidate.kind == common_agent_route_kind::normal_plan;
@@ -466,10 +471,10 @@ bool maybe_select_agent_route(
             confidence = route_choice.confidence;
             reason = route_choice.reason;
         } else {
-            chosen = *std::find_if(catalog.candidates.begin(), catalog.candidates.end(), is_normal);
-            selection_mode = "fallback";
-            confidence = 0.0f;
-            reason = selection_error.empty() ? "route selector declined" : selection_error;
+            // A failed or invalid selector is not a decision to use normal
+            // planning. Preserve cancellation and backend/contract failures.
+            error = selection_error.empty() ? "route selector returned no decision" : selection_error;
+            return false;
         }
     }
     if (!chosen) {
@@ -488,6 +493,7 @@ bool maybe_select_agent_route(
     const auto detail = nlohmann::ordered_json{
         {"context_fingerprint", catalog.context_fingerprint},
         {"catalog_fingerprint", catalog.catalog_fingerprint},
+        {"excluded_route_ids", excluded_routes},
         {"candidate_count", catalog.candidates.size()},
         {"rejected_count", catalog.rejections.size()},
         {"rejected_routes", std::move(rejected_routes)},
@@ -695,6 +701,20 @@ bool maybe_select_agent_route(
                 entry_bindings, host_resolved_dataset_tools,
                 context.tool_output_format, action_error);
             if (!action.action) {
+                if (action.missing_grounded_identifier && context.config.agent_blueprint == "auto" &&
+                        !host_orientation && excluded_routes.size() < 2) {
+                    auto excluded = excluded_routes;
+                    excluded.push_back(selected_route.id);
+                    context.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
+                        common_runtime_trace_kind::decided,
+                        "workflow entry lacks a grounded identifier; reselecting an eligible route",
+                        context.current_plan_id, {}, {}, {}, selected_route.id});
+                    // The ID above was reserved for this unmaterialized route;
+                    // no plan has been published yet.
+                    context.current_plan_id.clear();
+                    error.clear();
+                    return maybe_select_agent_route(context, selected_route, route_selected, error, excluded);
+                }
                 error = "workflow action selection failed: " + action_error;
                 return false;
             }

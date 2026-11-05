@@ -23,7 +23,8 @@ bool plan_agent_resource_text_chunks(
         const agent_resource_read_authority & authority,
         const common_runtime_resource_chunk_policy & policy,
         agent_resource_chunk_plan & out,
-        std::string & error) {
+        std::string & error,
+        const std::function<bool()> & should_stop) {
     out = {};
     out.policy = policy;
     if (policy.max_bytes == 0) {
@@ -43,6 +44,11 @@ bool plan_agent_resource_text_chunks(
     }
     size_t offset = 0;
     while (offset < out.parent.size_bytes) {
+        if (should_stop && should_stop()) {
+            out = {};
+            error = "resource chunk planning was stopped";
+            return false;
+        }
         size_t overlap = out.ranges.empty() ? 0 : std::min(policy.overlap_bytes, offset);
         if (overlap != 0) {
             std::string prefix;

@@ -20,6 +20,20 @@ struct common_agent_resource_chunk_extraction {
     std::vector<common_agent_resource_chunk_finding> findings;
 };
 
+// Portable projection of a host-owned chunk plan. Offsets refer to the
+// immutable text representation; overlap is part of each range's length.
+struct common_agent_resource_chunk_range {
+    size_t byte_offset = 0;
+    size_t byte_length = 0;
+    size_t overlap_bytes = 0;
+};
+struct common_agent_resource_chunk_plan {
+    std::string source_uri;
+    std::string content_fingerprint;
+    size_t source_bytes = 0;
+    std::vector<common_agent_resource_chunk_range> ranges;
+};
+
 inline common_agent_generation_request common_agent_make_resource_chunk_extraction_request(
         const std::string & task,
         const common_agent_generation_resource_chunk & slice,
@@ -270,3 +284,14 @@ inline bool common_agent_parse_resource_chunk_extraction(
     if (!out.no_findings && out.findings.empty()) { error = "findings status requires at least one finding"; return false; }
     return true;
 }
+
+// Shared host extraction path. Callers own scheduling, durable progress and
+// the policy for unresolved slices; this function owns only model invocation
+// and verification of the returned excerpts against the supplied text.
+bool common_agent_extract_resource_chunk(
+        common_agent_inference & inference, const std::string & task,
+        const common_agent_generation_resource_chunk & chunk,
+        const std::optional<common_agent_scope> & scope,
+        common_agent_generation_options options, const std::string & trace_prefix,
+        size_t max_attempts, common_agent_resource_chunk_extraction & extraction,
+        int & decoded_tokens, std::string & error);

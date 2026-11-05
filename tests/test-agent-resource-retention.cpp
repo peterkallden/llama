@@ -16,6 +16,7 @@ public:
     }
     bool put_bytes(const agent_resource_put_request & request, agent_resource_descriptor & out,
             std::string & error) override {
+        if (!common_runtime_resource_lineage_is_valid(request.lineage, error)) return false;
         out.uri = "resource://" + std::to_string(++next_id);
         out.name = request.name;
         out.description = request.description;

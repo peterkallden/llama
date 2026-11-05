@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent-generation.h"
+#include "agent-inference.h"
 
 #include <cstddef>
 
@@ -25,11 +25,12 @@ auto common_agent_bounded_structured_regeneration(
         if (common_agent_generation_succeeded(generation) && accept(generation)) {
             return generation;
         }
-        // Regeneration is only valid for a completed generation whose
-        // structured payload was rejected. Host cancellation and backend
-        // failures must propagate immediately and must not consume another
-        // inference attempt.
-        if (!common_agent_generation_succeeded(generation) ||
+        // A completed remote decode can fail local schema validation before
+        // reaching the caller's parser. It may use the same bounded repair
+        // budget, while remaining a failed result if repair is exhausted.
+        const bool schema_rejected = common_agent_generation_is_schema_rejection(generation);
+        // Cancellation, transport and protocol failures propagate immediately.
+        if ((!common_agent_generation_succeeded(generation) && !schema_rejected) ||
                 attempt >= max_regenerations || !retry_gate(attempt)) {
             return generation;
         }

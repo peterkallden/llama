@@ -342,7 +342,8 @@ int main() {
     assert(resource_schema["required"][0] == "uri");
     assert(resource_schema["properties"]["offset"].value("minimum", 1) == 0);
     assert(resource_schema["properties"]["offset"].value("maximum", 0) == 1073741824);
-    assert(resource_schema["properties"]["max_bytes"].value("maximum", 0) == 32768);
+    assert(resource_schema["properties"]["max_bytes"].value("maximum", 0) == 10485760);
+    assert(resource_model_schema["properties"]["max_bytes"].value("maximum", 0) == 10485760);
     std::string compact_error;
     const auto compact_read = common_render_compact_tool_description(
         resource_read->name,

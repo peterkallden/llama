@@ -585,7 +585,26 @@ agent_openapi_executor make_agent_openapi_http_executor(agent_host_openapi_provi
             if (it == arguments.end() || !it->is_string()) { error = "OpenAPI path parameter is missing or not a string: " + name; return false; }
             const std::string marker = "{" + name + "}";
             const auto position = path.find(marker);
-            if (position != std::string::npos) path.replace(position, marker.size(), httplib::encode_uri_component(it->get<std::string>()));
+            std::string path_value = it->get<std::string>();
+            const auto policy = config.operations.find(operation.operation_id);
+            if (policy != config.operations.end()) {
+                const auto rules = nlohmann::json::parse(policy->second.parameter_prefixes_json, nullptr, false);
+                if (!rules.is_object()) { error = "invalid OpenAPI path parameter prefix rules"; return false; }
+                if (rules.contains(name)) {
+                    const auto & rule = rules[name];
+                    if (!rule.is_object() || !rule.contains("if_starts_with") || !rule["if_starts_with"].is_string() ||
+                            !rule.contains("prepend") || !rule["prepend"].is_string()) {
+                        error = "invalid OpenAPI path parameter prefix rule: " + name; return false;
+                    }
+                    const auto match = rule["if_starts_with"].get<std::string>();
+                    const auto prefix = rule["prepend"].get<std::string>();
+                    if (match.empty() || match.size() > 128 || prefix.empty() || prefix.size() > 512) {
+                        error = "invalid OpenAPI path parameter prefix rule: " + name; return false;
+                    }
+                    if (path_value.rfind(match, 0) == 0) path_value = prefix + path_value;
+                }
+            }
+            if (position != std::string::npos) path.replace(position, marker.size(), httplib::encode_uri_component(path_value));
         }
         httplib::Params query;
         for (const auto & name : operation.query_parameters) {

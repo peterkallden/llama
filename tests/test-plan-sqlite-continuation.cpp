@@ -1,4 +1,5 @@
 #include "plan/sqlite/plan-sqlite.h"
+#include "test-plan-route-entry.h"
 
 #include <cassert>
 #include <filesystem>
@@ -12,6 +13,10 @@ int main() {
     std::string error;
     common_plan_sqlite_store store;
     assert(store.open(path.string(), error));
+    write_atomic_route_entry(store);
+    store.close();
+    assert(store.open(path.string(), error));
+    verify_atomic_route_entry(store);
 
     common_plan_state plan;
     plan.id = "continuation-roundtrip";
@@ -54,9 +59,11 @@ int main() {
     common_plan_workflow_continuation_link link;
     link.source_transition_id = "materialize";
     link.source_terminal_state = "complete";
+    link.max_uses = 2;
     link.target_workflow_ref = "workflow://eurostat/metadata";
     link.target_workflow_revision = "v2";
-    link.argument_bindings.push_back({"inspect", "dataset.inspect", "/resource", "/dataset/uri", true, "choose-code"});
+    link.optional = true;
+    link.argument_bindings.push_back({"inspect", "dataset.inspect", "/resource", "/dataset/uri", true, "choose-code", "/id"});
     plan.workflow_definition->continuation_links.push_back(link);
     assert(store.create(plan, error));
 
@@ -135,6 +142,9 @@ int main() {
         restored->route_binding->continuation_source_fingerprint == "fp-1");
     assert(restored->route_binding->workflow_step_start_index == 2);
     assert(restored->workflow_definition->continuation_links.front().argument_bindings.front().source_transition_id == "choose-code");
+    assert(restored->workflow_definition->continuation_links.front().optional);
+    assert(restored->workflow_definition->continuation_links.front().max_uses == 2);
+    assert(restored->workflow_definition->continuation_links.front().argument_bindings.front().candidate_id_json_pointer == "/id");
     assert(restored->workflow_definition->transitions.front().candidate_id_json_pointer == "/code");
     assert(restored->workflow_definition->transitions.back().model_instruction ==
         "Use the verified dataset code.");

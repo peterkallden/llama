@@ -395,6 +395,10 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-model-profile-cache.cpp
         test-agent-continuation.cpp
         test-agent-research-contract.cpp
+        test-agent-research-driver.cpp
+        test-agent-workflow-recovery.cpp
+        test-agent-synthesis-state.cpp
+        test-agent-response-protocol.cpp
         test-agent-runtime-json.cpp
         test-agent-chat-routing.cpp
         test-agent-context-management.cpp
@@ -544,7 +548,12 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         get_filename_component(TEST_NAME ${TEST_SOURCE} NAME_WE)
         llama_build_and_test(${TEST_SOURCE})
-        target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        if (TEST_NAME STREQUAL "test-agent-response-protocol")
+            # Keep this contract independent of runtime implementation libraries.
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-protocol)
+        else()
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-core)
+        endif()
         if (TEST_NAME STREQUAL "test-agent-flydelta-residual-dose")
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "agent;flydelta;model-free")
         endif()
@@ -558,9 +567,18 @@ test-agent-flydelta-alpha-response-search.cpp
             target_link_libraries(${TEST_NAME} PRIVATE vendor::hash)
         endif()
         if (TEST_NAME STREQUAL "test-agent-openapi-provider")
+            target_sources(${TEST_NAME} PRIVATE test-agent-openalex-provider.cpp)
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             target_compile_definitions(${TEST_NAME} PRIVATE LLAMA_AGENT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
             target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-support llama-agent-tool-provider)
+        endif()
+        if (TEST_NAME MATCHES "^test-agent-(research-driver|workflow-recovery)$")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-runtime-host)
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "agent;model-free;orchestration")
+            if (TEST_NAME STREQUAL "test-agent-workflow-recovery" AND LLAMA_AGENT_STORAGE_SQLITE)
+                target_compile_definitions(${TEST_NAME} PRIVATE LLAMA_RECOVERY_TEST_SQLITE=1)
+            endif()
         endif()
         if (TEST_NAME STREQUAL "test-tool-adapters")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
@@ -587,6 +605,10 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME STREQUAL "test-plan-context")
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "orchestration;model-free")
+        endif()
+        if (TEST_NAME STREQUAL "test-agent-synthesis-state")
+            target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "agent;model-free;orchestration")
         endif()
         if (TEST_NAME STREQUAL "test-agent-chat-routing")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})

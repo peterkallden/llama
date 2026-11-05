@@ -49,7 +49,7 @@ int main() {
             const std::string & arguments, agent_openapi_execution_result & result, std::string &) {
             called = operation.operation_id == "listSales" && arguments == R"({"limit":10})";
             result.ok = true;
-            result.structured_content_json = R"({"count":1})";
+            result.structured_content_json = R"({"count":1,"results":[{"id":"s1","display_name":"Sale"}]})";
             return true;
         },
         [&](const agent_tool_context &, const agent_openapi_operation &,
@@ -96,10 +96,9 @@ int main() {
     assert(view->chat_tools()[0].description.find("per-page") != std::string::npos);
     assert(view->chat_tools()[0].description.find("cursor") != std::string::npos);
     assert(view->chat_tools()[0].description.find("select") != std::string::npos);
-    assert(view->chat_tools()[0].description.find(
-        "Returns: result (Bounded provider response.), resources (Host-owned materialized result resources.)") != std::string::npos);
+    assert(view->chat_tools()[0].description.find("host_item_candidates") != std::string::npos);
     assert(view->chat_tools()[0].description.find("display_name") == std::string::npos);
-    assert(view->chat_tools()[0].result_schema.find("resources") != std::string::npos);
+    assert(view->chat_tools()[0].result_schema.find("host_item_candidates") != std::string::npos);
     assert(view->chat_tools()[0].parameters.find(R"("required":["limit"])" ) != std::string::npos);
     common_plan_state invalid_plan;
     invalid_plan.steps.push_back({});

@@ -145,6 +145,14 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
                 choice.id = choice_source.value("id", std::string{});
                 choice.description = choice_source.value("description", std::string{});
                 choice.to_state = choice_source.value("to", std::string{});
+                if (choice_source.contains("max_uses")) {
+                    if (!choice_source["max_uses"].is_number_integer() ||
+                            choice_source["max_uses"].get<int64_t>() < 1 ||
+                            choice_source["max_uses"].get<int64_t>() > 1000000) {
+                        error = "workflow choice max_uses must be a positive integer"; return false;
+                    }
+                    choice.max_uses = choice_source["max_uses"].get<size_t>();
+                }
                 if (choice_source.contains("requires") &&
                         !strings(choice_source["requires"], choice.required_observation_json_pointers)) {
                     error = "workflow choice requires must be JSON pointer strings"; return false;
@@ -261,6 +269,7 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                         binding.source_transition_id.size() > 64 ||
                         binding.target_json_pointer.empty() || binding.target_json_pointer.front() != '/' ||
                         binding.source_json_pointer.empty() || binding.source_json_pointer.front() != '/' ||
+                        (!binding.candidate_id_json_pointer.empty() && binding.candidate_id_json_pointer.front() != '/') ||
                         !link_fields.emplace(binding.target_transition_id + ":" + binding.target_tool_name,
                             binding.target_json_pointer).second) {
                     error = "workflow continuation binding requires tool and unique source/target pointers"; return false;
@@ -448,6 +457,7 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                         [&](const auto & candidate) { return candidate.id == link.source_transition_id; });
                     const bool reaches_terminal = source != definition.transitions.end() &&
                         (source->to_state == link.source_terminal_state ||
+                         source->failure_terminal_state == link.source_terminal_state ||
                          std::any_of(source->choices.begin(), source->choices.end(), [&](const auto & choice) {
                              return choice.to_state == link.source_terminal_state;
                          }));
@@ -640,6 +650,15 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                         link.source_transition_id = link_json.value("from_transition", std::string{});
                         link.source_terminal_state = link_json.value("from_terminal_state", std::string{});
                         link.target_workflow_revision = link_json.value("workflow_revision", std::string{});
+                        link.optional = link_json.value("optional", false);
+                        if (link_json.contains("max_uses")) {
+                            if (!link_json["max_uses"].is_number_integer() ||
+                                    link_json["max_uses"].get<int64_t>() <= 0 ||
+                                    link_json["max_uses"].get<int64_t>() > 1000000) {
+                                error = "workflow continuation max_uses must be a positive integer"; return false;
+                            }
+                            link.max_uses = link_json["max_uses"].get<size_t>();
+                        }
                         if (link_json.contains("bindings")) {
                             if (!link_json["bindings"].is_array()) { error = "workflow continuation bindings must be an array"; return false; }
                             for (const auto & binding_json : link_json["bindings"]) {
@@ -650,7 +669,8 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                                     binding_json.value("target", std::string{}),
                                     binding_json.value("source", std::string{}),
                                     binding_json.value("required", true),
-                                    binding_json.value("from_transition", std::string{})});
+                                    binding_json.value("from_transition", std::string{}),
+                                    binding_json.value("candidate_id", std::string{})});
                             }
                         }
                         workflow.definition.continuation_links.push_back(std::move(link));
@@ -703,6 +723,8 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
             value["continuation_links"] = json::array();
             for (const auto & link : workflow.definition.continuation_links) {
                 json item = {{"workflow_ref", link.target_workflow_ref}};
+                if (link.optional) item["optional"] = true;
+                if (link.max_uses) item["max_uses"] = link.max_uses;
                 if (!link.source_transition_id.empty()) item["from_transition"] = link.source_transition_id;
                 if (!link.source_terminal_state.empty()) item["from_terminal_state"] = link.source_terminal_state;
                 if (!link.target_workflow_revision.empty()) item["workflow_revision"] = link.target_workflow_revision;
@@ -716,6 +738,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                             {"source", binding.source_json_pointer},
                             {"required", binding.required}};
                         if (!binding.source_transition_id.empty()) binding_json["from_transition"] = binding.source_transition_id;
+                        if (!binding.candidate_id_json_pointer.empty()) binding_json["candidate_id"] = binding.candidate_id_json_pointer;
                         item["bindings"].push_back(std::move(binding_json));
                     }
                 }
@@ -758,6 +781,7 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                         if (!choice.required_observation_json_pointers.empty()) {
                             choice_json["requires"] = choice.required_observation_json_pointers;
                         }
+                        if (choice.max_uses) choice_json["max_uses"] = choice.max_uses;
                         item["choices"].push_back(std::move(choice_json));
                     }
                 }

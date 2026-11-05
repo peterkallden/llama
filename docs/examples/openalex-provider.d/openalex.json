@@ -1,7 +1,9 @@
 {
   "type": "openapi",
   "id": "openalex",
-  "additional_families": ["research"],
+  "additional_families": [
+    "research"
+  ],
   "enabled": true,
   "required": true,
   "prefix": "openalex",
@@ -16,36 +18,184 @@
     "operations": {
       "listWorks": {
         "enabled": true,
-        "required_any_parameters": ["search", "filter"],
-        "default_projection": "id,display_name,publication_year,doi,cited_by_count,primary_topic,topics"
+        "required_any_parameters": [
+          "search",
+          "filter"
+        ],
+        "default_projection": "id,display_name,publication_year,doi,best_oa_location,content_urls,abstract_inverted_index",
+        "result_view": {
+          "kind": "collection",
+          "fields": {
+            "id": "/id",
+            "display_name": "/display_name",
+            "title": "/title",
+            "publication_year": "/publication_year",
+            "doi": "/doi"
+          },
+          "materialize": "resource",
+          "max_text_bytes": 1200,
+          "max_bytes": 16384,
+          "items_pointer": "/results",
+          "max_items": 5,
+          "derived_fields": {
+            "abstract_text": {
+              "transform": "inverted_index_to_text",
+              "from": "/abstract_inverted_index"
+            },
+            "full_text_url": {
+              "transform": "first_nonempty_url",
+              "from": [
+                "/best_oa_location/pdf_url",
+                "/content_urls/pdf",
+                "/content_url"
+              ]
+            }
+          },
+          "resource_scope": "session"
+        }
       },
       "getWork": {
         "enabled": true,
-        "default_projection": "id,display_name,publication_year,publication_date,doi,authorships,best_oa_location,has_content,content_urls,abstract_inverted_index"
+        "default_projection": "id,display_name,publication_year,publication_date,doi,authorships,best_oa_location,has_content,content_urls,abstract_inverted_index",
+        "result_view": {
+          "kind": "object",
+          "fields": {
+            "id": "/id",
+            "display_name": "/display_name",
+            "title": "/title",
+            "publication_year": "/publication_year",
+            "doi": "/doi",
+            "publication_date": "/publication_date"
+          },
+          "materialize": "resource",
+          "max_text_bytes": 1200,
+          "max_bytes": 16384,
+          "derived_fields": {
+            "abstract_text": {
+              "transform": "inverted_index_to_text",
+              "from": "/abstract_inverted_index"
+            },
+            "full_text_url": {
+              "transform": "first_nonempty_url",
+              "from": [
+                "/best_oa_location/pdf_url",
+                "/content_urls/pdf",
+                "/content_url"
+              ]
+            }
+          },
+          "resource_scope": "session"
+        },
+        "parameter_prefixes": {
+          "id": {
+            "if_starts_with": "10.",
+            "prepend": "https://doi.org/"
+          }
+        }
       },
       "listAuthors": {
         "enabled": true,
-        "default_projection": "id,display_name,works_count,cited_by_count,orcid,last_known_institutions"
+        "default_projection": "id,display_name,works_count,cited_by_count,orcid,last_known_institutions",
+        "result_view": {
+          "kind": "collection",
+          "fields": {
+            "id": "/id",
+            "display_name": "/display_name",
+            "works_count": "/works_count",
+            "orcid": "/orcid",
+            "cited_by_count": "/cited_by_count"
+          },
+          "materialize": "resource",
+          "max_text_bytes": 1200,
+          "max_bytes": 16384,
+          "items_pointer": "/results",
+          "max_items": 5
+        }
       },
       "getAuthor": {
         "enabled": true,
-        "default_projection": "id,display_name,works_count,cited_by_count,orcid,last_known_institutions"
+        "default_projection": "id,display_name,works_count,cited_by_count,orcid,last_known_institutions",
+        "result_view": {
+          "kind": "object",
+          "fields": {
+            "id": "/id",
+            "display_name": "/display_name",
+            "works_count": "/works_count",
+            "orcid": "/orcid",
+            "cited_by_count": "/cited_by_count"
+          },
+          "materialize": "resource",
+          "max_text_bytes": 1200,
+          "max_bytes": 16384
+        }
       },
       "listInstitutions": {
         "enabled": true,
-        "default_projection": "id,display_name,country_code,works_count,ror"
+        "default_projection": "id,display_name,country_code,works_count,ror",
+        "result_view": {
+          "kind": "collection",
+          "fields": {
+            "id": "/id",
+            "display_name": "/display_name",
+            "works_count": "/works_count",
+            "country_code": "/country_code",
+            "ror": "/ror"
+          },
+          "materialize": "resource",
+          "max_text_bytes": 1200,
+          "max_bytes": 16384,
+          "items_pointer": "/results",
+          "max_items": 5
+        }
       },
       "getInstitution": {
         "enabled": true,
-        "default_projection": "id,display_name,country_code,works_count,ror"
+        "default_projection": "id,display_name,country_code,works_count,ror",
+        "result_view": {
+          "kind": "object",
+          "fields": {
+            "id": "/id",
+            "display_name": "/display_name",
+            "works_count": "/works_count",
+            "country_code": "/country_code",
+            "ror": "/ror"
+          },
+          "materialize": "resource",
+          "max_text_bytes": 1200,
+          "max_bytes": 16384
+        }
       },
       "listTopics": {
         "enabled": true,
-        "default_projection": "id,display_name,works_count,subfield,field,domain"
+        "default_projection": "id,display_name,works_count,subfield,field,domain",
+        "result_view": {
+          "kind": "collection",
+          "fields": {
+            "id": "/id",
+            "display_name": "/display_name",
+            "works_count": "/works_count"
+          },
+          "materialize": "resource",
+          "max_text_bytes": 1200,
+          "max_bytes": 16384,
+          "items_pointer": "/results",
+          "max_items": 5
+        }
       },
       "getTopic": {
         "enabled": true,
-        "default_projection": "id,display_name,works_count,subfield,field,domain"
+        "default_projection": "id,display_name,works_count,subfield,field,domain",
+        "result_view": {
+          "kind": "object",
+          "fields": {
+            "id": "/id",
+            "display_name": "/display_name",
+            "works_count": "/works_count"
+          },
+          "materialize": "resource",
+          "max_text_bytes": 1200,
+          "max_bytes": 16384
+        }
       }
     }
   },

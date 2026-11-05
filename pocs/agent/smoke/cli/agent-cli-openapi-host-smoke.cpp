@@ -96,6 +96,7 @@ int main() {
     openapi.connect_timeout_ms = 1000;
     openapi.request_timeout_ms = 2000;
     openapi.max_result_bytes = 1024 * 1024;
+    openapi.operations["complex"].result_view_json = R"({"kind":"object","fields":{"first_id":"/items/0/id"},"derived_fields":{"abstract_text":{"transform":"inverted_index_to_text","from":"/abstract_inverted_index"},"full_text_url":{"transform":"first_nonempty_url","from":["/location/pdf"]}},"materialize":"resource","resource_scope":"session"})";
     agent_host_config cli_host_config;
     cli_host_config.tool_profile = profile.id;
     cli_host_config.tool_profiles = request.tool_profiles;
@@ -115,7 +116,7 @@ int main() {
         if (operation.operation_id == "listSales") {
             result.structured_content_json = R"([{"id":1,"amount":12.5},{"id":2,"amount":8}])";
         } else if (operation.operation_id == "complex") {
-            result.structured_content_json = R"({"items":[{"id":1}]})";
+            result.structured_content_json = R"({"items":[{"id":1}],"abstract_inverted_index":{"A":[0],"study":[1]},"location":{"pdf":"https://example.test/paper.pdf"}})";
         } else {
             executor_error = "unexpected OpenAPI operation";
             return false;
@@ -407,6 +408,9 @@ int main() {
         complex_resource_text, nullptr, false);
     if (!complex.ok || !complex.dataset_refs.empty() || !complex_payload.is_object() ||
             !complex_payload.contains("result") || !complex_payload["result"].is_object() ||
+            complex_payload["result"].value("first_id", 0) != 1 ||
+            complex_payload["result"].value("abstract_text", std::string()) != "A study" ||
+            complex_payload["result"].value("full_text_url", std::string()) != "https://example.test/paper.pdf" ||
             !complex_resource_read || !complex_resource_json.is_object() ||
             !complex_resource_json.contains("items") ||
             !complex_resource_json["items"].is_array()) {
@@ -417,6 +421,25 @@ int main() {
                   << " payload=" << complex.content_json << "\n";
         return 1;
     }
+
+    // A host-configured session resource remains readable in later turns of
+    // this chat, while another session cannot use its URI as authority.
+    agent_resource_descriptor retained_result;
+    auto later_turn = complex_authority;
+    later_turn.turn_id = "turn-later";
+    if (!resource_store.stat(complex.resource_refs.front().uri, later_turn, retained_result, error) ||
+            retained_result.scope != common_runtime_resource_scope::session) {
+        std::cerr << "session result not available to a later turn: " << error << "\n";
+        return 1;
+    }
+    auto other_session = later_turn;
+    other_session.session_id = "other-session";
+    agent_resource_descriptor unauthorized_result;
+    if (resource_store.stat(complex.resource_refs.front().uri, other_session, unauthorized_result, error)) {
+        std::cerr << "session result exposed to another chat\n";
+        return 1;
+    }
+    error.clear();
 
     // Exercise the production resource -> dataset binding, including saved
     // acquisition provenance, rather than testing only the normalizer.

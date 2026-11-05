@@ -2,6 +2,7 @@
 #include "agent-daemon-adapter.h"
 #include "agent/thinking/research/research-identity.h"
 #include "agent/thinking/research/research-workspace-serialization.h"
+#include "agent/thinking/research/research-workspace.h"
 #include "../mcp/agent-mcp-server-tool-registry.h"
 #include "../runtime/agent-server-context-host.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
@@ -16,6 +17,7 @@
 #include <chrono>
 #include <algorithm>
 #include <ctime>
+#include <map>
 
 using json = nlohmann::ordered_json;
 
@@ -119,7 +121,8 @@ bool prepare_research_workspace(common_agent_daemon_runtime & runtime,
 
 bool retain_research_sources_for_chat(common_agent_daemon_runtime & runtime,
         const common_agent_runtime_session_host_turn_request & request,
-        common_agent_research_workspace & workspace, std::string & error) {
+        common_agent_research_workspace & workspace, std::string & error,
+        std::map<std::string, agent_resource_descriptor> * retained_cache = nullptr) {
     agent_resource_read_authority authority;
     authority.namespace_id = request.namespace_id;
     authority.session_id = request.session_id;
@@ -127,7 +130,7 @@ bool retain_research_sources_for_chat(common_agent_daemon_runtime & runtime,
     authority.turn_id = request.turn_id;
     authority.now = static_cast<int64_t>(std::time(nullptr));
     size_t copied_bytes = 0;
-    constexpr size_t max_total_bytes = 16 * 1024 * 1024;
+    constexpr size_t max_total_bytes = 32 * 1024 * 1024;
     for (auto & source : workspace.sources) {
         if (!source.resource_ref) continue;
         agent_resource_retention_target target;
@@ -138,12 +141,30 @@ bool retain_research_sources_for_chat(common_agent_daemon_runtime & runtime,
         target.turn_id = request.turn_id;
         target.source_tool = "research.workspace.persist";
         target.derivation = "research-source-chat-retention:v1";
-        target.max_bytes = std::min<size_t>(4 * 1024 * 1024, max_total_bytes - copied_bytes);
+        target.max_bytes = std::min<size_t>(10 * 1024 * 1024, max_total_bytes - copied_bytes);
         agent_resource_descriptor retained;
         bool copied = false;
-        if (!retain_agent_resource(*runtime.resource_store, *source.resource_ref, authority,
-                target, retained, copied, error)) return false;
-        static_cast<common_runtime_resource_ref &>(*source.resource_ref) = retained;
+        const auto original_uri = source.resource_ref->uri;
+        const auto cached = retained_cache ? retained_cache->find(original_uri) : std::map<std::string, agent_resource_descriptor>::iterator{};
+        if (retained_cache && cached != retained_cache->end()) {
+            // Re-authorize the retained object on every checkpoint; a cache
+            // entry is never itself authority to read a resource.
+            if (!runtime.resource_store->stat(cached->second.uri, authority, retained, error) ||
+                    retained.sha256 != cached->second.sha256) {
+                if (error.empty()) error = "retained research source changed or became unavailable";
+                return false;
+            }
+            if (retained.size_bytes > target.max_bytes) {
+                error = "research sources exceed the configured retention byte limit";
+                return false;
+            }
+            copied = true;
+        } else {
+            if (!retain_agent_resource(*runtime.resource_store, *source.resource_ref, authority,
+                    target, retained, copied, error)) return false;
+            if (retained_cache && copied) (*retained_cache)[original_uri] = retained;
+        }
+        common_agent_research_rebind_resource(workspace, source, retained);
         if (!retained.sha256.empty()) source.content_hash = "sha256:" + retained.sha256;
         if (copied) copied_bytes += retained.size_bytes;
     }
@@ -153,9 +174,17 @@ bool retain_research_sources_for_chat(common_agent_daemon_runtime & runtime,
 
 bool persist_research_workspace(common_agent_daemon_runtime & runtime,
         const common_agent_runtime_session_host_turn_request & request,
-        common_agent_runtime_session_host_turn_result & result, std::string & error) {
+        common_agent_runtime_session_host_turn_result & result, std::string & error,
+        common_agent_research_draft_ref * advanced = nullptr,
+        std::map<std::string, agent_resource_descriptor> * retained_cache = nullptr) {
     if (!result.research_workspace_checkpoint) return true;
     if (!request.research_draft) {
+        const auto & workspace = result.research_workspace_checkpoint->workspace;
+        // prepare_research_workspace deliberately leaves unsupported stores
+        // unbound. Such a turn may still return an ephemeral checkpoint.
+        if (workspace.draft_id.empty() && workspace.base_revision == 0 &&
+                workspace.research_id == workspace.workspace_id && workspace.session_id == request.session_id)
+            return true;
         error = "research checkpoint was produced without a persistent host draft binding";
         return false;
     }
@@ -165,12 +194,21 @@ bool persist_research_workspace(common_agent_daemon_runtime & runtime,
     }
     auto workspace = result.research_workspace_checkpoint->workspace;
     const auto & current = *request.research_draft;
-    if (workspace.research_id != current.research_id || workspace.draft_id != current.draft_id ||
-            workspace.base_revision != current.base_revision || workspace.session_id != request.session_id) {
-        error = "research checkpoint does not belong to the active persistent draft";
+    std::string mismatched_fields;
+    const auto mismatch = [&](bool differs, const char * field) {
+        if (!differs) return;
+        if (!mismatched_fields.empty()) mismatched_fields += ", ";
+        mismatched_fields += field;
+    };
+    mismatch(workspace.research_id != current.research_id, "research_id");
+    mismatch(workspace.draft_id != current.draft_id, "draft_id");
+    mismatch(workspace.base_revision != current.base_revision, "base_revision");
+    mismatch(workspace.session_id != request.session_id, "session_id");
+    if (!mismatched_fields.empty()) {
+        error = "research checkpoint does not belong to the active persistent draft; mismatched fields: " + mismatched_fields;
         return false;
     }
-    if (!retain_research_sources_for_chat(runtime, request, workspace, error)) return false;
+    if (!retain_research_sources_for_chat(runtime, request, workspace, error, retained_cache)) return false;
     workspace.revision = current.draft_revision + 1;
     const std::string payload = common_agent_research_workspace_to_json(workspace).dump();
     const std::string fingerprint = hash_sha256_hex(payload.data(), payload.size());
@@ -207,6 +245,7 @@ bool persist_research_workspace(common_agent_daemon_runtime & runtime,
     bool already_saved = false;
     if (!runtime.data_store->save_research_draft(research_scope(request), next,
             current.draft_revision, saved, already_saved, error)) return false;
+    if (advanced) *advanced = saved;
     result.research_workspace_checkpoint->workspace = std::move(workspace);
     error.clear();
     return true;
@@ -2281,13 +2320,38 @@ bool common_agent_daemon_service::execute_outcome(
                 return fail_turn_result(command, outcome, events, error, "research_context_failed",
                     common_agent_daemon_event_type::turn_failed);
             }
+            std::map<std::string, agent_resource_descriptor> retained_research_sources;
+            if (turn_request.turn.research_draft) {
+                turn_request.turn.research_progress_sink = [&](const common_agent_research_workspace & workspace,
+                        std::string & sink_error) {
+                    common_agent_runtime_session_host_turn_result checkpoint_result;
+                    auto recoverable = workspace;
+                    for (auto & task : recoverable.tasks)
+                        if (task.status == common_agent_research_task_status::active)
+                            task.status = common_agent_research_task_status::failed;
+                    for (auto & gap : recoverable.gaps)
+                        if (gap.status == common_agent_research_gap_status::investigating)
+                            gap.status = common_agent_research_gap_status::open;
+                    checkpoint_result.research_workspace_checkpoint = make_common_agent_research_workspace_checkpoint(
+                        recoverable, static_cast<size_t>(workspace.iterations_completed) + 1, sink_error);
+                    if (!sink_error.empty()) return false;
+                    common_agent_research_draft_ref advanced;
+                    if (!persist_research_workspace(runtime, turn_request.turn, checkpoint_result, sink_error, &advanced,
+                            &retained_research_sources)) return false;
+                    turn_request.turn.research_draft = std::move(advanced);
+                    return true;
+                };
+            }
             runtime.host->run_turn(turn_request, outcome.turn_result, error);
             std::string persistence_error;
             if (!persist_research_workspace(runtime, turn_request.turn,
-                    outcome.turn_result, persistence_error)) {
+                    outcome.turn_result, persistence_error, nullptr, &retained_research_sources)) {
                 outcome.turn_result.ok = false;
-                outcome.turn_result.error = "research draft persistence failed: " + persistence_error;
-                if (error.empty()) error = outcome.turn_result.error;
+                const auto persistence_detail = "research draft persistence failed: " + persistence_error;
+                if (outcome.turn_result.error.empty() && !error.empty()) outcome.turn_result.error = error;
+                if (outcome.turn_result.error.empty()) outcome.turn_result.error = persistence_detail;
+                else outcome.turn_result.error += "; " + persistence_detail;
+                error = outcome.turn_result.error;
             }
             if (command.turn->include_summary) {
                 outcome.turn_summary = make_turn_summary(

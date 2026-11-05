@@ -232,6 +232,7 @@ bool common_agent_runtime_apply_host_tool_arguments_to_json(
         return false;
     }
     normalized_arguments = arguments;
+    json host_fields = json::object();
     size_t binding_count = 0;
     for (const auto & binding : request.tool_argument_bindings) {
         if (++binding_count > 32) {
@@ -253,6 +254,12 @@ bool common_agent_runtime_apply_host_tool_arguments_to_json(
                 error = "host tool argument binding contains an invalid field name";
                 return false;
             }
+            const auto prior_host = host_fields.find(item.key());
+            if (prior_host != host_fields.end() && *prior_host != item.value()) {
+                error = "conflicting host tool argument bindings: " + item.key();
+                return false;
+            }
+            host_fields[item.key()] = item.value();
             const auto existing = normalized_arguments.find(item.key());
             if (existing != normalized_arguments.end() && *existing != item.value()) {
                 error = "host-bound tool argument conflicts with model argument: " + item.key();

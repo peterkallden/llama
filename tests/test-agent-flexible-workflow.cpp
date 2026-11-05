@@ -2,6 +2,7 @@
 #include "tools/agent/runtime/agent-runtime-assembly.h"
 #include "tools/agent/runtime/agent-workflow-transition.h"
 #include "tools/agent/tooling/agent-selection-contracts.h"
+#include "tools/agent/tooling/agent-tool-provider.h"
 #include "agent/agent-package-json.h"
 #include "agent/input-resources.h"
 #include "agent/tooling/catalog/tool-catalog.h"
@@ -35,6 +36,28 @@ struct scripted_inference final : common_agent_inference {
     }
 };
 
+struct canonical_resource_view final : agent_tool_view {
+    std::vector<common_chat_tool> tools;
+    const std::vector<common_chat_tool> & chat_tools() const override { return tools; }
+    bool exposes_tool(const std::string & name) const override { return name == "resource.read"; }
+    bool is_read_only(const std::string &) const override { return true; }
+    bool is_policy_gated(const std::string &) const override { return false; }
+    bool validate(const agent_tool_call & call, std::string & error) const override {
+        const auto args = json::parse(call.arguments_json, nullptr, false);
+        if (call.name != "resource.read" || !args.is_object() || !args.contains("uri") ||
+                !args["uri"].is_string() || args.contains("id")) {
+            error = "host resource.read requires a canonical uri";
+            return false;
+        }
+        error.clear(); return true;
+    }
+    agent_tool_result call(const agent_tool_call &, std::string &) override { return {}; }
+    bool supports_async_call(const std::string &) const override { return false; }
+    bool begin_call_async(const agent_tool_call &, agent_tool_pending_call &, std::string &) override { return false; }
+    bool poll_call_async(const agent_tool_pending_call &, bool &, agent_tool_result &, std::string &) override { return false; }
+    bool cancel_call_async(const agent_tool_pending_call &, std::string &) override { return false; }
+};
+
 void selection_formats() {
     common_agent_request request;
     require(request.tool_output_format == common_agent_tool_output_format::compact_dsl, "DSL default changed");
@@ -43,6 +66,12 @@ void selection_formats() {
     common_agent_route_catalog catalog;
     common_agent_route_candidate normal; normal.id = "normal-plan";
     auto workflow = normal; workflow.id = "blueprint:investigation:workflow:workflow://investigation/identity-analysis@v5";
+    workflow.blueprint_definition.emplace();
+    workflow.blueprint_definition->goal = "Verify an already identified record";
+    workflow.blueprint_definition->success_criteria = "Record evidence is verified";
+    common_plan_step entry;
+    entry.objective = "Use an observed record identity";
+    workflow.blueprint_definition->steps.push_back(entry);
     catalog.candidates = {normal, workflow};
     scripted_inference inference;
     inference.replies = {"open! selection.route\nroute_id: normal-plan\nconfidence: 0.9"};
@@ -51,6 +80,13 @@ void selection_formats() {
     require(error.empty() && result.route_id == normal.id, "DSL route selection failed: " + error);
     require(inference.requests.front().json_schema.empty() && !inference.requests.front().grammar.empty(),
         "DSL selector exposed native JSON instead of grammar");
+    std::string route_prompt;
+    for (const auto & message : inference.requests.front().messages) route_prompt += message.content;
+    require(route_prompt.find("Use an observed record identity") != std::string::npos,
+        "route selection omitted the workflow entry objective");
+    require(route_prompt.find(workflow.blueprint_definition->goal) != std::string::npos &&
+        route_prompt.find(workflow.blueprint_definition->success_criteria) != std::string::npos,
+        "route selection omitted the declared outcome and completion criteria");
     request.tool_output_format = common_agent_tool_output_format::native;
     scripted_inference native;
     native.replies = {R"({"route_id":"normal-plan","confidence":0.9})"};
@@ -58,6 +94,15 @@ void selection_formats() {
         "explicit JSON selection was lost");
     require(!native.requests.front().json_schema.empty() && native.requests.front().grammar.empty(),
         "JSON selector received DSL grammar");
+
+    scripted_inference continuation;
+    continuation.replies = {R"({"route_id":"normal-plan","confidence":0.9})"};
+    require(select_agent_planning_route(continuation, config, request, catalog, error, true).route_id == normal.id && error.empty(),
+        "optional workflow finish selection failed");
+    const auto & continuation_messages = continuation.requests.front().messages;
+    require(std::any_of(continuation_messages.begin(), continuation_messages.end(), [](const auto & message) {
+        return message.content.find("finish with the current evidence") != std::string::npos;
+    }), "continuation choice did not describe the finish option");
 
     request.tool_output_format = common_agent_tool_output_format::compact_dsl;
     scripted_inference invalid;
@@ -114,6 +159,59 @@ void selection_formats() {
         common_agent_tool_output_format::compact_dsl, error);
     require(error.empty() && bounded_action.action && json::parse(bounded_action.action->arguments_json)["limit"] == 5 &&
         json::parse(bounded_action.action->arguments_json)["query"] == "Alice", "host entry limit was not retained: " + error);
+
+    common_chat_tool lookup{"openalex.getWork", "Get a work by ID",
+        R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})"};
+    lookup.item_lookup_parameter = "id";
+    common_agent_request lookup_request;
+    lookup_request.prompt = "Find work about urban cooling";
+    lookup_request.workflow_definition = common_plan_workflow_definition{};
+    lookup_request.tool_output_format = common_agent_tool_output_format::native;
+    scripted_inference absent;
+    absent.replies = {R"({"tool":"selection.decline","args":{}})"};
+    const auto unavailable = select_agent_planning_workflow_action(absent, config, lookup_request, {lookup}, {}, {},
+        lookup_request.tool_output_format, error);
+    require(!unavailable.action && unavailable.missing_grounded_identifier && absent.requests.size() == 1 &&
+        absent.requests.front().json_schema.find("selection.decline") != std::string::npos,
+        "lookup route could not explicitly decline a missing identifier");
+    scripted_inference absent_dsl;
+    absent_dsl.replies = {"open! selection.decline"};
+    const auto unavailable_dsl = select_agent_planning_workflow_action(absent_dsl, config, lookup_request, {lookup}, {}, {},
+        common_agent_tool_output_format::compact_dsl, error);
+    require(!unavailable_dsl.action && unavailable_dsl.missing_grounded_identifier,
+        "DSL lookup route could not decline a missing identifier");
+    scripted_inference invented;
+    invented.replies = {R"({"tool":"openalex.getWork","args":{"id":"W999"}})"};
+    require(!select_agent_planning_workflow_action(invented, config, lookup_request, {lookup}, {}, {},
+        lookup_request.tool_output_format, error).action && error.find("search first") != std::string::npos,
+        "workflow accepted an invented lookup identity");
+    lookup_request.prompt = "Read OpenAlex work W999";
+    scripted_inference supplied;
+    supplied.replies = invented.replies;
+    require(select_agent_planning_workflow_action(supplied, config, lookup_request, {lookup}, {}, {},
+        lookup_request.tool_output_format, error).action.has_value(), "workflow rejected the user's lookup identity");
+    lookup_request.prompt = "Read the selected work";
+    scripted_inference bound;
+    bound.replies = {R"({"tool":"openalex.getWork","args":{}})"};
+    require(select_agent_planning_workflow_action(bound, config, lookup_request, {lookup},
+        {{"openalex.getWork", R"({"id":"W999"})", "workflow-transition", false}}, {},
+        lookup_request.tool_output_format, error).action.has_value(), "workflow rejected a host-bound lookup identity");
+    require(bound.requests.front().json_schema.find("selection.decline") == std::string::npos,
+        "host-bound lookup identity was presented as missing");
+    scripted_inference conflicting_then_fixed;
+    conflicting_then_fixed.replies = {R"({"tool":"openalex.getWork","args":{"id":"W123"}})",
+        R"({"tool":"openalex.getWork","args":{}})"};
+    const auto corrected = select_agent_planning_workflow_action(conflicting_then_fixed, config, lookup_request, {lookup},
+        {{"openalex.getWork", R"({"id":"W999"})", "workflow-transition", false}}, {},
+        lookup_request.tool_output_format, error);
+    require(corrected.action && json::parse(corrected.action->arguments_json)["id"] == "W999" &&
+        conflicting_then_fixed.requests.size() == 2, "host-bound identity conflict was not repaired: " + error);
+    scripted_inference model_bound;
+    model_bound.replies = bound.replies;
+    require(!select_agent_planning_workflow_action(model_bound, config, lookup_request, {lookup},
+        {{"openalex.getWork", R"({"id":"W999"})", "workflow-action", false}}, {},
+        lookup_request.tool_output_format, error).action,
+        "a model-authored binding was promoted into observed lookup identity");
 }
 
 void result_requirement_selection() {
@@ -311,6 +409,59 @@ void dataset_projection_contracts() {
 }
 
 void transitions_and_resume() {
+    {
+        // A host-bound report URI must validate against the execution view,
+        // while the model-facing resource schema deliberately requires an id.
+        common_chat_tool read{"resource.read", "Read resource",
+            R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})"};
+        common_plan_workflow_transition transition;
+        transition.id = "read-report"; transition.tool_name = read.name;
+        common_agent_request request;
+        common_agent_generation_config config;
+        common_plan_state plan;
+        common_plan_observation observation{"report", "investigate.report.compose", R"({"ok":true})", 1.0f};
+        scripted_inference inference;
+        canonical_resource_view view;
+        std::string arguments, error;
+        require(select_agent_planning_workflow_transition_arguments(inference, config, request, {read},
+            plan, observation, transition, R"({"uri":"agent-resource://report/1"})", arguments, error, &view) &&
+            json::parse(arguments).at("uri") == "agent-resource://report/1" && inference.requests.empty(),
+            "host-bound report resource was validated against the model id projection: " + error);
+    }
+    // A linked workflow's entry uses this same transition materializer.
+    // Host-owned operation and identity do not require another generation.
+    {
+        common_chat_tool read{"records.read", "Read the selected record",
+            R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"},"detail":{"type":"string"}}})"};
+        common_plan_workflow_transition entry;
+        entry.id = "read"; entry.tool_name = read.name;
+        common_agent_request request;
+        request.tool_argument_bindings = {{read.name, R"({"id":"observed-record"})", "workflow-continuation", false}};
+        common_agent_generation_config config;
+        common_plan_state plan;
+        common_plan_observation observation{"source", "records.search", R"({"ok":true})", 1.0f};
+        scripted_inference inference;
+        std::string arguments, error;
+        require(select_agent_planning_workflow_transition_arguments(inference, config, request, {read},
+            plan, observation, entry, "{}", arguments, error) &&
+            json::parse(arguments)["id"] == "observed-record" && inference.requests.empty(),
+            "host-bound workflow entry unexpectedly required inference: " + error);
+        request.tool_argument_bindings.clear();
+        require(!select_agent_planning_workflow_transition_arguments(inference, config, request, {read},
+            plan, observation, entry, "{}", arguments, error) && inference.requests.empty(),
+            "incomplete deterministic entry silently requested model arguments");
+        request.tool_argument_bindings = {{read.name, R"({"id":"observed-record"})", "workflow-continuation", false}};
+        require(!select_agent_planning_workflow_transition_arguments(inference, config, request, {read},
+            plan, observation, entry, R"({"id":"different-record"})", arguments, error) && inference.requests.empty(),
+            "conflicting host bindings were silently replaced");
+        entry.model_supplies_arguments = true;
+        inference.replies = {R"({"tool":"records.read","args":{"detail":"summary"}})"};
+        request.tool_output_format = common_agent_tool_output_format::native;
+        require(select_agent_planning_workflow_transition_arguments(inference, config, request, {read},
+            plan, observation, entry, "{}", arguments, error) && inference.requests.size() == 1 &&
+            json::parse(arguments)["id"] == "observed-record" && json::parse(arguments)["detail"] == "summary",
+            "explicit model arguments or host identity were lost: " + error);
+    }
     common_agent_route_candidate route;
     route.id = "bound-route"; route.resolved_tools = {"inspect", "query"};
     common_plan_workflow_definition definition;
@@ -397,8 +548,19 @@ void package_contracts() {
     std::ifstream input(std::string(LLAMA_AGENT_SOURCE_DIR) + "/docs/examples/agent-investigation-workflows-v1.json");
     std::stringstream text; text << input.rdbuf(); common_agent_bootstrap_package package; std::string error;
     require(common_agent_package_parse_json(text.str(), package, error), error);
-    require(package.version == "v7" && package.workflows.size() == 9, "new investigation methods missing");
+    require(package.version == "v8" && package.workflows.size() == 9, "new investigation methods missing");
     for (const auto & workflow : package.workflows) require(!workflow.definition.transitions.empty(), "method still has no executable graph");
+    const auto identity = std::find_if(package.workflows.begin(), package.workflows.end(), [](const auto & workflow) {
+        return workflow.definition.workflow_ref == "workflow://investigation/identity-analysis";
+    });
+    require(identity != package.workflows.end(), "identity workflow missing");
+    const auto choice = std::find_if(identity->definition.transitions.begin(), identity->definition.transitions.end(),
+        [](const auto & transition) { return transition.id == "choose-next"; });
+    require(choice != identity->definition.transitions.end() && choice->from_state == "assess",
+        "identity analysis result is not the direct next-choice observation");
+    require(std::none_of(identity->definition.transitions.begin(), identity->definition.transitions.end(),
+        [](const auto & transition) { return transition.id == "inspect-result"; }),
+        "identity analysis result is still replaced by a case summary");
     for (const auto & blueprint : package.blueprints) require(!blueprint.workflow_bindings.front().phase_bindings.empty(), "blueprint phases are unbound");
     std::string exported;
     require(common_agent_package_to_json(package, exported, error), error);

@@ -1698,6 +1698,9 @@ std::unique_ptr<agent_tool_view> mcp_agent_tool_provider::resolve_tools(
         descriptor.mcp_ui_metadata = definition.ui_metadata_json;
         descriptor.mcp_provider_id = definition.provider_id;
         descriptor.mcp_server_tool_name = definition.name;
+        descriptor.collection_item_parameter = definition.collection_item_parameter;
+        descriptor.collection_items_pointer = definition.collection_items_pointer;
+        descriptor.item_lookup_parameter = definition.item_lookup_parameter;
         descriptor.mcp_app_read_only = definition.app_read_only_authorized;
         if (model_allowed) chat_tools.push_back(descriptor);
         if (app_allowed) app_tools.push_back(descriptor);

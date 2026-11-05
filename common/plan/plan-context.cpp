@@ -199,15 +199,19 @@ static std::string render_flat_observation(
     if (payload.is_object() && payload.value("result_truncated", plan_context_json(false)) == true)
         out << "  source_projection: partial; original result exceeded the retained observation budget\n";
     size_t fact_count = 0;
+    // The character allocation is the effective bound. A fixed field count
+    // used to discard later records in otherwise small, complete result sets
+    // (for example events with verbose provenance on each item).
+    const size_t max_facts = std::max<size_t>(64, std::min<size_t>(512, budget / 16));
     if ((tool_name == "statistics.describe" || tool_name == "statistics.outliers" ||
             tool_name == "statistics.value_counts") && result.is_object()) {
-        append_statistics_observation(out, tool_name, result, fact_count, 64);
+        append_statistics_observation(out, tool_name, result, fact_count, max_facts);
     } else {
-        append_flat_observation_value(out, "", result, fact_count, 64);
+        append_flat_observation_value(out, "", result, fact_count, max_facts);
     }
     auto rendered = out.str();
     const std::string truncated = "  projection: truncated; consult the original observation\n";
-    if (rendered.size() > budget || fact_count >= 64) {
+    if (rendered.size() > budget || fact_count >= max_facts) {
         // Keep complete facts only. Cutting an identifier or number creates
         // a different assertion rather than a bounded version of the fact.
         const size_t available = budget > truncated.size() ? budget - truncated.size() : 0;
@@ -246,10 +250,48 @@ std::string common_plan_render_tool_observations(
             std::string line = "- " + common_plan_escape_context_text(step.tool_call->name) + " failed";
             if (failure.contains("http_status") && failure["http_status"].is_number_integer())
                 line += " (HTTP " + std::to_string(failure["http_status"].get<int>()) + ")";
+            // The failed step retains the actual executed arguments. Keep the
+            // source association for review without exposing URL credentials,
+            // query tokens, fragments or unrelated tool arguments.
+            const auto arguments = plan_context_json::parse(step.tool_call->arguments_json, nullptr, false);
+            if (arguments.is_object() && arguments.contains("url") && arguments["url"].is_string()) {
+                auto url = arguments["url"].get<std::string>();
+                const auto scheme = url.find("://");
+                if (scheme != std::string::npos && (url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0)) {
+                    const auto suffix = url.find_first_of("?#");
+                    if (suffix != std::string::npos) url.resize(suffix);
+                    const auto authority_end = url.find('/', scheme + 3);
+                    const auto credentials = url.find('@', scheme + 3);
+                    if (credentials != std::string::npos && (authority_end == std::string::npos || credentials < authority_end))
+                        url.erase(scheme + 3, credentials - (scheme + 3) + 1);
+                    if (url.size() <= 512)
+                        line += "; requested_url_without_query_or_fragment=" + observation_scalar(url);
+                }
+            }
             line += "; the requested source content was not retrieved.\n";
             if (limitations.size() + line.size() <= 1024) limitations += line;
             break;
         }
+    }
+    for (const auto & observation : plan.observations) {
+        if (observation.source != "workflow_terminal_choice" || observation.evidence_ids.size() != 1) continue;
+        const auto outcome = plan_context_json::parse(observation.summary, nullptr, false);
+        if (!outcome.is_object() || outcome.value("host_validated", plan_context_json{}) != true ||
+                !outcome.contains("choice_id") || !outcome["choice_id"].is_string() ||
+                !outcome.contains("terminal_state") || !outcome["terminal_state"].is_string()) continue;
+        const auto source = std::find_if(plan.observations.begin(), plan.observations.end(),
+            [&](const auto & item) { return item.id == observation.evidence_ids.front(); });
+        if (source == plan.observations.end()) continue;
+        const auto * step = common_plan_find_tool_observation_step(plan, *source);
+        if (!step || step->status != common_plan_step_status::completed ||
+                outcome.value("source_step_id", plan_context_json{}) != step->id) continue;
+        std::string line = "- host-validated workflow choice=" + observation_scalar(outcome["choice_id"]) +
+            "; terminal_state=" + observation_scalar(outcome["terminal_state"]) +
+            "; source_evidence=" + observation_scalar(source->id);
+        if (outcome.contains("choice_description") && outcome["choice_description"].is_string())
+            line += "; method=" + observation_scalar(outcome["choice_description"]);
+        line += "; this choice is not proof of a network request or full-text access.\n";
+        if (limitations.size() + line.size() <= 2048) limitations += line;
     }
     if (!limitations.empty()) {
         limitations = "<source_limitations>\n" + limitations + "</source_limitations>\n";
@@ -267,14 +309,22 @@ std::string common_plan_render_tool_observations(
         if (payload.is_discarded()) continue;
         if (payload.is_object() && (payload.contains("failure") ||
                 (payload.contains("ok") && payload["ok"] != true))) continue;
-        std::string line = render_flat_observation(observation.source, payload, observation, 900);
-        const auto tool_line_end = line.find('\n');
-        if (tool_line_end == std::string::npos) {
+        std::string metadata = "  status: completed\n";
+        if (step && step->semantic_alias) metadata += "  alias: " + observation_scalar(*step->semantic_alias) + "\n";
+        // Use the caller's allocation for the evidence itself. A fixed per-
+        // observation cap also capped the demand estimate, even when enough
+        // model context was available to include every returned candidate.
+        if (remaining <= metadata.size() + omitted.size()) {
             omitted_any = true;
             continue;
         }
-        std::string metadata = "  status: completed\n";
-        if (step && step->semantic_alias) metadata += "  alias: " + observation_scalar(*step->semantic_alias) + "\n";
+        std::string line = render_flat_observation(observation.source, payload, observation,
+            remaining - metadata.size() - omitted.size());
+        const auto tool_line_end = line.find('\n');
+        if (tool_line_end == std::string::npos || line.rfind("- tool: ", 0) != 0) {
+            omitted_any = true;
+            continue;
+        }
         line.insert(tool_line_end + 1, metadata);
         if (line.size() + omitted.size() > remaining) {
             omitted_any = true;

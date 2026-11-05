@@ -1,4 +1,5 @@
 #pragma once
+#include "agent/synthesis-state.h"
 
 #include "agent/agent-continuation.h"
 #include "agent/agent-generation.h"
@@ -48,4 +49,5 @@ struct common_agent_result {
     bool workflow_handoff_requested = false;
     std::vector<common_agent_event> events;
     std::vector<common_runtime_trace_entry> trace;
+    std::optional<common_agent_unverified_draft> unverified_draft;
 };

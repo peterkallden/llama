@@ -89,6 +89,10 @@ struct common_agent_runtime_driver_inputs {
     // The runtime only carries the request; capture remains disabled unless a
     // caller explicitly supplies it.
     std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
+    // Host-owned persistent draft binding and resumable research content.
+    std::optional<common_agent_research_draft_ref> research_draft;
+    std::optional<common_agent_research_workspace> research_workspace_seed;
+    std::function<bool(const common_agent_research_workspace &, std::string &)> research_progress_sink;
 };
 
 struct common_agent_runtime_driver_execution {
@@ -161,6 +165,9 @@ struct common_agent_runtime_driver_execution {
     common_agent_cognitive_state cognitive_state;
     bool workflow_preference_applied = false;
     std::string project_graph_context;
+    std::optional<common_agent_research_draft_ref> research_draft;
+    std::optional<common_agent_research_workspace> research_workspace_seed;
+    std::function<bool(const common_agent_research_workspace &, std::string &)> research_progress_sink;
 };
 
 common_agent_runtime_driver_execution make_agent_runtime_driver_execution(

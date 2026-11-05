@@ -264,7 +264,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v43");
+        checked_in_starter.version == "v47");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -370,7 +370,7 @@ int main() {
     investigation_file_text << investigation_file.rdbuf();
     common_agent_bootstrap_package investigation_package;
     assert(common_agent_package_parse_json(investigation_file_text.str(), investigation_package, error));
-    require_code_workflow(investigation_package.version == "v7",
+    require_code_workflow(investigation_package.version == "v8",
         "investigation package revision is stale");
     const std::vector<std::string> investigation_workflows = {
         "workflow://investigation/identity-analysis",
@@ -402,8 +402,11 @@ int main() {
         assert(!blueprint.steps.empty() && !blueprint.procedure_refs.empty());
     }
     for (const auto & blueprint : investigation_package.blueprints) {
-        require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@v7" &&
-            blueprint.workflow_bindings.front().workflow_revision == "v7",
+        const bool identity = blueprint.workflow_bindings.front().workflow_ref ==
+            "workflow://investigation/identity-analysis";
+        const std::string revision = identity ? "v8" : "v7";
+        require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@" + revision &&
+            blueprint.workflow_bindings.front().workflow_revision == revision,
             "investigation immutable identity does not match revised authority");
         require_code_workflow(blueprint.next_action == blueprint.steps.front().id,
             "investigation entry phase is not explicit");
@@ -447,7 +450,7 @@ int main() {
     assert(roundtrip_full_text_workflow != checked_in_roundtrip.workflows.end());
     assert(roundtrip_full_text_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
-    assert(roundtrip_full_text_workflow->definition.workflow_revision == "v4");
+    assert(roundtrip_full_text_workflow->definition.workflow_revision == "v7");
     const auto roundtrip_eurostat_metadata = std::find_if(
         checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
         [](const auto & workflow) {
@@ -456,10 +459,17 @@ int main() {
     assert(roundtrip_eurostat_metadata != checked_in_roundtrip.workflows.end());
     assert(roundtrip_eurostat_metadata->definition.workflow_revision == "v9");
     assert(roundtrip_eurostat_metadata->definition.transitions.size() == metadata_definition.transitions.size());
-    assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 2);
+    assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 3);
     assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
     assert(roundtrip_full_text_workflow->definition.transitions[2].failure_terminal_state == "full_text_unavailable");
     assert((roundtrip_full_text_workflow->definition.transitions[2].handled_http_statuses == std::vector<int>{401, 403, 404, 410}));
+    assert(roundtrip_full_text_workflow->definition.continuation_links.size() == 1);
+    const auto & retry_full_text = roundtrip_full_text_workflow->definition.continuation_links.front();
+    assert(!retry_full_text.optional && retry_full_text.source_transition_id.empty() &&
+        retry_full_text.source_terminal_state == "full_text_unavailable" &&
+        retry_full_text.target_workflow_revision == "v7" && retry_full_text.max_uses == 1 && retry_full_text.argument_bindings.size() == 1 &&
+        retry_full_text.argument_bindings.front().source_json_pointer ==
+            "/handoff/value/result/host_item_candidates");
     const auto roundtrip_eurostat_catalog = std::find_if(
         checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
         [](const auto & workflow) {
@@ -501,22 +511,22 @@ int main() {
             return workflow.definition.workflow_ref == "workflow://openalex/work-search";
         });
     assert(roundtrip_search_workflow != checked_in_roundtrip.workflows.end());
-    assert(roundtrip_search_workflow->definition.transitions.front().max_pages == 5);
-    auto over_budget_package_json = starter_file_text.str();
-    const auto page_limit_position = over_budget_package_json.find("\"max_pages\": 5");
-    assert(page_limit_position != std::string::npos);
-    over_budget_package_json.replace(page_limit_position,
-        std::string("\"max_pages\": 5").size(), "\"max_pages\": 6");
+    assert(roundtrip_search_workflow->definition.transitions.front().max_pages == 0);
+    auto over_budget_package_json = nlohmann::ordered_json::parse(starter_file_text.str());
+    auto & workflows_json = over_budget_package_json["workflows"];
+    auto search_json = std::find_if(workflows_json.begin(), workflows_json.end(), [](const auto & workflow) {
+        return workflow.value("workflow_ref", std::string{}) == "workflow://openalex/work-search";
+    });
+    assert(search_json != workflows_json.end() && !(*search_json)["transitions"].empty());
+    (*search_json)["transitions"][0]["max_pages"] = 6;
     common_agent_bootstrap_package over_budget_package;
     assert(!common_agent_package_parse_json(
-        over_budget_package_json, over_budget_package, error));
+        over_budget_package_json.dump(), over_budget_package, error));
     // Reject out-of-range integers before narrowing; 2^32 + 5 must not
     // wrap to an apparently valid five-page limit.
-    auto overflowing_page_package = starter_file_text.str();
-    overflowing_page_package.replace(page_limit_position,
-        std::string("\"max_pages\": 5").size(), "\"max_pages\": 4294967301");
+    (*search_json)["transitions"][0]["max_pages"] = uint64_t(4294967301ULL);
     assert(!common_agent_package_parse_json(
-        overflowing_page_package, over_budget_package, error));
+        over_budget_package_json.dump(), over_budget_package, error));
     assert(checked_in_starter.procedures.size() == 29 &&
         checked_in_starter.blueprints.size() == 22);
     assert(checked_in_starter.workflows.size() == 23);
@@ -573,11 +583,13 @@ int main() {
         checked_in_openalex_full_text_workflow->definition.transitions.end(),
         [](const auto & transition) { return transition.id == "choose-evidence-depth"; });
     assert(depth_choice != checked_in_openalex_full_text_workflow->definition.transitions.end());
-    assert(depth_choice->choices.size() == 2 &&
+    assert(depth_choice->choices.size() == 3 &&
         depth_choice->choices[0].id == "answer_from_abstract" &&
         depth_choice->choices[1].id == "fetch_full_text" &&
         depth_choice->choices[1].required_observation_json_pointers ==
             std::vector<std::string>({"/result/full_text_url"}));
+    assert(depth_choice->choices[2].id == "try_another_candidate" &&
+        depth_choice->choices[2].to_state == "full_text_unavailable");
     const auto fetch_transition = std::find_if(
         checked_in_openalex_full_text_workflow->definition.transitions.begin(),
         checked_in_openalex_full_text_workflow->definition.transitions.end(),
@@ -765,16 +777,23 @@ int main() {
         std::vector<std::string>({"resource.read", "artifact.export"}));
     assert(openalex_search_workflow->definition.required_context ==
         std::vector<std::string>({"context.openapi.available"}));
-    assert(openalex_search_workflow->definition.workflow_revision == "v4");
+    assert(openalex_search_workflow->definition.workflow_revision == "v7");
+    assert(openalex_search_workflow->definition.continuation_links.size() == 1);
+    const auto & deep_link = openalex_search_workflow->definition.continuation_links.front();
+    assert(deep_link.optional && deep_link.target_workflow_ref == "workflow://openalex/full-text-evidence");
+    assert(deep_link.argument_bindings.size() == 1 &&
+        deep_link.argument_bindings.front().source_json_pointer == "/result/host_item_candidates" &&
+        deep_link.argument_bindings.front().candidate_id_json_pointer == "/id" &&
+        deep_link.argument_bindings.front().target_json_pointer == "/id");
     assert(openalex_search_workflow->definition.resource_read_policy ==
         common_plan_workflow_resource_read_policy::chunked);
     assert(openalex_search_workflow->definition.transitions.size() == 1 &&
-        openalex_search_workflow->definition.transitions.front().max_pages == 5);
+        openalex_search_workflow->definition.transitions.front().max_pages == 0);
     assert(openalex_search_workflow->definition.continuation_workflow_targets ==
         std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
     const auto openalex_search_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
-            return blueprint.id == "openalex-work-search-v3";
+            return blueprint.id == "openalex-work-search-v4";
         });
     assert(openalex_search_blueprint != checked_in_starter.blueprints.end());
     assert(openalex_search_blueprint->workflow_policy == common_plan_workflow_policy::required);

@@ -6,6 +6,11 @@ resources and datasets. It is a companion to [Agent Runtime](agent-runtime.md)
 and records the ownership rules that keep those components from becoming
 parallel orchestration systems.
 
+Synthesis and review share a host-owned completion projection and bounded
+review checklist. Research retains ownership of coverage and evidence; see
+[Synthesis and review](synthesis-review.md) for lifecycle, draft delivery and
+verification contracts.
+
 The central rule is:
 
 ```text
@@ -17,6 +22,32 @@ runtime validates and executes the canonical operation
 The model may propose a tool, a name, a column or a relationship. It does not
 choose a filesystem path, dataset URI, provider credential, network target,
 scope, backend or execution permission.
+
+## Semantic decisions and host authority
+
+The model interprets the user's intent and chooses an approach using the
+registered descriptions of available capabilities, tool families, operations,
+providers, blueprints and workflows. For example, it can decide that a question
+calls for scholarly literature, statistics or a general web search. An
+explicitly requested source is a strong constraint on that decision.
+
+Do not replace this interpretation with hand-maintained keyword lists,
+source dictionaries, topic-to-provider mappings or similar name-based routing
+shortcuts. Provider identities and capability descriptions come from host
+registration; they are candidates and constraints for the model, not a table
+that attempts to interpret the user's task. If a requested source cannot be
+resolved or is unavailable, report that limitation instead of silently
+substituting another source.
+
+The host resolves and validates the model's choices against registered
+identities, scope, policy and tool contracts. It also owns deterministic
+mechanisms such as argument validation, provenance, execution budgets,
+pagination, checkpoints and recovery. Workflows retain their declared
+prerequisites and execution envelope. These responsibilities do not require
+the host to infer the meaning of the user's request using keyword rules.
+
+This section records a design principle; it does not assert that every current
+execution path already implements it.
 
 ## Boundary map
 
@@ -521,9 +552,34 @@ the grammar from producing repeated copies of the same host-authorized family.
 Reflection is a bounded quality pass after execution, not a second discovery
 orchestration. Its context is compact and bounded. Once required tool work has
 closed, reflection may revise the answer but may not reopen completed tool work.
+
+Ordinary answer review uses the same responsibility in native JSON and compact
+DSL: verdict, assurance action and bounded revision guidance. It does not ask
+for step-completion or activation lists; evidence repair delegates to the
+existing planner. Failed mandatory tool steps retain their dedicated retry and
+argument-repair contracts. The reviewer receives the complete draft and the
+same host-approved synthesis context used to generate it. These are mandatory
+context in the existing allocation calculation; only the additional tool
+observation view is scaled around them. A prefix-only review must not be used
+to accept or reject unseen answer content. If the complete review context and
+configured output reservation cannot fit, the review fails with an explicit
+context-limit result before calling the model.
 Deliberate planning owns multi-step ordering and bounded repair. Research owns
 its acquisition controller and evidence workspace; it does not create a
 parallel tool scheduler.
+
+A completed HTTP decode that fails local output-schema validation remains a
+failed generation with `output_schema_rejected=true`. Planning, reflection and
+memory extraction may use their existing bounded regeneration budget for this
+case. Rejected content never reaches the acceptance callback. The repair prompt
+includes the bounded validation diagnostic; cancellation, transport failures,
+provider request rejection and invalid response envelopes propagate immediately.
+Exhausting regeneration preserves the failure rather than accepting partial data.
+
+The route selector receives each candidate's declared goal, success criteria,
+entry objective and workflow terminal outcomes. It asks the model to match the
+complete user task, including any declared continuation, rather than selecting a
+candidate solely because its first operation matches the beginning of the task.
 
 With `--agent-trace`, the CLI emits the host-owned runtime trace after the
 turn, including plan, tool, observation and reflection entries. It also emits

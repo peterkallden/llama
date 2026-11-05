@@ -158,3 +158,11 @@ button:focus-visible, a:focus-visible, summary:focus-visible, .report-block:focu
   .source-dialog { width: calc(100vw - 12px); max-height: 94dvh; }
   .source-dialog-content, .source-dialog-heading { padding: 12px; }
 }
+.unverified-draft {
+  margin: 12px 0;
+  padding: 14px;
+  border: 2px solid #bd842e;
+  border-radius: 8px;
+  background: rgba(189, 132, 46, 0.08);
+}
+.unverified-draft .message-body { white-space: pre-wrap; }

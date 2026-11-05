@@ -24,7 +24,8 @@ bool plan_agent_resource_text_chunks(
         const agent_resource_read_authority & authority,
         const common_runtime_resource_chunk_policy & policy,
         agent_resource_chunk_plan & out,
-        std::string & error);
+        std::string & error,
+        const std::function<bool()> & should_stop = {});
 
 bool read_agent_resource_chunk(
         const agent_resource_store & store,

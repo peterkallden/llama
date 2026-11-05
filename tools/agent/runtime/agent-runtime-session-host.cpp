@@ -626,8 +626,6 @@ common_agent_runtime_turn_request common_agent_runtime_session_host::make_base_t
             static_cast<size_t>(std::max(0, request.deliberation_policy_override->max_tool_rounds)));
     }
     turn_request.request.input_resources = request.input_resources;
-    turn_request.request.research_draft = request.research_draft;
-    turn_request.request.research_workspace_seed = request.research_workspace_seed;
     turn_request.request.resource_read_binding = request.resource_read_binding;
     turn_request.request.investigation_context = request.investigation_context;
     turn_request.request.flydelta_activation = request.flydelta_activation;
@@ -1193,6 +1191,10 @@ bool common_agent_runtime_session_host::run_turn(
     runtime->set_flydelta_activation(effective_request.flydelta_activation);
     runtime->set_turn_inputs(effective_request.input_resources, effective_request.require_tool_execution,
         effective_request.resource_read_binding, effective_request.investigation_context);
+    // These bindings belong to this turn, not to the resident model. In
+    // particular, the sink captures the daemon's active draft state.
+    runtime->set_research_context(effective_request.research_draft,
+        effective_request.research_workspace_seed, effective_request.research_progress_sink);
 
     common_agent_result agent_result;
     bool ok = false;
@@ -1207,6 +1209,7 @@ bool common_agent_runtime_session_host::run_turn(
                 effective_request.n_predict, agent_result, error);
             break;
     }
+    runtime->set_research_context({}, {}, {});
     session_host_trace("after-runtime-run", request);
 
     if (context_store && ok && !agent_result.response.empty() &&
@@ -1277,6 +1280,15 @@ bool common_agent_runtime_session_host::run_turn(
     result.revised = agent_result.revised;
     result.failure_class = classify_turn_failure(agent_result, request.execution_control);
     result.response = agent_result.response;
+    result.unverified_draft=agent_result.unverified_draft;
+    if(context_store && agent_result.unverified_draft) {
+        std::string draft_error;
+        if(!context_store->append_unverified_draft(request.request_id.empty()?turn_id:request.request_id,turn_id,
+            common_agent_unverified_draft_json(*agent_result.unverified_draft),draft_error)) {
+            result.error="unverified draft persistence failed: "+draft_error;
+            return false;
+        }
+    }
     result.plan_id = agent_result.plan_id ? *agent_result.plan_id : "";
     result.total_decoded_tokens = agent_result.total_decoded_tokens;
     result.response_generation_status = agent_result.response_generation_status;

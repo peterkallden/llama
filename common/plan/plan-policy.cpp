@@ -60,6 +60,8 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
     if (op.plan_id.empty() || op.plan_id != plan.id) return deny("operation plan id does not match plan");
     if (op.reason_summary.size() > config.max_string_length) return deny("reason summary is too long");
     if (op.expected_version != plan.version) return deny("stale plan version");
+    if (op.kind != common_plan_operation_kind::request_route_transition &&
+            (!op.route_steps.empty() || op.route_handoff)) return deny("route entry is only valid in a host route transition");
     if (plan.workflow_definition && !plan.workflow_definition->verification_checks.empty() &&
             (op.kind == common_plan_operation_kind::remove_step || op.kind == common_plan_operation_kind::skip_step) && op.step_id) {
         const auto * step = find_step(plan, *op.step_id);
@@ -289,7 +291,8 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
              op.observation->source == "response_review" || op.observation->source == "declared_claim" || op.observation->source == "artifact_snapshot" ||
              op.observation->source == "artifact_section" || op.observation->source == "artifact_publication" ||
              op.observation->source == "research_checkpoint" || op.observation->source == "artifact_continuation" ||
-             op.observation->source == "workflow_terminal_choice" || op.observation->source == "workflow_handled_failure"))
+             op.observation->source == "workflow_terminal_choice" || op.observation->source == "workflow_handled_failure" ||
+             op.observation->source == "workflow_continuation_resolution" || op.observation->source == "unverified_draft"))
         return deny("workflow grounding and artifact publication observations are host-authorized only");
     if (op.kind == common_plan_operation_kind::request_route_transition) {
         if (!op.host_authorized || !op.route_binding || !op.workflow_definition) return deny("route transition is host-authorized only");
@@ -297,6 +300,45 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         if (op.route_binding->workflow_ref != op.workflow_definition->workflow_ref ||
                 op.route_binding->workflow_revision != op.workflow_definition->workflow_revision ||
                 op.route_binding->graph_revision != op.workflow_definition->graph_revision) return deny("route transition workflow identity does not match its binding");
+        auto projected = plan;
+        for (const auto & step : op.route_steps) {
+            if (step.status != common_plan_step_status::pending ||
+                    common_plan_step_effective_mode(step) == common_plan_step_mode::final_response)
+                return deny("route entry steps must be pending executable work");
+            for (const auto & dependency : step.depends_on) {
+                const auto * producer = find_step(projected, dependency);
+                if (producer && common_plan_step_effective_mode(*producer) == common_plan_step_mode::final_response)
+                    return deny("route entry cannot depend on final synthesis");
+            }
+            common_plan_operation add;
+            add.kind = common_plan_operation_kind::add_step;
+            add.plan_id = plan.id; add.expected_version = plan.version;
+            add.host_authorized = true; add.step = step;
+            const auto checked = validate(projected, add);
+            if (!checked.allowed) return checked;
+            projected.steps.push_back(step);
+        }
+        if (op.route_handoff) {
+            if (op.route_handoff->source != "workflow_handoff" || op.route_steps.empty())
+                return deny("route handoff requires executable entry work");
+            common_plan_operation record;
+            record.kind = common_plan_operation_kind::record_observation;
+            record.plan_id = plan.id; record.expected_version = plan.version;
+            record.host_authorized = true; record.observation = op.route_handoff;
+            const auto checked = validate(projected, record);
+            if (!checked.allowed) return checked;
+            const auto snapshot = nlohmann::ordered_json::parse(op.route_handoff->summary, nullptr, false);
+            if (!snapshot.is_object() || !snapshot.contains("value") ||
+                    !snapshot.contains("source_fingerprint") || !snapshot["source_fingerprint"].is_string() ||
+                    !snapshot.contains("target_revision") || !snapshot["target_revision"].is_string() ||
+                    snapshot.value("source_fingerprint", std::string{}) != op.route_binding->continuation_source_fingerprint ||
+                    snapshot.value("target_revision", std::string{}) != op.workflow_definition->workflow_revision)
+                return deny("route handoff does not match the committed route");
+            if (op.workflow_continuation_record &&
+                    (op.workflow_continuation_record->source_observation_id.empty() ||
+                     op.route_handoff->evidence_ids != std::vector<std::string>{op.workflow_continuation_record->source_observation_id}))
+                return deny("route handoff evidence does not match its continuation record");
+        }
     }
     return {true, {}};
 }

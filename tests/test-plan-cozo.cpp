@@ -1,4 +1,5 @@
 #include "plan/cozo/plan-cozo.h"
+#include "test-plan-route-entry.h"
 
 #include <cassert>
 #include <filesystem>
@@ -16,6 +17,7 @@ int main() {
     {
         common_plan_cozo_store store;
         assert(store.open((dir / "plan.db").string(), error));
+        write_atomic_route_entry(store);
         common_plan_state plan;
         plan.id = "p";
         plan.scope = common_plan_scope::global;
@@ -94,6 +96,9 @@ int main() {
         transitioned_workflow.continuation_links = {{
             "fetch-full-text", "complete", "workflow://resource/document-analysis", "v5",
             {{"read-resource", "resource.read", "/uri", "/resources/0/uri", true, "choose-depth"}}}};
+        transitioned_workflow.continuation_links.front().optional = true;
+        transitioned_workflow.continuation_links.front().max_uses = 2;
+        transitioned_workflow.continuation_links.front().argument_bindings.front().candidate_id_json_pointer = "/id";
         transitioned_workflow.resource_read_policy = common_plan_workflow_resource_read_policy::chunked;
         transitioned_workflow.start_state = "record";
         transitioned_workflow.terminal_states = {"complete"};
@@ -141,6 +146,7 @@ int main() {
     {
         common_plan_cozo_store store;
         assert(store.open((dir / "plan.db").string(), error));
+        verify_atomic_route_entry(store);
         auto plan = store.get("p", error);
         assert(plan);
         assert(plan->observations.size()==1);
@@ -194,6 +200,9 @@ int main() {
         assert(plan->workflow_definition->continuation_links.size() == 1 &&
             plan->workflow_definition->continuation_links.front().source_transition_id == "fetch-full-text" &&
             plan->workflow_definition->continuation_links.front().source_terminal_state == "complete" &&
+            plan->workflow_definition->continuation_links.front().optional &&
+            plan->workflow_definition->continuation_links.front().max_uses == 2 &&
+            plan->workflow_definition->continuation_links.front().argument_bindings.front().candidate_id_json_pointer == "/id" &&
             plan->workflow_definition->continuation_links.front().argument_bindings.front().target_transition_id == "read-resource" &&
             plan->workflow_definition->continuation_links.front().argument_bindings.front().source_transition_id == "choose-depth");
         assert(plan->workflow_continuation_history.size() == 1 &&
@@ -224,6 +233,15 @@ int main() {
     analysis.workflow_definition->workflow_ref = "workflow://dataset/analysis";
     analysis.workflow_definition->workflow_revision = "v4";
     analysis.workflow_definition->result_contracts = {{"statistics.describe","statistics.describe.v1"}};
+    common_plan_workflow_transition paged_search;
+    paged_search.id = "search";
+    paged_search.from_state = "start";
+    paged_search.to_state = "done";
+    paged_search.tool_name = "openalex.listWorks";
+    paged_search.max_pages = 5;
+    analysis.workflow_definition->start_state = "start";
+    analysis.workflow_definition->terminal_states = {"done"};
+    analysis.workflow_definition->transitions = {paged_search};
     common_plan_step measure;
     measure.id = "measure"; measure.title = "Describe amount";
     measure.tool_call = common_plan_tool_call{"statistics.describe", R"({"dataset":"dataset://orders","columns":["amount"]})"};
@@ -242,8 +260,10 @@ int main() {
         const auto saved = reader.get(analysis.id, error);
         if (!saved || saved->steps.size() != 1 || !saved->steps[0].tool_call ||
                 saved->steps[0].tool_call->result_requirement_json != measure.tool_call->result_requirement_json ||
-                !saved->workflow_definition || saved->workflow_definition->result_contracts != analysis.workflow_definition->result_contracts) {
-            std::cerr << "analysis result contract lost on restart\n"; std::exit(1);
+                !saved->workflow_definition || saved->workflow_definition->result_contracts != analysis.workflow_definition->result_contracts ||
+                saved->workflow_definition->transitions.size() != 1 ||
+                saved->workflow_definition->transitions.front().max_pages != 5) {
+            std::cerr << "analysis result contract or pagination limit lost on restart\n"; std::exit(1);
         }
     }
     std::filesystem::remove(analysis_path);

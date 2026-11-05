@@ -154,10 +154,63 @@ struct common_runtime_resource_lineage {
     std::string derivation;
 };
 
+// Host-owned position in a versioned source. A cursor is an opaque provider
+// reference; it must not be projected into model-visible output or traces.
+enum class common_resource_position_unit { bytes, rows, pages, provider_cursor };
+enum class common_resource_more { yes, no, unknown };
+enum class common_resource_progress_status { active, complete, unresolved, stale };
+struct common_resource_continuation_position {
+    unsigned schema_version = 1;
+    std::string resource_uri;
+    std::string representation;
+    std::string content_fingerprint;
+    std::string task_fingerprint;
+    common_resource_position_unit unit = common_resource_position_unit::bytes;
+    uint64_t next_offset = 0;
+    std::string cursor_ref;
+    std::string container;
+    std::string query_fingerprint;
+    std::string snapshot_ref;
+    common_resource_more more = common_resource_more::unknown;
+    common_resource_progress_status status = common_resource_progress_status::active;
+};
+
+inline bool common_resource_continuation_position_valid(
+        const common_resource_continuation_position & position, std::string & error) {
+    if (position.schema_version != 1 || position.resource_uri.empty() || position.representation.empty() ||
+            position.content_fingerprint.empty() || position.task_fingerprint.empty()) {
+        error = "continuation position requires versioned source, representation and task identities";
+        return false;
+    }
+    if (static_cast<int>(position.unit) < 0 || static_cast<int>(position.unit) > static_cast<int>(common_resource_position_unit::provider_cursor) ||
+            static_cast<int>(position.more) < 0 || static_cast<int>(position.more) > static_cast<int>(common_resource_more::unknown) ||
+            static_cast<int>(position.status) < 0 || static_cast<int>(position.status) > static_cast<int>(common_resource_progress_status::stale) ||
+            (position.unit == common_resource_position_unit::provider_cursor && position.next_offset != 0) ||
+            (position.unit != common_resource_position_unit::provider_cursor && !position.cursor_ref.empty()) ||
+            (position.status == common_resource_progress_status::complete && position.more != common_resource_more::no)) {
+        error = "continuation position has inconsistent unit or progress";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 inline bool common_runtime_resource_lineage_is_valid(
         const common_runtime_resource_lineage & lineage,
         std::string & error) {
     if (lineage.parent_uri.empty()) {
+        error.clear();
+        return true;
+    }
+    if (lineage.derivation.empty()) {
+        error = "resource lineage requires a derivation label";
+        return false;
+    }
+    // A derived resource can be a complete copy or a new revision. Chunk
+    // coordinates are required only when the lineage describes a chunk.
+    const bool has_chunk_coordinates = lineage.chunk_index != 0 || lineage.chunk_count != 0 ||
+        lineage.byte_offset != 0 || lineage.byte_length != 0 || lineage.overlap_bytes != 0;
+    if (!has_chunk_coordinates && lineage.derivation != "host.chunk.text.v1") {
         error.clear();
         return true;
     }
@@ -171,10 +224,6 @@ inline bool common_runtime_resource_lineage_is_valid(
     }
     if (lineage.byte_length == 0) {
         error = "resource lineage requires a non-zero byte_length";
-        return false;
-    }
-    if (lineage.derivation.empty()) {
-        error = "resource lineage requires a derivation label";
         return false;
     }
     error.clear();

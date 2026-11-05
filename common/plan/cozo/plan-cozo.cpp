@@ -76,6 +76,8 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
         value["continuation_links"] = json::array();
         for (const auto & link : definition.continuation_links) {
             json item = {{"workflow_ref", link.target_workflow_ref}, {"workflow_revision", link.target_workflow_revision}, {"bindings", json::array()}};
+            if (link.optional) item["optional"] = true;
+            if (link.max_uses) item["max_uses"] = link.max_uses;
             if (!link.source_transition_id.empty()) item["from_transition"] = link.source_transition_id;
             if (!link.source_terminal_state.empty()) item["from_terminal_state"] = link.source_terminal_state;
             for (const auto & binding : link.argument_bindings) {
@@ -83,6 +85,7 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
                     {"tool", binding.target_tool_name}, {"target", binding.target_json_pointer},
                     {"source", binding.source_json_pointer}, {"required", binding.required}};
                 if (!binding.source_transition_id.empty()) binding_json["from_transition"] = binding.source_transition_id;
+                if (!binding.candidate_id_json_pointer.empty()) binding_json["candidate_id"] = binding.candidate_id_json_pointer;
                 item["bindings"].push_back(std::move(binding_json));
             }
             value["continuation_links"].push_back(std::move(item));
@@ -111,12 +114,13 @@ static json serialize_workflow_definition(const common_plan_workflow_definition 
                 {"tool", transition.tool_name}, {"arguments", transition.arguments_template_json},
                 {"candidates", transition.candidate_json_pointer}, {"candidate_id", transition.candidate_id_json_pointer},
                 {"cost", transition.cost},
-                {"optional", transition.optional}};
+                {"optional", transition.optional}, {"max_pages", transition.max_pages}};
             if (!transition.choices.empty()) {
                 item["choices"] = json::array();
                 for (const auto & choice : transition.choices) {
                     item["choices"].push_back({{"id", choice.id}, {"description", choice.description},
-                        {"to", choice.to_state}, {"requires", choice.required_observation_json_pointers}});
+                        {"to", choice.to_state}, {"requires", choice.required_observation_json_pointers},
+                        {"max_uses", choice.max_uses}});
                 }
             }
             if (!transition.argument_bindings.empty()) {
@@ -148,11 +152,13 @@ static common_plan_workflow_definition parse_workflow_definition(const json & de
         link.source_transition_id = item.value("from_transition", std::string{});
         link.source_terminal_state = item.value("from_terminal_state", std::string{});
         link.target_workflow_revision = item.value("workflow_revision", std::string{});
+        link.optional = item.value("optional", false);
+        link.max_uses = item.value("max_uses", size_t{0});
         for (const auto & binding : item.value("bindings", json::array())) link.argument_bindings.push_back({
             binding.value("transition", std::string{}),
             binding.value("tool", std::string{}), binding.value("target", std::string{}),
             binding.value("source", std::string{}), binding.value("required", true),
-            binding.value("from_transition", std::string{})});
+            binding.value("from_transition", std::string{}), binding.value("candidate_id", std::string{})});
         value.continuation_links.push_back(std::move(link));
     }
     if (definition.value("resource_read_policy", std::string("single_range")) == "chunked") value.resource_read_policy=common_plan_workflow_resource_read_policy::chunked;
@@ -180,12 +186,14 @@ static common_plan_workflow_definition parse_workflow_definition(const json & de
         transition.artifact_section_id = item.value("artifact_section_id", std::string{});
         transition.artifact_profile_json = item.value("artifact_profile_json", std::string{});
         transition.optional = item.value("optional", false);
+        transition.max_pages = item.value("max_pages", uint8_t{0});
         for (const auto & choice_json : item.value("choices", json::array())) {
             common_plan_workflow_transition::choice choice;
             choice.id = choice_json.value("id", std::string{});
             choice.description = choice_json.value("description", std::string{});
             choice.to_state = choice_json.value("to", std::string{});
             choice.required_observation_json_pointers = choice_json.value("requires", std::vector<std::string>{});
+            choice.max_uses = choice_json.value("max_uses", size_t(0));
             transition.choices.push_back(std::move(choice));
         }
         for (const auto & binding_json : item.value("bindings", json::array())) {
@@ -251,7 +259,7 @@ static json serialize_with_route_fields(const common_plan_state & p) {
         {"source_workflow_revision", item.source_workflow_revision},
         {"source_terminal_state", item.source_terminal_state},
         {"target_workflow_ref", item.target_workflow_ref},
-        {"target_workflow_revision", item.target_workflow_revision}});
+        {"target_workflow_revision", item.target_workflow_revision}, {"source_observation_id", item.source_observation_id}});
     return value;
 }
 
@@ -285,7 +293,7 @@ static bool deserialize(const std::string & text, common_plan_state & p) {
         item.value("link_id", std::string{}), item.value("source_fingerprint", std::string{}),
         item.value("source_workflow_ref", std::string{}), item.value("source_workflow_revision", std::string{}),
         item.value("source_terminal_state", std::string{}), item.value("target_workflow_ref", std::string{}),
-        item.value("target_workflow_revision", std::string{})});
+        item.value("target_workflow_revision", std::string{}), item.value("source_observation_id", std::string{})});
     if (j.contains("active_step_id") && !j["active_step_id"].is_null()) p.active_step_id = j["active_step_id"].get<std::string>();
     if (j.contains("next_action") && !j["next_action"].is_null()) p.next_action = j["next_action"].get<std::string>();
     p.version = j.value("version", uint64_t(0));

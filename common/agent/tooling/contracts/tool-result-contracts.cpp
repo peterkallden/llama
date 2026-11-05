@@ -28,6 +28,7 @@ json common_tool_resource_descriptor_to_json(
         {"description", descriptor.description},
         {"mime_type", descriptor.mime_type},
         {"size_bytes", descriptor.size_bytes},
+        {"sha256", descriptor.sha256},
         {"scope", common_runtime_resource_scope_name(descriptor.scope)},
         {"metadata", {
             {"purpose", descriptor.metadata.purpose},

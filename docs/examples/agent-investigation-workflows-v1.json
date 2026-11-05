@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-investigation-workflows",
-  "version": "v7",
+  "version": "v8",
   "procedures": [
     {
       "id": "investigation-evidence-discipline-v2",
@@ -97,12 +97,12 @@
   ],
   "workflows": [
     {
-      "id": "investigation-identity-analysis-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-identity-analysis-v8",
+      "source_revision": "agent-investigation-workflows@v8",
       "workflow_ref": "workflow://investigation/identity-analysis",
-      "workflow_revision": "v7",
+      "workflow_revision": "v8",
       "family": "investigation",
-      "graph_revision": "investigation-identity-analysis@v7",
+      "graph_revision": "investigation-identity-analysis@v8",
       "required_capabilities": [
         "investigation.case",
         "investigate.collect",
@@ -184,7 +184,8 @@
             {
               "id": "collect",
               "description": "Collect missing events from an explicitly selected configured search source.",
-              "to": "collect"
+              "to": "collect",
+              "max_uses": 1
             },
             {
               "id": "import",
@@ -352,16 +353,8 @@
           "model_instruction": "Expand only the verified investigated identity. Distinguish successful authentication from failed attempts and inspect relevant subsequent events."
         },
         {
-          "id": "inspect-result",
-          "from": "assess",
-          "to": "next",
-          "kind": "tool",
-          "tool": "investigate.case.open",
-          "arguments": "{}"
-        },
-        {
           "id": "choose-next",
-          "from": "next",
+          "from": "assess",
           "to": "finalize",
           "kind": "model_choice",
           "choices": [
@@ -3172,8 +3165,8 @@
   ],
   "blueprints": [
     {
-      "id": "investigation-identity-analysis-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-identity-analysis-v8",
+      "source_revision": "agent-investigation-workflows@v8",
       "selection_description": "Trace an identity through hosts and authentication events.",
       "purpose": "Establish which configured sources record authentication activity for the selected identity.",
       "goal": "Produce a source-linked account of observed authentication destinations and related events.",
@@ -3193,7 +3186,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/identity-analysis",
-          "workflow_revision": "v7",
+          "workflow_revision": "v8",
           "phase_bindings": {
             "select-scope": [
               "open-case",
@@ -3221,7 +3214,6 @@
               "record-extraction"
             ],
             "report-findings": [
-              "inspect-result",
               "choose-next",
               "final-summary",
               "finish-empty"

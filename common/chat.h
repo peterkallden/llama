@@ -259,6 +259,10 @@ struct common_chat_tool {
     std::string mcp_provider_id;
     std::string mcp_server_tool_name;
     bool mcp_app_read_only = false;
+    // Host-declared OpenAPI collection/item relation; not model authority.
+    std::string collection_item_parameter;
+    std::string collection_items_pointer;
+    std::string item_lookup_parameter;
 };
 
 enum common_chat_tool_choice {

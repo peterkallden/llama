@@ -232,6 +232,9 @@ struct mcp_agent_tool_definition {
     std::string ui_resource_uri;
     std::vector<std::string> ui_visibility;
     std::string ui_metadata_json;
+    std::string collection_item_parameter;
+    std::string collection_items_pointer;
+    std::string item_lookup_parameter;
 };
 
 struct mcp_agent_tool_call_result {

@@ -1,6 +1,7 @@
 #include "agent/agent-runtime.h"
 #include "agent/tooling/registry/tool-registry.h"
 #include "plan/plan-in-memory.h"
+#include "plan/plan-workflow-state.h"
 #include "test-tool-runtime-registry-adapter.h"
 
 #include <cassert>
@@ -127,6 +128,8 @@ public:
         link.source_transition_id = "finish";
         link.source_terminal_state = "done";
         link.target_workflow_ref = "workflow://test/next";
+        link.argument_bindings.push_back({"lookup", "structured-lookup", "/id",
+            "/result/host_item_candidates", true, "", "/id"});
         workflow.continuation_links.push_back(link);
         plan.workflow_definition = workflow;
         plan.selected_workflow = common_plan_workflow_binding{workflow.workflow_ref, workflow.workflow_revision};
@@ -163,6 +166,48 @@ public:
         proposal.plan.steps = {action};
         proposal.plan.active_step_id = action.id;
         proposal.plan.status = common_plan_status::active;
+        return proposal;
+    }
+};
+
+class handled_failure_planner final : public common_planner {
+public:
+    common_plan_proposal create_plan(const common_agent_request &, std::string & error) override {
+        error.clear();
+        common_plan_proposal proposal;
+        auto & plan = proposal.plan;
+        plan.id = "handled-failure-handoff";
+        plan.goal = "Continue after an unavailable source";
+        common_plan_workflow_definition workflow;
+        workflow.workflow_ref = "workflow://test/fetch";
+        workflow.workflow_revision = "v1";
+        workflow.graph_revision = "v1";
+        workflow.start_state = "start";
+        workflow.terminal_states = {"unavailable"};
+        common_plan_workflow_transition fetch;
+        fetch.id = "fetch"; fetch.from_state = "start"; fetch.to_state = "fetched";
+        fetch.tool_name = "unavailable-source";
+        fetch.failure_terminal_state = "unavailable";
+        fetch.handled_http_statuses = {403};
+        workflow.transitions = {fetch};
+        common_plan_workflow_continuation_link link;
+        link.source_transition_id = "fetch"; link.source_terminal_state = "unavailable";
+        link.target_workflow_ref = "workflow://test/retry";
+        workflow.continuation_links.push_back(link);
+        plan.workflow_definition = workflow;
+        plan.selected_workflow = common_plan_workflow_binding{workflow.workflow_ref, workflow.workflow_revision};
+        plan.route_binding = common_plan_route_binding{"route:fetch", "", "", workflow.workflow_ref,
+            workflow.workflow_revision, workflow.graph_revision, "env", "policy"};
+        common_plan_step step{"fetch-step", "Fetch", "Fetch source"};
+        step.status = common_plan_step_status::active;
+        step.selected_tool = "unavailable-source";
+        step.tool_call = common_plan_tool_call{"unavailable-source", "{}"};
+        step.semantic_alias = "workflow-transition:fetch";
+        common_plan_step answer{"answer", "Answer", "Summarize"};
+        answer.mode = common_plan_step_mode::final_response;
+        answer.depends_on = {step.id};
+        plan.steps = {step, answer};
+        plan.active_step_id = step.id; plan.status = common_plan_status::active;
         return proposal;
     }
 };
@@ -279,9 +324,22 @@ int main() {
     structured_tool.arguments_schema = R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"}}})";
     structured_tool.handler = [&structured_lookup_calls](const std::string &) {
         ++structured_lookup_calls;
-        return common_tool_execution_result::success(R"({"ok":true,"result":{"found":true}})");
+        const nlohmann::ordered_json payload = {{"ok", true}, {"result", {
+            {"found", true}, {"host_item_candidates", nlohmann::ordered_json::array({{{"id", std::string(700, 'x')}}})},
+            {"padding", std::string(5000, 'p')}}}};
+        return common_tool_execution_result::success(payload.dump());
     };
     assert(registry.register_tool(std::move(structured_tool), error));
+    common_registered_tool unavailable_tool;
+    unavailable_tool.name = "unavailable-source";
+    unavailable_tool.arguments_schema = R"({"type":"object","additionalProperties":false})";
+    unavailable_tool.handler = [](const std::string &) {
+        auto result = common_tool_execution_result::failure("unavailable", common_tool_failure_class::network,
+            false, "Source unavailable", "HTTP 403");
+        result.http.status = 403;
+        return result;
+    };
+    assert(registry.register_tool(std::move(unavailable_tool), error));
     planner p; executor e; reflector r;
     test_tool_runtime_registry_adapter tool_runtime(registry);
     common_agent_runtime runtime(store, p, e, r, &tool_runtime);
@@ -296,6 +354,20 @@ int main() {
     auto plan = store.get("two-rounds", error);
     assert(plan && plan->status == common_plan_status::completed && plan->observations.size() == 2 && plan->steps[0].status == common_plan_step_status::completed && plan->steps[1].status == common_plan_step_status::completed && plan->steps[2].status == common_plan_step_status::completed);
     assert(common_plan_tool_execution_closed(*plan));
+
+    common_plan_in_memory_store failure_store;
+    assert(failure_store.open("", error));
+    handled_failure_planner failure_planner;
+    common_agent_runtime failure_runtime(failure_store, failure_planner, e, r, &tool_runtime);
+    common_agent_request failure_request;
+    failure_request.prompt = "Inspect a candidate source";
+    failure_request.max_iterations = 4;
+    failure_request.max_tool_batches = 2;
+    const auto failure_result = failure_runtime.run(failure_request);
+    assert(failure_result.error.empty() && failure_result.workflow_handoff_requested);
+    const auto failure_plan = failure_store.get("handled-failure-handoff", error);
+    assert(failure_plan && common_plan_workflow_failure_handled(*failure_plan, failure_plan->steps.front()));
+    assert(failure_plan->steps.back().status != common_plan_step_status::completed);
 
     // A choice accepted from a host-bounded candidate list is persisted as
     // structured evidence only after the following tool action succeeds.
@@ -499,6 +571,11 @@ int main() {
     assert(linked_plan && linked_plan->steps.size() == 3);
     assert(linked_plan->steps[0].status == common_plan_step_status::completed);
     assert(linked_plan->steps[2].status == common_plan_step_status::completed);
+    const auto retained = common_plan_workflow_observation(*linked_plan, "finish", false);
+    assert(retained);
+    const auto retained_payload = nlohmann::ordered_json::parse(retained->summary);
+    assert(retained_payload["result"]["host_item_candidates"][0]["id"].get<std::string>() == std::string(700, 'x'));
+    assert(!retained_payload.value("result_truncated", false));
 
     // A caller that requires tool execution must never receive a plain draft
     // when the runtime has no tool budget left to execute the planned step.

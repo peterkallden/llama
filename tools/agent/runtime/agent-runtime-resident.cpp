@@ -131,6 +131,23 @@ void common_agent_runtime_resident_runtime::set_turn_inputs(
     base_turn_request.request.investigation_context = std::move(investigation_context);
 }
 
+void set_agent_runtime_turn_research_context(common_agent_runtime_turn_request & request,
+        std::optional<common_agent_research_draft_ref> draft,
+        std::optional<common_agent_research_workspace> seed,
+        std::function<bool(const common_agent_research_workspace &, std::string &)> progress_sink) {
+    request.request.research_draft = std::move(draft);
+    request.request.research_workspace_seed = std::move(seed);
+    request.request.research_progress_sink = std::move(progress_sink);
+}
+
+void common_agent_runtime_resident_runtime::set_research_context(
+        std::optional<common_agent_research_draft_ref> draft,
+        std::optional<common_agent_research_workspace> seed,
+        std::function<bool(const common_agent_research_workspace &, std::string &)> progress_sink) {
+    set_agent_runtime_turn_research_context(base_turn_request, std::move(draft),
+        std::move(seed), std::move(progress_sink));
+}
+
 bool common_agent_runtime_resident_runtime::prepare_model(std::string & error) {
     if (model_residency) {
         if (resident_model_handle.valid()) {

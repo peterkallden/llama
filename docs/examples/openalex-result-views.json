@@ -1,0 +1,141 @@
+{
+  "listWorks": {
+    "kind": "collection",
+    "fields": {
+      "id": "/id",
+      "display_name": "/display_name",
+      "title": "/title",
+      "publication_year": "/publication_year",
+      "doi": "/doi"
+    },
+    "materialize": "resource",
+    "max_text_bytes": 1200,
+    "max_bytes": 16384,
+    "items_pointer": "/results",
+    "max_items": 5,
+    "derived_fields": {
+      "abstract_text": {
+        "transform": "inverted_index_to_text",
+        "from": "/abstract_inverted_index"
+      },
+      "full_text_url": {
+        "transform": "first_nonempty_url",
+        "from": [
+          "/best_oa_location/pdf_url",
+          "/content_urls/pdf",
+          "/content_url"
+        ]
+      }
+    },
+    "resource_scope": "session"
+  },
+  "getWork": {
+    "kind": "object",
+    "fields": {
+      "id": "/id",
+      "display_name": "/display_name",
+      "title": "/title",
+      "publication_year": "/publication_year",
+      "doi": "/doi",
+      "publication_date": "/publication_date"
+    },
+    "materialize": "resource",
+    "max_text_bytes": 1200,
+    "max_bytes": 16384,
+    "derived_fields": {
+      "abstract_text": {
+        "transform": "inverted_index_to_text",
+        "from": "/abstract_inverted_index"
+      },
+      "full_text_url": {
+        "transform": "first_nonempty_url",
+        "from": [
+          "/best_oa_location/pdf_url",
+          "/content_urls/pdf",
+          "/content_url"
+        ]
+      }
+    },
+    "resource_scope": "session"
+  },
+  "listAuthors": {
+    "kind": "collection",
+    "fields": {
+      "id": "/id",
+      "display_name": "/display_name",
+      "works_count": "/works_count",
+      "orcid": "/orcid",
+      "cited_by_count": "/cited_by_count"
+    },
+    "materialize": "resource",
+    "max_text_bytes": 1200,
+    "max_bytes": 16384,
+    "items_pointer": "/results",
+    "max_items": 5
+  },
+  "getAuthor": {
+    "kind": "object",
+    "fields": {
+      "id": "/id",
+      "display_name": "/display_name",
+      "works_count": "/works_count",
+      "orcid": "/orcid",
+      "cited_by_count": "/cited_by_count"
+    },
+    "materialize": "resource",
+    "max_text_bytes": 1200,
+    "max_bytes": 16384
+  },
+  "listInstitutions": {
+    "kind": "collection",
+    "fields": {
+      "id": "/id",
+      "display_name": "/display_name",
+      "works_count": "/works_count",
+      "country_code": "/country_code",
+      "ror": "/ror"
+    },
+    "materialize": "resource",
+    "max_text_bytes": 1200,
+    "max_bytes": 16384,
+    "items_pointer": "/results",
+    "max_items": 5
+  },
+  "getInstitution": {
+    "kind": "object",
+    "fields": {
+      "id": "/id",
+      "display_name": "/display_name",
+      "works_count": "/works_count",
+      "country_code": "/country_code",
+      "ror": "/ror"
+    },
+    "materialize": "resource",
+    "max_text_bytes": 1200,
+    "max_bytes": 16384
+  },
+  "listTopics": {
+    "kind": "collection",
+    "fields": {
+      "id": "/id",
+      "display_name": "/display_name",
+      "works_count": "/works_count"
+    },
+    "materialize": "resource",
+    "max_text_bytes": 1200,
+    "max_bytes": 16384,
+    "items_pointer": "/results",
+    "max_items": 5
+  },
+  "getTopic": {
+    "kind": "object",
+    "fields": {
+      "id": "/id",
+      "display_name": "/display_name",
+      "works_count": "/works_count"
+    },
+    "materialize": "resource",
+    "max_text_bytes": 1200,
+    "max_bytes": 16384
+  }
+}

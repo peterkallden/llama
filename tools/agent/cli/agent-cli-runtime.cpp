@@ -1,4 +1,5 @@
 #include "agent-cli-runtime.h"
+#include "agent/review-checklist.h"
 #include "tools/agent/runtime/agent-runtime-generation-utils.h"
 #include "../runtime/agent-runtime-assembly.h"
 
@@ -496,11 +497,33 @@ std::string reflection_json_schema(
         const std::string & decision_enum,
         const common_plan_state & plan,
         const std::vector<common_chat_tool> & tools,
-        const std::string & implicit_replace_step_id) {
+        const std::string & implicit_replace_step_id,
+        bool review_only) {
     using json = nlohmann::ordered_json;
     const std::string base = R"({"type":"object","additionalProperties":false,"required":["decision"],"properties":{"decision":{"enum":[]},"assurance_action":{"enum":["accept","revise_response","revise_plan","escalate_deliberate","escalate_research","fail_bounded"]},"ready_to_answer":{"type":"boolean"},"confidence":{"type":"number","minimum":0,"maximum":1},"revision_guidance":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":512}},"learning_hint":{"type":"object","additionalProperties":false,"required":["category","statement","expected_reuse"],"properties":{"category":{"type":"string","maxLength":64},"statement":{"type":"string","minLength":1,"maxLength":512},"expected_reuse":{"type":"number","minimum":0,"maximum":1}}},"complete":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"activate":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"reset":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"retry":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":64}},"next_action":{"type":"string","maxLength":256,"description":"Only unfinished work after this review. Leave empty when accepting a ready-to-answer draft."},"add_steps":{"type":"array","maxItems":2,"items":{"type":"object"}},"replace_steps":{"type":"array","maxItems":2,"items":{"type":"object"}}}})";
     json schema = json::parse(base);
     schema["properties"]["decision"]["enum"] = json::parse(decision_enum);
+    schema["properties"]["issues"]=json::parse(R"({
+      "type":"array","maxItems":4,"items":{
+        "type":"object","additionalProperties":false,"required":["description","correction"],
+        "properties":{
+          "description":{"type":"string","minLength":1,"maxLength":512},
+          "correction":{"type":"string","minLength":1,"maxLength":512},
+          "previous_issue_id":{"type":"string","maxLength":64},
+          "evidence_ids":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":1024}}
+        }
+      }
+    })");
+    for(const auto * key:{"advisory_notes","resolved_issue_ids"})
+        schema["properties"][key]={{"type","array"},{"maxItems",4},{"items",{{"type","string"},{"maxLength",key==std::string("resolved_issue_ids")?64:512}}}};
+    if (review_only) {
+        // Ordinary review has the same responsibility in JSON and DSL: judge
+        // the answer, or delegate evidence repair to the existing planner.
+        // Completed-step bookkeeping is already owned by the host.
+        for (const auto * field : {"complete", "activate", "reset", "retry", "add_steps", "replace_steps"})
+            schema["properties"].erase(field);
+        return schema.dump();
+    }
     json step_id_enum = json::array();
     size_t step_id_max_length = 64;
     std::set<std::string> plan_tool_names;
@@ -1274,6 +1297,39 @@ size_t context_scale_budget(size_t value, size_t numerator, size_t denominator) 
     return static_cast<size_t>(scaled);
 }
 
+std::string render_allocated_tool_observations(
+        common_agent_inference & inference,
+        const common_agent_generation_config & generation_config,
+        const common_plan_state & plan,
+        const std::string & mandatory_context,
+        int output_tokens,
+        const char * purpose) {
+    size_t budget = generation_config.context_budgets.tool_observation_chars;
+    const size_t capacity = inference.context_capacity_tokens();
+    if (capacity != 0) {
+        const auto view = common_plan_render_tool_observations(plan,
+            {std::min<size_t>(capacity, 1024 * 1024) * 8});
+        // Include the renderer's reservation for a truncation notice in the
+        // demand, even when the complete view needs no such notice.
+        const size_t view_chars = view.size() + 64;
+        const size_t demand = context_text_tokens(inference, view) + 32;
+        const common_agent_context_budget_config defaults;
+        const bool configured = generation_config.context_budgets.configured_prompt_values.count("tool_observation_chars") ||
+            budget != defaults.tool_observation_chars;
+        const auto allocation = common_agent_allocate_context(capacity,
+            context_text_tokens(inference, mandatory_context) + 256,
+            static_cast<size_t>(std::max(1, output_tokens)),
+            {{configured ? context_scale_budget(budget, demand, view_chars) : demand, demand}});
+        // An explicit unavailable marker is required if evidence cannot fit.
+        budget = std::max<size_t>(64, context_scale_budget(allocation.section_tokens.front(), view_chars, demand));
+        if (generation_config.agent_trace) {
+            std::fprintf(stderr, "agent context allocation: purpose=%s capacity=%zu observations_chars=%zu mandatory_estimate_fits=%s\n",
+                purpose, capacity, budget, allocation.mandatory_fits ? "true" : "false");
+        }
+    }
+    return common_plan_render_tool_observations(plan, {budget});
+}
+
 // Graph projection has host guidance followed by a compact JSON snapshot.
 // Reduce only complete nodes and edges, retaining valid JSON and the explicit
 // truncation flag. A too-small allocation omits the optional view entirely.
@@ -1883,7 +1939,9 @@ public:
                 {"memory_policy", 2, request_bytes + source_bytes, memory_bytes},
                 {"repair", 2, user.content.size(), attempt.content.size() - user.content.size()},
             };
-            return inference.generate_result(generation_request);
+            auto generated = inference.generate_result(generation_request);
+            if (generated.output_schema_rejected) parse_error = generated.error_message;
+            return generated;
         };
         auto generation_result = common_agent_bounded_structured_regeneration(
             generate_plan,
@@ -2090,6 +2148,10 @@ public:
         user.content = "\n[User request]\n" + request.prompt +
             common_agent_render_input_resource_context(request.input_resources, generation_config.context_budgets.input_resources_chars, request.available_resources);
         user.content += common_agent_render_result_requirements(plan);
+        user.content += common_agent_render_synthesis_state(
+            common_agent_resolve_synthesis_state(plan,request.synthesis_state),"synthesis");
+        if(!request.review_checklist.blocking.empty()) user.content +=
+            "\n[Blocking corrections from the prior review]\n"+common_agent_review_checklist_json(request.review_checklist).dump();
         if (!guidance.empty()) {
             user.content += "\n[Revision guidance]\n";
             for (const auto & item : guidance) user.content += "- " + item + "\n";
@@ -2105,39 +2167,32 @@ public:
             }
             user.content += "\n[Host numeric evidence handles]\n" + visible.dump();
         }
-        size_t observations_budget = generation_config.context_budgets.tool_observation_chars;
-        const size_t context_capacity = inference.context_capacity_tokens();
-        if (context_capacity != 0) {
-            const auto view = common_plan_render_tool_observations(plan,
-                {std::min<size_t>(context_capacity, 1024 * 1024) * 8});
-            // The renderer reserves space for a truncation notice while it
-            // selects records, even when the final view needs no notice.
-            const size_t view_chars = view.size() + 64;
-            const size_t demand = context_text_tokens(inference, view) + 32;
-            const common_agent_context_budget_config defaults;
-            const bool configured = generation_config.context_budgets.configured_prompt_values.count("tool_observation_chars") ||
-                observations_budget != defaults.tool_observation_chars;
-            const auto allocation = common_agent_allocate_context(context_capacity,
-                context_text_tokens(inference, system.content + task_frame + user.content) + 256,
-                static_cast<size_t>(std::max(1, std::min(generation_config.n_predict, 256))),
-                {{configured ? context_scale_budget(observations_budget, demand, view_chars) : demand, demand}});
-            // Keep an explicit unavailable marker even when evidence cannot
-            // fit; never silently present the result as complete evidence.
-            observations_budget = std::max<size_t>(64, context_scale_budget(allocation.section_tokens.front(), view_chars, demand));
-            if (generation_config.agent_trace) {
-                std::fprintf(stderr, "agent context allocation: purpose=draft capacity=%zu observations_chars=%zu mandatory_estimate_fits=%s\n",
-                    context_capacity, observations_budget, allocation.mandatory_fits ? "true" : "false");
+        int draft_output_tokens = generation_config.n_predict;
+        const std::string mandatory_context = system.content + task_frame + user.content + grounded_schema;
+        const size_t capacity = inference.context_capacity_tokens();
+        if (capacity != 0 && draft_output_tokens > 0) {
+            // Reserve the same safety margin as the observation allocator and
+            // room for its explicit evidence-unavailable marker.
+            const size_t mandatory_tokens = context_text_tokens(inference, mandatory_context) + 256 + 64;
+            if (mandatory_tokens >= capacity) {
+                error = "model draft context has no remaining capacity for output";
+                return {};
+            }
+            draft_output_tokens = static_cast<int>(std::min<size_t>(
+                static_cast<size_t>(draft_output_tokens), capacity - mandatory_tokens));
+            if (generation_config.agent_trace && draft_output_tokens != generation_config.n_predict) {
+                std::fprintf(stderr, "agent context allocation: purpose=draft output_tokens=%d configured_output_tokens=%d\n",
+                    draft_output_tokens, generation_config.n_predict);
             }
         }
-        user.content = task_frame + common_plan_render_tool_observations(plan, {observations_budget}) + user.content;
+        user.content = task_frame + render_allocated_tool_observations(inference, generation_config, plan,
+            mandatory_context,
+            draft_output_tokens, "draft") + user.content;
         auto generation_request = make_agent_runtime_generation_request(
             request,
             common_agent_generation_purpose::draft,
             {system, user},
-            // Drafts must be able to state the completed tool-backed result;
-            // a short cap can end mid-sentence and trigger an unnecessary
-            // reflection/re-draft cycle on small CPU models.
-            make_agent_runtime_generation_options(generation_config, std::min(generation_config.n_predict, 256)), grounded_schema);
+            make_agent_runtime_generation_options(generation_config, draft_output_tokens), grounded_schema);
         if (grounded && !grounded_json) generation_request.grammar = common_agent_grounded_draft_grammar(grounding_handles);
         const auto generation_result = inference.generate_result(std::move(generation_request));
         if (!common_agent_generation_succeeded(generation_result)) {
@@ -2387,22 +2442,36 @@ public:
         if (failed_mandatory_tool_step || retryable_validation_repair_required) {
             user.content = render_reflection_plan_context(plan, 1400, 1200) +
                 render_reflection_failed_tool_observations(plan, 1200);
-        } else {
-            user.content = common_plan_render_tool_observations(plan, {1200});
         }
         user.content += common_agent_render_result_requirements(plan);
-        user.content += "\n[User request]\n" + reflection_bounded_text(request.prompt, 2048) +
+        // Review the same host-approved synthesis context and complete draft
+        // that produced the answer. Prefix-only views can hide evidence or a
+        // disclosure and cause endless revisions. They are mandatory context;
+        // the allocator below adjusts the optional observation view around it.
+        user.content += "\n[User request]\n" + request.prompt +
             common_agent_render_input_resource_context(request.input_resources, 768, request.available_resources) +
-            "\n[Draft]\n" + reflection_bounded_text(draft, 2048);
+            "\n[Draft]\n" + draft;
         if (!request.reflection_followup_context.empty())
             user.content += "\n[Host reflection follow-up]\n" +
                 reflection_bounded_text(request.reflection_followup_context, 4096);
+        user.content += common_agent_render_synthesis_state(
+            common_agent_resolve_synthesis_state(plan,request.synthesis_state),"final_review");
+        user.content += "\n[Previous review checklist; reassess against the current draft and evidence]\n"+
+            common_agent_review_checklist_json(request.review_checklist).dump()+
+            "\nFor structured review, identify prior blockers that are resolved with resolved_issue_ids; "
+            "retain unresolved ones using previous_issue_id. Supply issues only for blocking defects, advisory_notes for style. "
+            "Reassess factual objections if the evidence fingerprint changed. Never invent issue or evidence identities.\n";
+        if(compact_dsl_output) user.content +=
+            "DSL checklist: issue description=\"blocking defect\" correction=\"specific correction\" previous_issue_id=\"prior ID\" "
+            "(omit previous_issue_id for new defects; optional evidence_ids=[\"host evidence ID\"]); "
+            "resolved \"prior ID\"; advisory \"nonblocking suggestion\".\n";
         const std::string decision_enum = failed_mandatory_tool_step
             ? R"(["revise","abort"])"
             : R"(["accept","revise","abort"])";
         const std::string reflection_schema = retryable_validation_repair_required
             ? retryable_tool_repair_schema(retry_target, tools)
-            : reflection_json_schema(decision_enum, plan, tools, inferred_replace_step_id);
+            : reflection_json_schema(decision_enum, plan, tools, inferred_replace_step_id,
+                !failed_mandatory_tool_step);
         std::vector<std::string> reflection_authorized_step_ids;
         reflection_authorized_step_ids.reserve(plan.steps.size());
         for (const auto & step : plan.steps) reflection_authorized_step_ids.push_back(step.id);
@@ -2448,6 +2517,12 @@ public:
                 "plan, memory, or tool results. The host owns IDs and tool execution. When accepting a ready-to-answer "
                 "draft, leave next_action empty and do not repeat the final response as a next step. Use next_action "
                 "only for explicit unfinished work. ";
+            if (!failed_mandatory_tool_step && !retryable_validation_repair_required) {
+                system.content += "This is an answer review, not plan bookkeeping. Return only the verdict, "
+                    "assurance action and at most four concise revision_guidance entries when needed. "
+                    "Do not return step completion or activation lists. Use revise_plan with specific guidance "
+                    "when additional evidence is needed; the host's planner owns that repair. ";
+            }
             if (retryable_validation_repair_required) {
                 system.content += "This is a host-bound validation repair: return only the corrected arguments for the "
                     "bound step and registered tool. Relevant contract:" + render_reflection_tool_contracts(plan, tools);
@@ -2473,6 +2548,17 @@ public:
                       "the target step and tool; do not output either identifier. Prose guidance, reset, retry, "
                       "abort, and unrelated steps cannot repair this failure.";
         }
+        const int reflection_output_tokens =
+            compact_dsl_output && !failed_mandatory_tool_step && !retryable_validation_repair_required
+                ? generation_config.n_predict
+                : (is_singleton_host_bound_tool(request, tools)
+                    ? std::max(generation_config.n_predict, 128)
+                    : std::max(generation_config.n_predict, 384));
+        if (!failed_mandatory_tool_step && !retryable_validation_repair_required) {
+            user.content = render_allocated_tool_observations(inference, generation_config, plan,
+                system.content + user.content + (compact_dsl_output ? std::string{} : reflection_schema),
+                reflection_output_tokens, "reflection") + user.content;
+        }
         struct reflection_model_attempt {
             std::string phase;
             std::string system_input;
@@ -2491,18 +2577,29 @@ public:
                     : "\n[Regeneration]\nThe previous reflection was incomplete or structurally invalid. "
                       "Regenerate one complete JSON object from the beginning. Do not continue partial JSON "
                       "or include commentary.";
+                if (!error.empty()) attempt.content += "\n[Host validation error]\n" + error.substr(0, 1024);
+            }
+            const auto capacity = inference.context_capacity_tokens();
+            if (capacity != 0 && !common_agent_allocate_context(capacity,
+                    context_text_tokens(inference, system.content + attempt.content +
+                        (compact_dsl_output ? std::string{} : reflection_schema)) + 256,
+                    static_cast<size_t>(std::max(1, reflection_output_tokens)), {}).mandatory_fits) {
+                // Never approve an answer by reviewing only a prefix. Respect
+                // the configured output reservation and surface insufficient
+                // context before issuing a model request.
+                common_agent_generation_result unavailable;
+                unavailable.status = common_agent_generation_status::errored;
+                unavailable.stop_reason = common_agent_generation_stop_reason::limit;
+                unavailable.error_message = "complete reflection context and configured output reservation do not fit the model context";
+                error = unavailable.error_message;
+                return unavailable;
             }
             auto generation_request = make_agent_runtime_generation_request(
                 request,
                 common_agent_generation_purpose::reflection,
                 {system, attempt},
                 make_agent_runtime_generation_options(
-                    generation_config,
-                    compact_dsl_output && !failed_mandatory_tool_step && !retryable_validation_repair_required
-                        ? generation_config.n_predict
-                        : (is_singleton_host_bound_tool(request, tools)
-                            ? std::max(generation_config.n_predict, 128)
-                            : std::max(generation_config.n_predict, 384))),
+                    generation_config, reflection_output_tokens),
                 compact_dsl_output ? std::string() : reflection_schema);
             if (compact_dsl_output && !retryable_validation_repair_required) {
                 if (!failed_mandatory_tool_step) {
@@ -2519,6 +2616,7 @@ public:
                 }
             }
             const auto generated = inference.generate_result(std::move(generation_request));
+            if (generated.output_schema_rejected) error = generated.error_message;
             if (generation_config.generation_trace) {
                 reflection_attempts.push_back({
                     regeneration ? "regeneration" : "initial",
@@ -2544,6 +2642,10 @@ public:
                     : common_reflection_parse_json(
                         candidate.content, result, error, 8, inferred_replace_step_id,
                         reflection_authorized_step_ids);
+            if(parsed) {
+                common_agent_review_checklist checked;
+                parsed=common_agent_advance_review_checklist(request.review_checklist,result,plan,draft,checked,error);
+            }
             if (parsed && failed_mandatory_tool_step && !retryable_validation_repair_required &&
                     result.decision != common_reflection_decision::abort) {
                 bool has_retry = false;
@@ -2730,8 +2832,9 @@ public:
                     "\n[Regeneration]\nThe previous memory proposal was incomplete or structurally invalid. "
                     "Regenerate one complete JSON object from the beginning, or emit a complete null candidate. "
                     "Do not continue partial JSON or include commentary.";
+                if (!error.empty()) attempt.content += "\n[Host validation error]\n" + error.substr(0, 1024);
             }
-            return inference.generate_result(make_agent_runtime_generation_request(
+            auto generated = inference.generate_result(make_agent_runtime_generation_request(
                 request,
                 common_agent_generation_purpose::memory_learning,
                 {system, attempt},
@@ -2741,6 +2844,8 @@ public:
                         ? generation_config.memory_learning_n_predict
                         : 128),
                 schema));
+            if (generated.output_schema_rejected) error = generated.error_message;
+            return generated;
         };
         common_memory_candidate_result parsed;
         bool parsed_ok = false;

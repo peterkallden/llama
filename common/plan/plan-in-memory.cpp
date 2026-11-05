@@ -98,6 +98,19 @@ bool common_plan_in_memory_store::apply(const common_plan_operation & op, common
             }
             next.required_capabilities = op.route_required_capabilities;
             next.procedure_refs = op.route_procedure_refs;
+            if (!op.route_steps.empty()) {
+                for (auto & step : next.steps) {
+                    if (common_plan_step_effective_mode(step) != common_plan_step_mode::final_response ||
+                            step.status == common_plan_step_status::completed || step.status == common_plan_step_status::skipped) continue;
+                    if (step.status == common_plan_step_status::active) {
+                        step.status = common_plan_step_status::pending;
+                        if (next.active_step_id == step.id) next.active_step_id.reset();
+                    }
+                    step.depends_on.push_back(op.route_steps.back().id);
+                }
+                next.steps.insert(next.steps.end(), op.route_steps.begin(), op.route_steps.end());
+            }
+            if (op.route_handoff) next.observations.push_back(*op.route_handoff);
             next.status = common_plan_status::active;
             break;
         case common_plan_operation_kind::fail_plan: next.status = common_plan_status::failed; break;

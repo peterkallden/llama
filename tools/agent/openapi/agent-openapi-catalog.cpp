@@ -1,4 +1,5 @@
 #include "agent-openapi-catalog.h"
+#include "../tooling/agent-result-view.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 
 #include <algorithm>
@@ -124,6 +125,15 @@ bool configure_paging_response(const nlohmann::json & operation_spec,
         return false;
     }
     for (const auto & field : declaration->items()) {
+        if (field.key() == "initial_cursor") {
+            if (!field.value().is_string() || field.value().get_ref<const std::string &>().empty() ||
+                    field.value().get_ref<const std::string &>().size() > 4096) {
+                error = "OpenAPI pagination initial_cursor must be a nonempty string of at most 4096 bytes";
+                return false;
+            }
+            paging.initial_cursor = field.value().get<std::string>();
+            continue;
+        }
         if (field.key() == "cursor_parameter") {
             if (!field.value().is_string() ||
                     std::find(operation.query_parameters.begin(), operation.query_parameters.end(),
@@ -151,6 +161,10 @@ bool configure_paging_response(const nlohmann::json & operation_spec,
         }
         if (field.key() == "items_pointer") paging.items_pointer = field.value().get<std::string>();
         else paging.next_cursor_pointer = field.value().get<std::string>();
+    }
+    if (!paging.initial_cursor.empty() && paging.cursor_parameter.empty()) {
+        error = "OpenAPI pagination initial_cursor requires a declared cursor query parameter";
+        return false;
     }
     if (!paging.next_cursor_pointer.empty() &&
             (paging.next_cursor_pointer == paging.items_pointer ||
@@ -583,7 +597,8 @@ bool classify_agent_openapi_result_json(
         const agent_openapi_result_projection_limits & limits,
         agent_openapi_result_projection & projection,
         std::string & error,
-        const std::string & result_schema_json) {
+        const std::string & result_schema_json,
+        const std::string & items_pointer) {
     projection = {};
     if (structured_content_json.size() > limits.max_bytes) {
         projection.reason = "structured API result exceeds the materialization byte limit";
@@ -596,8 +611,22 @@ bool classify_agent_openapi_result_json(
         return false;
     }
     std::string source_pointer;
-    const auto * rows = result_collection(value, source_pointer,
-        schema_declares_items_array(result_schema_json));
+    const nlohmann::json * rows = nullptr;
+    if (!items_pointer.empty()) {
+        try {
+            const nlohmann::json::json_pointer pointer(items_pointer);
+            if (value.contains(pointer) && value.at(pointer).is_array()) {
+                rows = &value.at(pointer);
+                source_pointer = items_pointer;
+            }
+        } catch (const nlohmann::json::exception &) {
+            error = "invalid configured collection pointer";
+            return false;
+        }
+    } else {
+        rows = result_collection(value, source_pointer,
+            schema_declares_items_array(result_schema_json));
+    }
     if (rows == nullptr || rows->empty() || rows->size() > limits.max_rows) {
         projection.reason = rows != nullptr && rows->size() > limits.max_rows
             ? "collection exceeds the materialization row limit"
@@ -754,6 +783,23 @@ bool build_agent_openapi_catalog(
             const auto * override_policy = policy_it == config.operations.end() ? nullptr : &policy_it->second;
             if (!policy_allows(operation, config, override_policy)) continue;
             if (override_policy != nullptr) {
+                const auto prefixes = nlohmann::json::parse(override_policy->parameter_prefixes_json, nullptr, false);
+                if (!prefixes.is_object()) {
+                    error = "OpenAPI parameter_prefixes must be an object for " + operation.operation_id;
+                    return false;
+                }
+                for (const auto & entry : prefixes.items()) {
+                    if (std::find(operation.path_parameters.begin(), operation.path_parameters.end(), entry.key()) == operation.path_parameters.end()) {
+                        error = "OpenAPI parameter_prefixes names an undeclared path parameter: " + entry.key();
+                        return false;
+                    }
+                }
+                operation.result_view_json = override_policy->result_view_json;
+                if (!operation.result_view_json.empty() &&
+                        !agent_result_view_validate(operation.result_view_json, error)) {
+                    error = "invalid result_view for provider " + config.id + " operation " + operation.operation_id + ": " + error;
+                    return false;
+                }
                 operation.host_required_parameters = override_policy->required_parameters;
                 operation.host_required_any_parameters = override_policy->required_any_parameters;
                 std::string schema_error;
@@ -776,6 +822,14 @@ bool build_agent_openapi_catalog(
                 }
             }
             catalog.operations.push_back(std::move(operation));
+        }
+    }
+    for (const auto & policy : config.operations) {
+        if (policy.second.result_view_json.empty()) continue;
+        if (std::none_of(catalog.operations.begin(), catalog.operations.end(),
+                [&](const auto & op) { return op.operation_id == policy.first; })) {
+            error = "result_view operation is not exposed: " + config.id + "." + policy.first;
+            return false;
         }
     }
     for (const auto & item : catalog.operations) {
@@ -818,8 +872,24 @@ bool make_agent_openapi_item_references(
         return false;
     }
     const auto value = nlohmann::json::parse(structured_content_json, nullptr, false);
-    std::string source_pointer;
-    const auto * rows = value.is_discarded() ? nullptr : result_collection(value, source_pointer, true);
+    const auto operation = std::find_if(catalog.operations.begin(), catalog.operations.end(),
+        [&](const auto & item) { return item.operation_id == collection_operation_id; });
+    if (operation == catalog.operations.end()) {
+        error = "OpenAPI collection operation is unavailable";
+        return false;
+    }
+    // Honor the resolved response contract, including explicitly declared
+    // nested collections. Do not silently switch to another envelope field.
+    const nlohmann::json * rows = value.is_array() ? &value : nullptr;
+    if (!rows && !value.is_discarded()) {
+        try {
+            const nlohmann::json::json_pointer pointer(operation->paging.items_pointer);
+            if (value.contains(pointer) && value.at(pointer).is_array()) rows = &value.at(pointer);
+        } catch (const nlohmann::json::exception &) {
+            error = "OpenAPI collection response pointer is invalid";
+            return false;
+        }
+    }
     if (rows == nullptr) {
         error = "OpenAPI item references require a JSON collection";
         return false;

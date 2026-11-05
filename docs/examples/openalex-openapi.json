@@ -198,7 +198,13 @@
             "$ref": "#/components/responses/RateLimited"
           }
         },
-        "security": []
+        "security": [],
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
+        }
       }
     },
     "/works/{id}": {
@@ -333,7 +339,13 @@
             "$ref": "#/components/responses/RateLimited"
           }
         },
-        "security": []
+        "security": [],
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
+        }
       }
     },
     "/authors/{id}": {
@@ -461,6 +473,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -594,7 +612,13 @@
             "$ref": "#/components/responses/RateLimited"
           }
         },
-        "security": []
+        "security": [],
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
+        }
       }
     },
     "/institutions/{id}": {
@@ -725,7 +749,13 @@
             "$ref": "#/components/responses/RateLimited"
           }
         },
-        "security": []
+        "security": [],
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
+        }
       }
     },
     "/topics/{id}": {
@@ -843,6 +873,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -963,6 +999,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -1083,6 +1125,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -1520,6 +1568,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -1650,6 +1704,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -1780,6 +1840,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -1910,6 +1976,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2040,6 +2112,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2170,6 +2248,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2300,6 +2384,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2430,6 +2520,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2551,6 +2647,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2664,6 +2766,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2731,6 +2839,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2798,6 +2912,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2865,6 +2985,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     },
@@ -2932,6 +3058,12 @@
           "429": {
             "$ref": "#/components/responses/RateLimited"
           }
+        },
+        "x-agent-pagination": {
+          "cursor_parameter": "cursor",
+          "initial_cursor": "*",
+          "items_pointer": "/results",
+          "next_cursor_pointer": "/meta/next_cursor"
         }
       }
     }

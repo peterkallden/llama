@@ -245,6 +245,9 @@ bool run_agent_runtime_host(
             driver_execution.flydelta_capture = execution.turn_request.request.flydelta_capture;
             driver_execution.tool_argument_bindings = execution.turn_request.request.tool_argument_bindings;
             driver_execution.resource_read_binding = execution.turn_request.request.resource_read_binding;
+            driver_execution.research_draft = execution.turn_request.request.research_draft;
+            driver_execution.research_workspace_seed = execution.turn_request.request.research_workspace_seed;
+            driver_execution.research_progress_sink = execution.turn_request.request.research_progress_sink;
             return run_agent_runtime_driver(driver_execution, result, error);
         }
 

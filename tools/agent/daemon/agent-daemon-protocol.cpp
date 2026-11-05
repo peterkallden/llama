@@ -996,6 +996,7 @@ json make_agent_daemon_turn_response(
     response["revised"] = turn.revised;
     response["failure_class"] = common_agent_failure_class_name(turn.failure_class);
     response["response"] = turn.response;
+    if(turn.unverified_draft) response["unverified_draft"]=common_agent_unverified_draft_json(*turn.unverified_draft);
     response["response_generation_status"] = common_agent_generation_status_name(turn.response_generation_status);
     response["response_stop_reason"] = common_agent_generation_stop_reason_name(turn.response_stop_reason);
     response["total_decoded_tokens"] = turn.total_decoded_tokens;

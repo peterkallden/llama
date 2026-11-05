@@ -78,6 +78,27 @@ public:
     }
 };
 
+class limited_draft_executor final : public common_action_executor {
+public:
+    int calls = 0;
+    std::string generate_draft(const common_agent_request &, const common_plan_state &,
+            const std::vector<std::string> &, std::string & error) override {
+        error.clear();
+        return "unused";
+    }
+    common_agent_generated_text_result generate_draft_result(const common_agent_request &,
+            const common_plan_state &, const std::vector<std::string> & guidance, std::string & error) override {
+        error.clear();
+        ++calls;
+        common_agent_generated_text_result result;
+        result.status = common_agent_generation_status::completed;
+        result.stop_reason = calls == 1 ? common_agent_generation_stop_reason::limit : common_agent_generation_stop_reason::eos;
+        result.content = calls == 1 ? "unfinished" : "complete";
+        if (calls > 1) assert(!guidance.empty());
+        return result;
+    }
+};
+
 class reasoning_planner final : public common_planner {
 public:
     common_plan_proposal create_plan(const common_agent_request & request, std::string & error) override {
@@ -319,6 +340,36 @@ public:
     }
 };
 
+class revise_completed_step_reflector final : public common_reflection_engine {
+public:
+    int calls = 0;
+    common_reflection_result evaluate(const common_agent_request &, const common_plan_state & plan,
+            const std::string &, std::string & error) override {
+        error.clear();
+        common_reflection_result result;
+        if (++calls == 1) {
+            result.decision = common_reflection_decision::revise;
+            result.next_action = common_agent_reflection_next_action::revise_response;
+            result.revision_guidance.push_back("Complete the answer.");
+            common_plan_operation complete;
+            complete.kind = common_plan_operation_kind::complete_step;
+            complete.step_id = "lookup";
+            result.proposed_plan_operations.push_back(complete);
+            if (plan.active_step_id) {
+                common_plan_operation activate;
+                activate.kind = common_plan_operation_kind::activate_step;
+                activate.step_id = *plan.active_step_id;
+                result.proposed_plan_operations.push_back(activate);
+            }
+        } else {
+            result.decision = common_reflection_decision::accept;
+            result.next_action = common_agent_reflection_next_action::accept;
+            result.ready_to_answer = true;
+        }
+        return result;
+    }
+};
+
 class context_overflow_reflector final : public common_reflection_engine {
 public:
     common_reflection_result evaluate(const common_agent_request &, const common_plan_state &, const std::string &, std::string & error) override {
@@ -414,6 +465,32 @@ int main() {
     assert(plan && plan->scope == common_plan_scope::project && plan->namespace_id == "tenant-a" && plan->project_id == "project-a" && plan->observations.size() == 1 && plan->observations[0].summary == "current status");
 
     {
+        common_plan_in_memory_store limited_store;
+        assert(limited_store.open("", error));
+        planner limited_planner;
+        limited_draft_executor limited_executor;
+        common_agent_runtime limited_runtime(limited_store, limited_planner, limited_executor, r, &tool_runtime);
+        auto limited_request = request;
+        limited_request.max_reflection_rounds = 2;
+        limited_request.max_iterations = 6;
+        const auto outcome = limited_runtime.run(limited_request);
+        assert(outcome.error.empty() && outcome.response == "complete" && limited_executor.calls == 2);
+    }
+    {
+        common_plan_in_memory_store limited_store;
+        assert(limited_store.open("", error));
+        planner limited_planner;
+        limited_draft_executor limited_executor;
+        common_agent_runtime limited_runtime(limited_store, limited_planner, limited_executor, r, &tool_runtime);
+        auto limited_request = request;
+        limited_request.enable_reflection = false;
+        limited_request.max_iterations = 6;
+        const auto outcome = limited_runtime.run(limited_request);
+        assert(outcome.response.empty() && outcome.limit_reached && limited_executor.calls == 1);
+        assert(outcome.error.find("output limit") != std::string::npos);
+    }
+
+    {
         common_plan_in_memory_store handoff_store;
         assert(handoff_store.open("", error));
         planner handoff_planner;
@@ -465,6 +542,19 @@ int main() {
         } else {
             assert(outcome.error.empty() && outcome.response == "draft");
         }
+    }
+
+    {
+        common_plan_in_memory_store revise_store;
+        assert(revise_store.open("", error));
+        planner revise_planner;
+        revise_completed_step_reflector revise_reflector;
+        common_agent_runtime revise_runtime(revise_store, revise_planner, e, revise_reflector, &tool_runtime);
+        auto revise_request = request;
+        revise_request.max_reflection_rounds = 2;
+        revise_request.max_iterations = 6;
+        const auto outcome = revise_runtime.run(revise_request);
+        assert(outcome.error.empty() && outcome.response == "draft" && revise_reflector.calls == 2);
     }
 
     common_plan_in_memory_store route_store;

@@ -92,6 +92,7 @@ json common_agent_jsonl_make_turn_result(const common_agent_jsonl_turn_result & 
         {"failure_class", result.failure_class},
         {"event_count", result.event_count},
     };
+    if(result.unverified_draft) message["unverified_draft"]=common_agent_unverified_draft_json(*result.unverified_draft);
     return message;
 }
 

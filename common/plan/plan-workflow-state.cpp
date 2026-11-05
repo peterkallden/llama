@@ -5,6 +5,25 @@
 #include <nlohmann/json.hpp>
 
 namespace {
+// Both unavailable tool outcomes and model-selected terminal outcomes retain
+// the same host-verified entry frontier. Never reuse another route's handoff.
+void attach_entry_handoff(const common_plan_state & plan, nlohmann::ordered_json & payload) {
+    if (!plan.route_binding || !plan.workflow_definition ||
+            plan.route_binding->continuation_source_fingerprint.empty()) return;
+    for (auto observed = plan.observations.rbegin(); observed != plan.observations.rend(); ++observed) {
+        if (observed->source != "workflow_handoff") continue;
+        const auto handoff = nlohmann::ordered_json::parse(observed->summary, nullptr, false);
+        if (!handoff.is_object() || !handoff.contains("value") ||
+                handoff.value("source_fingerprint", nlohmann::ordered_json{}) != plan.route_binding->continuation_source_fingerprint ||
+                handoff.value("target_revision", nlohmann::ordered_json{}) != plan.workflow_definition->workflow_revision ||
+                observed->id != "workflow_handoff:" + plan.route_binding->continuation_source_fingerprint +
+                    ":" + plan.workflow_definition->workflow_ref) continue;
+        payload["handoff"] = handoff;
+        payload["handoff_observation_id"] = observed->id;
+        return;
+    }
+}
+
 const common_plan_workflow_transition * declared_failure_transition(const common_plan_state & plan,
         const common_plan_step & step, const std::string & observation_id) {
     if (!plan.workflow_definition || !plan.route_binding || step.status != common_plan_step_status::failed ||
@@ -251,10 +270,20 @@ bool common_plan_workflow_handled_failure_observation(const common_plan_state & 
         }
         offset = end + 1;
     }
-    result = {"workflow_handled_failure:" + step_id + ":" + failure_observation_id,
-        "workflow_handled_failure", nlohmann::ordered_json{{"step_id", step_id},
-            {"transition_id", transition->id}, {"terminal_state", transition->failure_terminal_state}}.dump(),
-        1.0f, {failure_observation_id}, {}, 0};
+    nlohmann::ordered_json payload{{"step_id", step_id},
+        {"transition_id", transition->id}, {"terminal_state", transition->failure_terminal_state}};
+    // Preserve the host-validated entry evidence when this workflow was
+    // reached from a candidate collection. A declared recovery link can then
+    // choose another observed candidate without searching again or asking the
+    // model to reconstruct an identity. The handoff is already bounded and
+    // persisted as host evidence on this plan.
+    attach_entry_handoff(plan, payload);
+    result = {};
+    result.id = "workflow_handled_failure:" + step_id + ":" + failure_observation_id;
+    result.source = "workflow_handled_failure";
+    result.summary = payload.dump();
+    result.confidence = 1.0f;
+    result.evidence_ids = {failure_observation_id};
     error.clear(); return true;
 }
 
@@ -268,6 +297,34 @@ bool common_plan_workflow_failure_handled(const common_plan_state & plan, const 
                 !value.contains("terminal_state") || !value["terminal_state"].is_string()) continue;
         const auto * transition = declared_failure_transition(plan, step, recorded->evidence_ids.front());
         if (transition && value["transition_id"] == transition->id && value["terminal_state"] == transition->failure_terminal_state) return true;
+        // After a host-authorized route transition, the old definition is no
+        // longer active. Its recorded continuation is the durable proof that
+        // this exact terminal outcome was accepted before the transition.
+        if (!plan.route_binding || !step.tool_call) continue;
+        const auto position = std::find_if(plan.steps.begin(), plan.steps.end(),
+            [&](const auto & item) { return item.id == step.id; });
+        if (position == plan.steps.end() || static_cast<size_t>(position - plan.steps.begin()) >=
+                plan.route_binding->workflow_step_start_index) continue;
+        const auto latest = std::find_if(plan.observations.rbegin(), plan.observations.rend(), [&](const auto & item) {
+            return item.source == step.tool_call->name && item.id.rfind("tool:" + step.id + ":", 0) == 0;
+        });
+        if (latest == plan.observations.rend() || latest->id != recorded->evidence_ids.front()) continue;
+        const auto failure = nlohmann::ordered_json::parse(latest->summary, nullptr, false);
+        if (!failure.is_object() || !failure.contains("failure") || !failure["failure"].is_object() ||
+                !failure["failure"].contains("step_id") || !failure["failure"]["step_id"].is_string() ||
+                !failure["failure"].contains("tool") || !failure["failure"]["tool"].is_string() ||
+                failure["failure"].value("step_id", std::string{}) != step.id ||
+                failure["failure"].value("tool", std::string{}) != step.tool_call->name) continue;
+        const auto transition_id = value["transition_id"].get<std::string>();
+        const auto terminal_state = value["terminal_state"].get<std::string>();
+        const auto prefix = transition_id + "@" + terminal_state + "->";
+        if (std::any_of(plan.workflow_continuation_history.begin(), plan.workflow_continuation_history.end(),
+                [&](const auto & history) {
+                    return history.source_observation_id == recorded->id &&
+                        history.source_terminal_state == terminal_state &&
+                        (history.link_id.rfind(prefix, 0) == 0 ||
+                         history.link_id.rfind("@" + terminal_state + "->", 0) == 0);
+                })) return true;
     }
     return false;
 }
@@ -282,10 +339,26 @@ bool common_plan_workflow_terminal_choice_observation(
             source_step_id, source_observation_id)) {
         error = "terminal workflow choice is not grounded in the active route observation"; return false;
     }
-    result = {"workflow_terminal_choice:" + source_step_id + ":" + transition_id,
-        "workflow_terminal_choice", nlohmann::ordered_json{{"transition_id", transition_id},
-            {"choice_id", choice_id}, {"source_step_id", source_step_id}, {"host_validated", true}}.dump(),
-        1.0f, {source_observation_id}, {}, 0};
+    result = {};
+    result.id = "workflow_terminal_choice:" + source_step_id + ":" + transition_id;
+    result.source = "workflow_terminal_choice";
+    const auto & transition = *std::find_if(plan.workflow_definition->transitions.begin(),
+        plan.workflow_definition->transitions.end(), [&](const auto & item) { return item.id == transition_id; });
+    const auto & choice = *std::find_if(transition.choices.begin(), transition.choices.end(),
+        [&](const auto & item) { return item.id == choice_id; });
+    nlohmann::ordered_json payload{{"transition_id", transition_id}, {"choice_id", choice_id},
+        {"source_step_id", source_step_id}, {"host_validated", true}, {"terminal_state", choice.to_state},
+        {"choice_description", choice.description}};
+    attach_entry_handoff(plan, payload);
+    result.summary = payload.dump();
+    result.confidence = 1.0f;
+    result.evidence_ids = {source_observation_id};
+    const auto source = std::find_if(plan.observations.begin(), plan.observations.end(),
+        [&](const auto & observation) { return observation.id == source_observation_id; });
+    if (source != plan.observations.end()) {
+        result.resource_refs = source->resource_refs;
+        result.dataset_refs = source->dataset_refs;
+    }
     error.clear(); return true;
 }
 

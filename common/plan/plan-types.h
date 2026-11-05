@@ -72,7 +72,8 @@ inline bool common_plan_chunk_observations_valid(
         std::string & error) {
     std::string parent_uri;
     size_t chunk_count = 0;
-    std::vector<size_t> indexes;
+    struct chunk_attempt { size_t index; bool unresolved; size_t offset, length, overlap; };
+    std::vector<chunk_attempt> indexes;
     for (const auto & observation : observations) {
         if (!common_plan_observation_is_resource_chunk(observation)) {
             continue;
@@ -93,11 +94,15 @@ inline bool common_plan_chunk_observations_valid(
             error = "resource_chunk observations must share one parent and chunk_count";
             return false;
         }
-        if (std::find(indexes.begin(), indexes.end(), lineage.chunk_index) != indexes.end()) {
-            error = "resource_chunk observations must not contain duplicate chunk indexes";
-            return false;
-        }
-        indexes.push_back(lineage.chunk_index);
+        const auto prior = std::find_if(indexes.begin(), indexes.end(), [&](const auto & item) { return item.index == lineage.chunk_index; });
+        if (prior != indexes.end()) {
+            if (!prior->unresolved || prior->offset != lineage.byte_offset || prior->length != lineage.byte_length ||
+                    prior->overlap != lineage.overlap_bytes) {
+                error = "resource_chunk retry must match an unresolved chunk range"; return false;
+            }
+            prior->unresolved = observation.source == "resource_chunk_unresolved";
+        } else indexes.push_back({lineage.chunk_index, observation.source == "resource_chunk_unresolved",
+            lineage.byte_offset, lineage.byte_length, lineage.overlap_bytes});
     }
     error.clear();
     return true;
@@ -138,8 +143,9 @@ inline bool common_plan_chunk_synthesis_from_observations(
         if (!parent_uri.empty() && lineage.parent_uri != parent_uri) continue;
         if (out.parent_uri.empty()) out.parent_uri = lineage.parent_uri;
         if (out.chunk_count == 0) out.chunk_count = lineage.chunk_count;
-        items.push_back({lineage.chunk_index, observation.summary,
-            observation.source == "resource_chunk_unresolved"});
+        const auto prior = std::find_if(items.begin(), items.end(), [&](const auto & value) { return value.index == lineage.chunk_index; });
+        const item latest{lineage.chunk_index, observation.summary, observation.source == "resource_chunk_unresolved"};
+        if (prior == items.end()) items.push_back(latest); else *prior = latest;
     }
     std::sort(items.begin(), items.end(), [](const item & left, const item & right) {
         return left.index < right.index;
@@ -218,6 +224,8 @@ struct common_plan_workflow_transition {
         std::string description;
         std::string to_state;
         std::vector<std::string> required_observation_json_pointers;
+        // Zero permits repeated selection; otherwise count completed route steps.
+        size_t max_uses = 0;
     };
     std::vector<choice> choices;
     // For tool transitions, bind target argument JSON pointers from the
@@ -271,12 +279,18 @@ struct common_plan_workflow_continuation_link {
         // Optional completed transition whose structured observation supplies
         // this value; empty means the observation that triggered the link.
         std::string source_transition_id;
+        // If set, source points to an array and the model selects one of its
+        // host-observed identities at this JSON pointer within each item.
+        std::string candidate_id_json_pointer;
     };
     std::string source_transition_id;
     std::string source_terminal_state;
     std::string target_workflow_ref;
     std::string target_workflow_revision;
     std::vector<argument_binding> argument_bindings;
+    bool optional = false;
+    // Zero means no link-specific limit; the host continuation budget still applies.
+    size_t max_uses = 0;
 };
 
 enum class common_plan_verification_phase { before_tool, after_tool, before_answer };
@@ -378,6 +392,7 @@ struct common_plan_workflow_continuation_record {
     std::string source_terminal_state;
     std::string target_workflow_ref;
     std::string target_workflow_revision;
+    std::string source_observation_id;
 };
 struct common_plan_step {
     std::string id, title, objective, intended_contribution;
@@ -520,6 +535,10 @@ struct common_plan_operation {
     std::vector<std::string> route_required_capabilities;
     std::vector<std::string> route_procedure_refs;
     bool host_authorized = false;
+    // Executable route entry and its grounding snapshot commit with the route
+    // binding. A resumed store must never expose a route without its work.
+    std::vector<common_plan_step> route_steps;
+    std::optional<common_plan_observation> route_handoff;
 };
 struct common_plan_event { uint64_t sequence = 0, prior_version = 0, new_version = 0; common_plan_operation operation; bool accepted = false; std::string reason_summary; int64_t created_at = 0; };
 

@@ -5,6 +5,7 @@
 #include "tools/agent/runtime/agent-dataset-workflow-adapter.h"
 #include "tools/agent/runtime/agent-planning-selection.h"
 #include "tools/agent/cli/agent-cli-runtime.h"
+#include "agent/structured-regeneration.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "json-schema-to-grammar.h"
@@ -224,24 +225,140 @@ static void check_planner_prompt_contracts() {
     evidence_plan.observations.push_back({"tool:sample:dataset.schema", "dataset.schema",
         "{\"value\":\"" + std::string(800, 'y') + "\"}", 1.0f});
     planner_prompt_inference small_draft, large_draft;
-    small_draft.capacity = 500;
+    // Enough for the mandatory prompt and output reservation, but not for the
+    // full optional tool observation. A 500-token context correctly fails
+    // before inference because it cannot fit even the mandatory draft frame.
+    small_draft.capacity = 1000;
     large_draft.capacity = 10000;
     small_draft.replies = {"OK"};
     large_draft.replies = {"OK"};
     auto small_executor = make_llama_cli_action_executor(small_draft, config);
     auto large_executor = make_llama_cli_action_executor(large_draft, config);
     small_executor->generate_draft_result(request, evidence_plan, {}, error);
+    const auto small_error = error;
     large_executor->generate_draft_result(request, evidence_plan, {}, error);
     require(small_draft.requests.size() == 1 && large_draft.requests.size() == 1,
-        "draft allocation fixtures did not reach inference");
+        "draft allocation fixtures did not reach inference (small=" + std::to_string(small_draft.requests.size()) +
+            ", large=" + std::to_string(large_draft.requests.size()) + ", small_error=" + small_error +
+            ", large_error=" + error + ")");
     const auto & small_evidence = small_draft.requests[0].messages.back().content;
     const auto & large_evidence = large_draft.requests[0].messages.back().content;
-    require(small_evidence.find("evidence_projection: unavailable") != std::string::npos &&
+    require(small_evidence.find("projection: truncated") != std::string::npos &&
         large_evidence.find("dataset.schema") != std::string::npos,
-        "draft did not adapt its evidence view or disclose unavailable evidence");
+        "draft did not truncate its optional evidence view within capacity (small_truncated=" +
+            std::to_string(small_evidence.find("projection: truncated") != std::string::npos) +
+            ", small_dataset=" + std::to_string(small_evidence.find("dataset.schema") != std::string::npos) +
+            ", large_dataset=" + std::to_string(large_evidence.find("dataset.schema") != std::string::npos) +
+            ", small_chars=" + std::to_string(small_evidence.size()) + ")");
+
+    auto long_config = config;
+    long_config.n_predict = 1024;
+    planner_prompt_inference roomy_draft, constrained_draft;
+    roomy_draft.capacity = 10000;
+    constrained_draft.capacity = 1200;
+    roomy_draft.replies = {"OK"};
+    constrained_draft.replies = {"OK"};
+    make_llama_cli_action_executor(roomy_draft, long_config)->generate_draft_result(request, evidence_plan, {}, error);
+    require(error.empty() && roomy_draft.requests.size() == 1 &&
+        roomy_draft.requests[0].options.n_predict == 1024,
+        "draft did not use configured output budget");
+    make_llama_cli_action_executor(constrained_draft, long_config)->generate_draft_result(request, evidence_plan, {}, error);
+    require(error.empty() && constrained_draft.requests.size() == 1 &&
+        constrained_draft.requests[0].options.n_predict > 0 &&
+        constrained_draft.requests[0].options.n_predict < 1024,
+        "draft output budget did not respect context capacity");
+}
+
+static void check_schema_rejection_recovery() {
+    struct schema_inference final : common_agent_inference {
+        std::vector<common_agent_generation_request> requests;
+        size_t capacity = 0;
+        size_t context_capacity_tokens() const override { return capacity; }
+        bool fail_every_time = false;
+        bool transport_failure = false;
+        bool cancel = false;
+        bool generate(const common_agent_generation_request & request, common_agent_generation_result & result) override {
+            requests.push_back(request);
+            result = {};
+            if (requests.size() == 1 || fail_every_time || transport_failure || cancel) {
+                result.content = R"({"decision":"accept","revision_guidance":["a","b","c","d","e"]})";
+                result.output_schema_rejected = !transport_failure && !cancel;
+                result.error_message = transport_failure ? "HTTP inference timeout" :
+                    "contract field 'revision_guidance' has too many items";
+                if (cancel) {
+                    result.status = common_agent_generation_status::cancelled;
+                    result.stop_reason = common_agent_generation_stop_reason::cancelled;
+                }
+            } else {
+                result.content = R"({"decision":"accept","ready_to_answer":true})";
+                result.status = common_agent_generation_status::completed;
+                result.stop_reason = common_agent_generation_stop_reason::json_schema;
+            }
+            return true;
+        }
+    };
+    common_agent_request request;
+    request.tool_output_format = common_agent_tool_output_format::native;
+    request.prompt = "Review the retrieved scholarly evidence.";
+    common_plan_state plan;
+    plan.id = "schema-recovery";
+    common_agent_generation_config config;
+    std::string error;
+    schema_inference repaired;
+    auto reflection = make_llama_cli_reflection_engine(repaired, config);
+    const auto accepted = reflection->evaluate_result(request, plan, "Source-backed summary", error);
+    require(error.empty() && accepted.decision == common_reflection_decision::accept && repaired.requests.size() == 2,
+        "completed HTTP schema rejection did not use the existing reflection repair: " + error);
+    require(repaired.requests.back().messages.back().content.find("revision_guidance") != std::string::npos,
+        "reflection repair lost the specific host schema error");
+    require(repaired.requests.front().json_schema == repaired.requests.back().json_schema,
+        "reflection repair weakened the output contract");
+    const auto review_schema = nlohmann::ordered_json::parse(repaired.requests.front().json_schema);
+    require(!review_schema["properties"].contains("complete") && !review_schema["properties"].contains("activate") &&
+        !review_schema["properties"].contains("replace_steps") &&
+        review_schema["properties"].contains("assurance_action"),
+        "ordinary answer review exposed plan mutation contracts");
+    auto long_request = request;
+    long_request.prompt = std::string(4096, 'x') + " HOST_APPROVED_EVIDENCE_TAIL";
+    const auto long_draft = std::string(4096, 'y') + " ANSWER_DISCLOSURE_TAIL";
+    schema_inference long_review;
+    auto long_engine = make_llama_cli_reflection_engine(long_review, config);
+    require(long_engine->evaluate_result(long_request, plan, long_draft, error).decision == common_reflection_decision::accept &&
+        error.empty() && long_review.requests.front().messages.back().content.find("HOST_APPROVED_EVIDENCE_TAIL") != std::string::npos &&
+        long_review.requests.front().messages.back().content.find("ANSWER_DISCLOSURE_TAIL") != std::string::npos,
+        "reflection silently reviewed only the prefix of its evidence or draft");
+    schema_inference bounded_review;
+    bounded_review.capacity = 512;
+    auto bounded_engine = make_llama_cli_reflection_engine(bounded_review, config);
+    bounded_engine->evaluate_result(long_request, plan, long_draft, error);
+    require(bounded_review.requests.empty() && error.find("complete reflection context") != std::string::npos,
+        "oversized review issued a model request or silently discarded mandatory context");
+    for (int mode = 0; mode < 3; ++mode) {
+        schema_inference failure;
+        failure.fail_every_time = mode == 0;
+        failure.transport_failure = mode == 1;
+        failure.cancel = mode == 2;
+        auto engine = make_llama_cli_reflection_engine(failure, config);
+        engine->evaluate_result(request, plan, "Source-backed summary", error);
+        require(!error.empty() && failure.requests.size() == (mode == 0 ? 2u : 1u),
+            "reflection exceeded repair budget or retried a transport failure/cancellation");
+    }
+    // Schema-invalid content never reaches an acceptance callback, even when
+    // it happens to contain a plausible decision or tool name.
+    size_t calls = 0, accepted_calls = 0;
+    const auto rejected = common_agent_bounded_structured_regeneration(
+        [&](bool) {
+            ++calls;
+            common_agent_generation_result result;
+            result.output_schema_rejected = true;
+            return result;
+        }, [&](const auto &) { ++accepted_calls; return true; });
+    require(calls == 2 && accepted_calls == 0 && !common_agent_generation_succeeded(rejected),
+        "schema-invalid content was accepted or regenerated without a bound");
 }
 
 int main() {
+    check_schema_rejection_recovery();
     check_planner_prompt_contracts();
     {
         common_agent_generation_config config;

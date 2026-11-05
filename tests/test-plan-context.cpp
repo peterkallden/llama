@@ -1,4 +1,6 @@
 #include "plan/plan-context.h"
+#include "plan/plan-workflow-state.h"
+#include <nlohmann/json.hpp>
 #include <cstdlib>
 
 #include <iostream>
@@ -101,6 +103,23 @@ int main() {
     CHECK_CONTRACT(generic.find("results[1].url: \"https://example.test/a\"") != std::string::npos);
     CHECK_CONTRACT(generic.find("\"results\":[") == std::string::npos);
 
+    common_plan_state multi_record_plan;
+    nlohmann::ordered_json records = nlohmann::ordered_json::array();
+    for (int index = 0; index < 5; ++index) {
+        nlohmann::ordered_json record = {{"id", "record-" + std::to_string(index)}};
+        for (int field = 0; field < 16; ++field) {
+            record["field_" + std::to_string(field)] = field;
+        }
+        records.push_back(std::move(record));
+    }
+    multi_record_plan.observations.push_back({
+        "tool:records:investigate.events", "investigate.events",
+        nlohmann::ordered_json{{"ok", true}, {"result", {{"events", records}}}}.dump(),
+        1.0f, {}, {}, 0});
+    const auto multi_record_projection = common_plan_render_tool_observations(multi_record_plan, {8192});
+    CHECK_CONTRACT(multi_record_projection.find("events[5].id: \"record-4\"") != std::string::npos);
+    CHECK_CONTRACT(multi_record_projection.find("projection: truncated") == std::string::npos);
+
     common_plan_state escaped_plan;
     escaped_plan.observations.push_back({
         "tool:web:search", "web.search",
@@ -168,5 +187,71 @@ int main() {
         "bounded evidence cut an assertion or lost its truncation/closing boundary");
     require(common_plan_render_tool_observations(large_result, {64}).find("unavailable") != std::string::npos,
         "a small evidence budget silently removed the entire projection");
+    // A sufficiently large context must retain all five candidates, including
+    // complete identifiers. Demand estimation must not inherit a hidden cap.
+    common_plan_state search_plan;
+    nlohmann::ordered_json candidates = nlohmann::ordered_json::array();
+    for (int i = 1; i <= 5; ++i) {
+        candidates.push_back({{"id", "https://example.test/work/" + std::to_string(i)},
+            {"display_name", "Study " + std::to_string(i) + " " + std::string(160, 'x')},
+            {"publication_year", 2020 + i},
+            {"doi", "https://doi.org/10.1234/study-" + std::to_string(i)}});
+    }
+    nlohmann::ordered_json search_payload = {{"ok", true},
+        {"result", {{"result_count", 5}, {"candidates", candidates}}}};
+    search_plan.observations.push_back({"tool:search:catalog.search", "catalog.search", search_payload.dump(), 1.0f});
+    const auto all_candidates = common_plan_render_tool_observations(search_plan, {8192});
+    require(all_candidates.find("candidates[5].doi: \"https://doi.org/10.1234/study-5\"") != std::string::npos &&
+        all_candidates.find("projection: truncated") == std::string::npos && all_candidates.size() <= 8192,
+        "a fixed per-observation cap hid candidates despite an adequate context allocation");
+    const auto limited_candidates = common_plan_render_tool_observations(search_plan, {900});
+    require(limited_candidates.size() <= 900 && limited_candidates.find("projection: truncated") != std::string::npos,
+        "candidate projection exceeded its allocated budget or hid its partial coverage");
+    // Review must retain the association between an access failure and the
+    // executed locator, while keeping URL secrets outside model context.
+    common_plan_state access;
+    access.workflow_definition = common_plan_workflow_definition{};
+    access.route_binding = common_plan_route_binding{};
+    auto & workflow = *access.workflow_definition;
+    workflow.start_state = "start"; workflow.terminal_states = {"unavailable"};
+    common_plan_workflow_transition fetch;
+    fetch.id = "fetch"; fetch.from_state = "start"; fetch.to_state = "fetched";
+    fetch.tool_name = "web.fetch"; fetch.failure_terminal_state = "unavailable";
+    fetch.handled_http_statuses = {403}; workflow.transitions = {fetch};
+    common_plan_step failed;
+    failed.id = "fetch-source"; failed.status = common_plan_step_status::failed;
+    failed.semantic_alias = "workflow-transition:fetch";
+    failed.tool_call = common_plan_tool_call{"web.fetch",
+        R"({"url":"https://user:password@example.test/paper.pdf?token=secret#private"})"};
+    access.steps = {failed};
+    access.observations.push_back({"tool:fetch-source:web.fetch", "web.fetch",
+        R"({"failure":{"step_id":"fetch-source","tool":"web.fetch","http_status":403}})", 1.0f});
+    common_plan_observation handled;
+    std::string access_error;
+    require(common_plan_workflow_handled_failure_observation(access, failed.id,
+        access.observations.front().id, handled, access_error), access_error.c_str());
+    access.observations.push_back(handled);
+    auto access_context = common_plan_render_tool_observations(access, {4096});
+    require(access_context.find("HTTP 403") != std::string::npos &&
+        access_context.find("https://example.test/paper.pdf") != std::string::npos &&
+        access_context.find("password") == std::string::npos && access_context.find("secret") == std::string::npos &&
+        access_context.find("private") == std::string::npos,
+        "failure projection lost its executed locator or exposed URL secrets");
+
+    common_plan_step record;
+    record.id = "read-record"; record.status = common_plan_step_status::completed;
+    record.tool_call = common_plan_tool_call{"catalog.get", "{}"};
+    access.steps.push_back(record);
+    access.observations.push_back({"tool:read-record:catalog.get", "catalog.get", R"({"result":{"id":"W2"}})", 1.0f});
+    access.observations.push_back({"workflow_terminal_choice:read-record:depth", "workflow_terminal_choice",
+        R"({"host_validated":true,"source_step_id":"read-record","choice_id":"try_another","terminal_state":"unavailable","choice_description":"No usable full-text location; retain shallow evidence."})",
+        1.0f, {"tool:read-record:catalog.get"}});
+    access_context = common_plan_render_tool_observations(access, {4096});
+    require(access_context.find("choice=\"try_another\"") != std::string::npos &&
+        access_context.find("source_evidence=\"tool:read-record:catalog.get\"") != std::string::npos &&
+        access_context.find("not proof of a network request") != std::string::npos,
+        "terminal outcome lost its source or became an invented access failure");
+    require(common_plan_render_tool_observations(access, {900}).size() <= 900,
+        "source provenance exceeded its context allocation");
     return 0;
 }

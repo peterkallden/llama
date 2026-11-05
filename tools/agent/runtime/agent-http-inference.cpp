@@ -116,7 +116,15 @@ bool external_tool_name(const std::string & name, std::string & external) {
 // but project it into a supported flat object for HTTP providers. The host
 // still validates the returned tool/args pair against the selected tool's
 // original schema after generation.
-bool normalize_response_schema(const json & input, json & output) {
+bool normalize_response_schema(const json & input, json & output, bool & wrapped_value) {
+    wrapped_value = false;
+    if (input.is_object() && input.contains("type") && input["type"].is_string() &&
+            input["type"] != "object") {
+        output = {{"type", "object"}, {"additionalProperties", false},
+            {"required", json::array({"value"})}, {"properties", {{"value", input}}}};
+        wrapped_value = true;
+        return true;
+    }
     if (!input.is_object() || !input.contains("oneOf")) {
         output = input;
         return input.is_object();
@@ -230,6 +238,7 @@ public:
         }
         json body;
         json response_schema;
+        bool wrapped_response_value = false;
         try {
             body["model"] = selection_.model_id;
             body["messages"] = json::parse(common_chat_msgs_to_json_oaicompat(messages).dump());
@@ -244,8 +253,16 @@ public:
             }
             if (!request.json_schema.empty()) {
                 const auto schema = json::parse(request.json_schema);
-                if (!normalize_response_schema(schema, response_schema))
+                if (!normalize_response_schema(schema, response_schema, wrapped_response_value))
                     return fail("HTTP inference cannot map the requested JSON schema to the provider's object-root contract");
+                if (wrapped_response_value) {
+                    // The internal contract can request a scalar. The provider
+                    // receives an object, so clarify how to represent that value.
+                    auto & wire_messages = body["messages"];
+                    const auto position = wire_messages.empty() ? wire_messages.end() : wire_messages.end() - 1;
+                    wire_messages.insert(position,
+                        json{{"role", "system"}, {"content", "Return the requested value as the value field of the JSON object required by the response schema."}});
+                }
                 body["response_format"] = {{"type", "json_schema"}, {"json_schema", {
                     {"name", "agent_response"}, {"strict", selection_.strict_json_schema}, {"schema", response_schema}}}};
             }
@@ -326,6 +343,7 @@ public:
             return true;
         }
         if (response->status < 200 || response->status >= 300) {
+            trace_payload("error response", response->body);
             std::string detail = "HTTP inference server returned status " + std::to_string(response->status);
             try {
                 const auto error_body = json::parse(response->body);
@@ -396,16 +414,6 @@ public:
             return fail("HTTP inference returned tool calls for a request that did not allow them");
         if ((!message.contains("content") || message["content"].is_null()) && assistant.tool_calls.empty())
             return fail("HTTP inference response message is missing content and tool calls");
-        if (!request.json_schema.empty() && (!assistant.tool_calls.empty() || result.content.empty()))
-            return fail("HTTP inference response rejected by requested JSON schema: expected JSON content without tool calls");
-        if (!request.json_schema.empty()) {
-            std::string normalized;
-            if (!common_schema_normalize_and_validate_object(result.content, response_schema.dump(), normalized, error))
-                return fail("HTTP inference response rejected by requested JSON schema: " + error);
-            result.content = std::move(normalized);
-            assistant.content = result.content;
-        }
-        result.assistant_message = std::move(assistant);
         if (payload.contains("usage") && payload["usage"].is_object() &&
                 payload["usage"].contains("completion_tokens") && payload["usage"]["completion_tokens"].is_number_integer())
             result.decoded_tokens = std::max(0, payload["usage"]["completion_tokens"].get<int>());
@@ -415,6 +423,25 @@ public:
         if (finish == "content_filter") return fail("HTTP inference response was blocked by the remote content filter");
         if (finish != "stop" && finish != "length" && finish != "tool_calls")
             return fail("HTTP inference response has an unsupported finish_reason");
+        if (!request.json_schema.empty() && (!assistant.tool_calls.empty() || result.content.empty()))
+            return fail("HTTP inference response rejected by requested JSON schema: expected JSON content without tool calls");
+        if (!request.json_schema.empty()) {
+            std::string normalized;
+            if (!common_schema_normalize_and_validate_object(result.content, response_schema.dump(), normalized, error)) {
+                result.output_schema_rejected = true;
+                return fail("HTTP inference response rejected by requested JSON schema: " + error);
+            }
+            if (wrapped_response_value) {
+                const auto wrapped = json::parse(normalized, nullptr, false);
+                if (!wrapped.is_object() || !wrapped.contains("value"))
+                    return fail("HTTP inference response is missing the wrapped schema value");
+                result.content = wrapped["value"].dump();
+            } else {
+                result.content = std::move(normalized);
+            }
+            assistant.content = result.content;
+        }
+        result.assistant_message = std::move(assistant);
         result.status = common_agent_generation_status::completed;
         if (finish == "length") result.stop_reason = common_agent_generation_stop_reason::limit;
         else if (finish == "tool_calls") result.stop_reason = common_agent_generation_stop_reason::eos;

@@ -2002,6 +2002,11 @@ common_tool_execution_result execute_investigation_tool(
             "Reload the case before continuing this event page.");
         if (!entity_id.empty() && !relation_id.empty()) return common_adapter_validation_failure(
             "tool.investigation.events_invalid", "events accepts at most one entity_id or relation_id filter");
+        if (!entity_id.empty() && std::none_of(value.entities.begin(), value.entities.end(),
+                [&](const auto & item) { return item.id == entity_id; }))
+            return common_adapter_not_found_failure("tool.investigation.entity_unavailable",
+                "entity_id is not in this case; use an exact ID returned by case.items or graph.expand",
+                "The selected entity is unavailable in this case.");
         std::set<std::string> evidence_ids;
         if (!relation_id.empty()) {
             const auto relation = std::find_if(value.relations.begin(), value.relations.end(),

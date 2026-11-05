@@ -2,6 +2,7 @@
 
 #include "agent/thinking/research/research-identity.h"
 #include "agent/thinking/research/research-workspace-serialization.h"
+#include "agent/thinking/research/research-workspace.h"
 #include "agent/tooling/adapters/support/adapter-support.h"
 #include "resource/resource-retention.h"
 #include "hash/hash.h"
@@ -21,7 +22,7 @@ bool promote_workspace_sources(
     const auto authority = make_agent_resource_read_authority(bindings.resource_runtime,
         static_cast<int64_t>(std::time(nullptr)));
     size_t copied_bytes = 0;
-    constexpr size_t max_total_bytes = 16 * 1024 * 1024;
+    constexpr size_t max_total_bytes = 32 * 1024 * 1024;
     for (auto & source : workspace.sources) {
         if (!source.resource_ref) continue;
         agent_resource_retention_target target;
@@ -32,12 +33,12 @@ bool promote_workspace_sources(
         target.turn_id = scope.turn_id;
         target.source_tool = "research.workspace.publish";
         target.derivation = "research-source-project-promotion:v1";
-        target.max_bytes = std::min<size_t>(4 * 1024 * 1024, max_total_bytes - copied_bytes);
+        target.max_bytes = std::min<size_t>(10 * 1024 * 1024, max_total_bytes - copied_bytes);
         agent_resource_descriptor retained;
         bool copied = false;
         if (!retain_agent_resource(*bindings.resource_runtime.store, *source.resource_ref, authority,
                 target, retained, copied, error)) return false;
-        static_cast<common_runtime_resource_ref &>(*source.resource_ref) = retained;
+        common_agent_research_rebind_resource(workspace, source, retained);
         if (!retained.sha256.empty()) source.content_hash = "sha256:" + retained.sha256;
         if (copied) copied_bytes += retained.size_bytes;
     }

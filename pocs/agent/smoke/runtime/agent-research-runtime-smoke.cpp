@@ -7,6 +7,32 @@
 #include <cstdio>
 #include <nlohmann/json.hpp>
 
+class provider_search_smoke_tools final : public common_agent_tool_runtime {
+public:
+    mutable std::vector<std::string> calls;
+    bool is_read_only(const std::string &) const override { return true; }
+    bool is_policy_gated(const std::string &) const override { return false; }
+    bool validate(const common_agent_tool_call & call, std::string & error) const override {
+        if (call.name == "openalex.listWorks" || call.name == "openalex.getWork") { error.clear(); return true; }
+        error = "unexpected provider tool"; return false;
+    }
+    common_tool_execution_result execute(const common_agent_tool_call & call) const override {
+        calls.push_back(call.name);
+        if (call.name == "openalex.listWorks") {
+            auto result = common_tool_execution_result::success(
+                R"({"result":{"results":[{"id":"https://openalex.org/W123","display_name":"Urban cooling"}]}})", "candidate");
+            result.http.provider = "openalex";
+            return result;
+        }
+        common_runtime_resource_ref ref;
+        ref.uri = "agent-resource://provider-smoke";
+        ref.mime_type = "application/json";
+        auto result = common_tool_execution_result::success("{}", "record", {ref});
+        result.http.provider = "openalex";
+        return result;
+    }
+};
+
 class deterministic_research_tools final : public common_agent_tool_runtime {
 public:
     bool is_read_only(const std::string &) const override { return true; }
@@ -357,14 +383,36 @@ int main() {
     }
 
     deterministic_research_tools tools;
-    common_agent_research_runtime_adapter adapter(tools);
+    // This smoke exercises the host's tool orchestration without an inference
+    // model. Keep relevance decisions explicit and deterministic; the normal
+    // assessor must stay inconclusive when semantic inference is absent.
+    common_agent_research_bounded_assessor smoke_assessor(
+        [](const common_agent_research_gap &, const common_agent_research_evidence & evidence) {
+            return common_agent_research_assessment{
+                common_agent_research_assessment_status::sufficient, 0.9,
+                "The deterministic smoke assessor accepted the fixture result."};
+        },
+        [](const common_agent_research_gap &,
+                const std::vector<common_agent_research_evidence> & evidence,
+                common_agent_research_source_comparison & comparison) {
+            if (evidence.size() < 2) return false;
+            comparison.relation = common_agent_research_comparison_relation::agree;
+            comparison.summary = "The independent deterministic fixtures agree.";
+            return true;
+        });
+    common_agent_research_runtime_adapter adapter(tools, &smoke_assessor);
     common_agent_research_runner runner;
     const auto result = runner.run(workspace, adapter, error);
     if (!error.empty() || !result.complete || result.stop_reason != common_agent_research_stop_reason::sufficient_coverage ||
             result.coverage.answered_gaps != 2 || workspace.sources.size() != 2 || workspace.evidence.size() != 2 ||
             workspace.iterations_completed != 2 || workspace.tool_calls != 2 || tools.calls != 2 ||
             result.coverage.evidence_quality <= 0.0 || result.coverage.source_diversity <= 0.0) {
-        std::fprintf(stderr, "research runtime smoke failed: %s\n", error.c_str());
+        std::fprintf(stderr, "research runtime smoke failed: %s (complete=%s stop=%d gaps=%zu sources=%zu evidence=%zu iterations=%d tool_calls=%d runtime_calls=%d answered=%d quality=%.3f diversity=%.3f)\n",
+            error.c_str(), result.complete ? "true" : "false", static_cast<int>(result.stop_reason),
+            workspace.gaps.size(), workspace.sources.size(), workspace.evidence.size(),
+            workspace.iterations_completed, workspace.tool_calls, tools.calls,
+            result.coverage.answered_gaps, result.coverage.evidence_quality,
+            result.coverage.source_diversity);
         return 1;
     }
     for (const auto & evidence : workspace.evidence) {
@@ -399,7 +447,7 @@ int main() {
 
     common_agent_research_workspace retry_workspace = make_retry_workspace("research-retryable");
     retryable_research_tools retry_tools(true);
-    common_agent_research_runtime_adapter retry_adapter(retry_tools);
+    common_agent_research_runtime_adapter retry_adapter(retry_tools, &smoke_assessor);
     std::vector<common_agent_research_lifecycle_event> retry_events;
     const auto retry_result = runner.run(
         retry_workspace, retry_adapter, error,
@@ -528,6 +576,14 @@ int main() {
         std::fprintf(stderr, "research missing-evidence verification failed: %s\n", error.c_str());
         return 1;
     }
+    auto partial_result = incomplete_result;
+    partial_result.partial_answer_available = true;
+    verification = verifier.verify(partial_result, "A limited answer with source restrictions.", error);
+    if (!error.empty() || verification.decision != common_agent_research_verification_decision::accept ||
+            verification.answer_sufficient || verification.unresolved_gaps.empty()) {
+        std::fprintf(stderr, "research partial answer verification failed: %s\n", error.c_str());
+        return 1;
+    }
     verification = verifier.verify(result, "", error);
     if (!error.empty() || verification.decision != common_agent_research_verification_decision::revise_answer ||
             !verification.revision_required) {
@@ -558,6 +614,12 @@ int main() {
     request.max_iterations = 1;
     request.max_reflection_rounds = 1;
     request.max_tool_batches = 2;
+    common_agent_research_draft_ref persistent_draft;
+    persistent_draft.research_id = "research-smoke:project";
+    persistent_draft.draft_id = "research-smoke:runtime-session";
+    persistent_draft.owner_session_id = request.session_id;
+    persistent_draft.base_revision = 4;
+    request.research_draft = persistent_draft;
     common_memory_hit memory_hit;
     memory_hit.memory.id = "memory-smoke-1";
     memory_hit.memory.kind = common_memory_kind::procedure;
@@ -565,7 +627,42 @@ int main() {
     memory_hit.memory.confidence = 0.9f;
     request.memories.push_back(memory_hit);
     request.deliberation_policy = make_common_agent_deliberation_policy(common_agent_thinking_mode::research);
+    // The integration smoke wires deterministic semantic callbacks in place
+    // of a model, so it can exercise the real runtime/controller seam without
+    // treating provider or repository tool output as automatically relevant.
+    request.research_assess_evidence = [](const common_agent_research_gap &,
+            const common_agent_research_evidence & evidence,
+            common_agent_research_assessment & assessment, int & used, std::string & assess_error) {
+        used = 64;
+        assessment = {common_agent_research_assessment_status::sufficient, 0.9,
+            "The deterministic runtime assessor accepted this fixture evidence."};
+        assess_error.clear();
+        return !evidence.source_location.empty();
+    };
+    request.research_compare_evidence = [](const common_agent_research_gap &,
+            const std::vector<common_agent_research_evidence> & evidence,
+            common_agent_research_source_comparison & comparison, int & used, std::string & assess_error) {
+        if (evidence.size() < 2) {
+            assess_error = "comparison requires two fixture observations";
+            return false;
+        }
+        used = 64;
+        comparison.relation = common_agent_research_comparison_relation::agree;
+        comparison.summary = "The deterministic fixture observations are compatible.";
+        assess_error.clear();
+        return true;
+    };
     const auto runtime_result = runtime.run(request);
+    if (!runtime_result.research_workspace_checkpoint ||
+            runtime_result.research_workspace_checkpoint->workspace.research_id != persistent_draft.research_id ||
+            runtime_result.research_workspace_checkpoint->workspace.draft_id != persistent_draft.draft_id ||
+            runtime_result.research_workspace_checkpoint->workspace.base_revision != persistent_draft.base_revision ||
+            runtime_result.research_workspace_checkpoint->workspace.session_id != request.session_id ||
+            !runtime_result.research_result ||
+            runtime_result.research_workspace_checkpoint->workspace.evidence.size() != runtime_result.research_result->evidence.size()) {
+        std::fprintf(stderr, "completed research lost its host-bound persistence checkpoint\n");
+        return 1;
+    }
     bool research_started = false;
     bool research_completed = false;
     bool research_trace = false;
@@ -789,5 +886,42 @@ int main() {
         return 1;
     }
     std::printf("research_cancellation=ok\n");
+
+    common_agent_research_workspace provider_workspace;
+    provider_workspace.workspace_id = "provider-smoke";
+    provider_workspace.objective.objective_id = "provider-objective";
+    provider_workspace.objective.question = "Search OpenAlex for urban cooling";
+    provider_workspace.scope.namespace_id = "research-smoke";
+    provider_workspace.scope.session_id = "session-1";
+    provider_workspace.budget.max_iterations = 2;
+    provider_workspace.budget.max_tool_calls = 2;
+    if (!common_agent_research_add_gap(provider_workspace,
+            {"provider-gap", provider_workspace.objective.question, "smoke", "inspect a source", 1}, error)) return 1;
+    provider_search_smoke_tools provider_tools;
+    auto provider_selection = [](const common_agent_research_action &, const common_agent_research_workspace & current,
+            const common_agent_tool_runtime &, const common_agent_tool_call *, const std::string &,
+            std::optional<common_agent_tool_call> & call, std::string &, std::string & select_error) {
+        select_error.clear();
+        if (current.sources.empty()) call = common_agent_tool_call{"openalex.listWorks", R"({"search":"urban cooling"})"};
+        else if (current.sources.front().origin == "https://openalex.org/W123")
+            call = common_agent_tool_call{"openalex.getWork", R"({"id":"W123"})"};
+        else { select_error = "provider candidate identity was lost"; return false; }
+        if (call->name == "openalex.listWorks") {
+            call->collection_item_parameter = "id";
+            call->collection_items_pointer = "/results";
+        } else if (call->name == "openalex.getWork") {
+            call->item_lookup_parameter = "id";
+        }
+        return true;
+    };
+    common_agent_research_runtime_adapter provider_adapter(provider_tools, nullptr, {}, 0, 0, {}, {}, {}, provider_selection);
+    const auto provider_result = runner.run(provider_workspace, provider_adapter, error);
+    if (!error.empty() || provider_result.complete || provider_tools.calls !=
+            std::vector<std::string>{"openalex.listWorks", "openalex.getWork"} ||
+            provider_workspace.sources.size() != 1 || !provider_workspace.evidence.empty()) {
+        std::fprintf(stderr, "research provider selection smoke failed: %s\n", error.c_str());
+        return 1;
+    }
+    std::printf("research_provider_selection=ok\n");
     return 0;
 }

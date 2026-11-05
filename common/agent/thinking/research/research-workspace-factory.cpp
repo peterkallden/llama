@@ -65,6 +65,9 @@ bool common_agent_research_create_workspace(
             !grant_budget(workspace.tasks.size(), request.max_tool_batches, workspace.budget.max_tasks) ||
             !grant_budget(static_cast<size_t>(workspace.tool_calls), request.max_tool_batches, workspace.budget.max_tool_calls))
         return false;
+    if (resumed && (!grant_budget(common_agent_research_source_count(workspace), request.max_tool_batches, workspace.budget.max_sources) ||
+            !grant_budget(common_agent_research_candidate_count(workspace), request.max_tool_batches, workspace.budget.max_candidates)))
+        return false;
     workspace.no_progress_iterations = 0;
     workspace.budget.minimum_coverage = 1.0;
     workspace.budget.minimum_sources = request.deliberation_policy.require_source_cross_check ? 2 : 1;
@@ -120,6 +123,15 @@ bool common_agent_research_create_workspace(
     }
 
     if (resumed) {
+        // A persisted mid-chunk draft is recoverable. Reopen only gaps with
+        // explicit unfinished resource progress, not arbitrary blocked gaps.
+        for (const auto & progress : workspace.resource_progress) {
+            if (progress.position.status != common_resource_progress_status::active &&
+                    progress.position.status != common_resource_progress_status::unresolved) continue;
+            for (auto & gap : workspace.gaps) if (gap.gap_id == progress.gap_id &&
+                    (gap.status == common_agent_research_gap_status::blocked || gap.status == common_agent_research_gap_status::investigating))
+                gap.status = common_agent_research_gap_status::open;
+        }
         const bool known = std::any_of(workspace.gaps.begin(), workspace.gaps.end(), [&](const auto & gap) {
             return gap.question == request.prompt;
         });

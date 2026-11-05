@@ -21,6 +21,11 @@ class ProviderBootstrapTest(unittest.TestCase):
                 "openapi": "3.1.0",
                 "security": [{"apiKey": []}],
                 "paths": {
+                    "/works/{id}": {
+                        "get": {"operationId": "getWork", "parameters": [
+                            {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}
+                        ]}
+                    },
                     "/works": {
                         "get": {
                             "operationId": "listWorks",
@@ -46,11 +51,21 @@ class ProviderBootstrapTest(unittest.TestCase):
                 },
             }
             spec_path.write_text(json.dumps(fixture), encoding="utf-8")
+            prefixes_path = root / "prefixes.json"
+            prefixes_path.write_text(json.dumps({"getWork": {
+                "id": {"if_starts_with": "raw-", "prepend": "canonical-"}
+            }}), encoding="utf-8")
+            views_path = root / "views.json"
+            views_path.write_text(json.dumps({"listWorks": {
+                "kind": "collection", "items_pointer": "/results",
+                "fields": {"id": "/id"}, "materialize": "resource", "resource_scope": "session"
+            }}), encoding="utf-8")
             subprocess.run([
                 sys.executable, str(script), "--type", "openapi", "--id", "example",
                 "--base-url", "https://api.example.test", "--spec", str(spec_path),
                 "--output", str(output_path), "--required", "--anonymous-public-reads",
-                "--allowed-operation", "listWorks",
+                "--allowed-operation", "listWorks", "--allowed-operation", "getWork", "--required-any", "listWorks=search,filter", "--result-views-file", str(views_path),
+                "--parameter-prefixes-file", str(prefixes_path),
                 "--default-projection", "listWorks=id,display_name,publication_year",
                 "--default-page-size", "5", "--max-page-size", "10",
                 "--parameter-description", "listWorks.filter=Year, author, institution or topic filters",
@@ -76,10 +91,26 @@ class ProviderBootstrapTest(unittest.TestCase):
             self.assertTrue(provider["required"])
             self.assertEqual(provider["policy"]["access"], "read_only")
             self.assertEqual(provider["policy"]["exposure"], "include")
-            self.assertEqual(list(provider["policy"]["operations"]), ["listWorks"])
+            self.assertEqual(list(provider["policy"]["operations"]), ["listWorks", "getWork"])
             self.assertEqual(provider["policy"]["operations"]["listWorks"]["default_projection"],
                              "id,display_name,publication_year")
+            self.assertEqual(provider["policy"]["operations"]["listWorks"]["result_view"]["fields"], {"id": "/id"})
+            self.assertEqual(provider["policy"]["operations"]["listWorks"]["result_view"]["resource_scope"], "session")
+            self.assertEqual(provider["policy"]["operations"]["getWork"]["parameter_prefixes"]["id"]["prepend"], "canonical-")
+            self.assertEqual(provider["policy"]["operations"]["listWorks"]["required_any_parameters"], ["search", "filter"])
             self.assertEqual(provider["limits"], {"default_page_size": 5, "max_page_size": 10})
+
+            views_path.write_text(json.dumps({"listWorks": {
+                "kind": "object", "fields": {},
+                "derived_fields": {"unsafe": {"transform": "eval", "from": "/x"}}
+            }}), encoding="utf-8")
+            rejected = subprocess.run([
+                sys.executable, str(script), "--type", "openapi", "--id", "example",
+                "--base-url", "https://api.example.test", "--spec", str(spec_path),
+                "--output", str(output_path), "--result-views-file", str(views_path),
+            ], capture_output=True, text=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("invalid transform", rejected.stderr)
 
 
 if __name__ == "__main__":

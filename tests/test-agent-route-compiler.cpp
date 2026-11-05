@@ -402,6 +402,12 @@ int main() {
             "openalex.listTopics", "openalex.getTopic"}},
         {"resource.read", {"resource.read"}},
     };
+    assert(common_agent_route_has_capability(tooling, "tool.openapi", &*openalex_workflow.workflow_definition));
+    assert(common_agent_route_has_capability(tooling, "workflow.openapi", &*openalex_workflow.workflow_definition));
+    assert(!common_agent_route_has_capability(tooling, "workflow.dataset", &*openalex_workflow.workflow_definition));
+    auto without_openapi = tooling;
+    without_openapi.capability_tools.erase("openapi.read");
+    assert(!common_agent_route_has_capability(without_openapi, "tool.openapi", &*openalex_workflow.workflow_definition));
     tooling.tools = {
         {"openalex.listWorks", "List OpenAlex works", R"({"type":"object"})"},
         {"openalex.getWork", "Get OpenAlex work", R"({"type":"object"})"},
@@ -577,6 +583,25 @@ int main() {
     const auto graph_arguments = nlohmann::json::parse(continuation_steps.front().tool_call->arguments_json);
     assert(graph_arguments["filter"] == "author.id:A1");
     assert(graph_arguments["source"].value("$from_step", "") == "resolve");
+    // A completed choice survives in the plan alias and cannot be selected
+    // again when the package limits that choice to one use.
+    auto bounded_route = graph_route;
+    bounded_route.workflow_definition->transitions[1].choices.push_back(
+        {"A1", "Select the observed author", "selected", {}, 1});
+    auto bounded_plan = graph_plan;
+    bounded_plan.workflow_definition = bounded_route.workflow_definition;
+    common_plan_step used_choice{"used-choice", "Used choice", "Prior selection"};
+    used_choice.status = common_plan_step_status::completed;
+    used_choice.semantic_alias = "workflow-transition:choose-author=A1,retrieve-works";
+    bounded_plan.steps.push_back(used_choice);
+    auto bounded_continuation = make_agent_workflow_graph_continuation(bounded_route,
+        [](const common_plan_observation &, const common_plan_workflow_transition &,
+                std::string & id, std::string & selection_error) {
+            id = "A1"; selection_error.clear(); return true;
+        });
+    continuation_steps.clear(); error.clear();
+    assert(!bounded_continuation(bounded_plan, "resolve", candidates, continuation_steps, error));
+    assert(error.find("no available fixed choices") != std::string::npos);
     auto rejected_graph_continuation = make_agent_workflow_graph_continuation(graph_route,
         [](const common_plan_observation &, const common_plan_workflow_transition &, std::string & id, std::string & selection_error) {
             id = "invented-author"; selection_error.clear(); return true;
@@ -803,9 +828,14 @@ int main() {
         "tool:" + failed_fetch.id + ":1", "web.fetch",
         nlohmann::ordered_json{{"failure", {{"step_id", failed_fetch.id}, {"tool", "web.fetch"}, {"http_status", 403}}}}.dump(), 0.0f};
     unavailable_plan.observations.push_back(failed_fetch_observation);
+    unavailable_plan.route_binding->continuation_source_fingerprint = "candidates";
+    unavailable_plan.observations.push_back({"workflow_handoff:candidates:workflow://openalex/full-text-evidence", "workflow_handoff",
+        R"({"source_fingerprint":"candidates","target_revision":"v1","value":{"result":{"host_item_candidates":[{"id":"W1"},{"id":"W2"}]}}})", 1.0f});
     common_plan_observation handled_failure;
     assert(common_plan_workflow_handled_failure_observation(unavailable_plan, failed_fetch.id,
         failed_fetch_observation.id, handled_failure, error));
+    const auto handled_payload = nlohmann::json::parse(handled_failure.summary);
+    assert(handled_payload["handoff"]["value"]["result"]["host_item_candidates"].size() == 2);
     common_plan_step after_failure{"answer", "Answer", "Report the limitation"};
     after_failure.depends_on = {failed_fetch.id};
     assert(!common_plan_step_dependencies_ready(unavailable_plan, after_failure));
@@ -813,6 +843,15 @@ int main() {
     assert(common_plan_workflow_failure_handled(unavailable_plan, unavailable_plan.steps.back()));
     assert(common_plan_workflow_is_terminal(unavailable_plan, evidence_definition));
     assert(common_plan_step_dependencies_ready(unavailable_plan, after_failure));
+    auto transitioned_failure = unavailable_plan;
+    transitioned_failure.workflow_continuation_history.push_back({
+        "fetch-full-text@full_text_unavailable->workflow://test/retry@v1", "fingerprint",
+        evidence_definition.workflow_ref, evidence_definition.workflow_revision, "full_text_unavailable",
+        "workflow://test/retry", "v1", handled_failure.id});
+    transitioned_failure.route_binding->workflow_step_start_index = transitioned_failure.steps.size();
+    assert(common_plan_workflow_failure_handled(transitioned_failure, transitioned_failure.steps.back()));
+    transitioned_failure.workflow_continuation_history.clear();
+    assert(!common_plan_workflow_failure_handled(transitioned_failure, transitioned_failure.steps.back()));
     const auto limitation_context = common_plan_render_tool_observations(unavailable_plan, {4096});
     assert(limitation_context.find("HTTP 403") != std::string::npos);
     auto newer_failure = failed_fetch_observation;

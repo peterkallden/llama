@@ -9,6 +9,10 @@
 #include <optional>
 #include <set>
 
+// Research owns the result; synthesis only projects its existing disposition.
+void common_agent_apply_research_synthesis_state(common_agent_request &,
+    const common_agent_research_result &);
+
 struct common_agent_runtime_turn_context {
     common_agent_request & request;
     common_agent_result & result;
@@ -52,6 +56,9 @@ bool common_agent_runtime_transition_cognitive_mode(
         common_runtime_trace_stage trace_stage);
 
 bool run_common_agent_research_phase(
+        common_agent_runtime_turn_context & context);
+
+bool checkpoint_common_agent_research_workspace(
         common_agent_runtime_turn_context & context);
 
 common_agent_research_lifecycle_sink make_common_agent_research_lifecycle_sink(

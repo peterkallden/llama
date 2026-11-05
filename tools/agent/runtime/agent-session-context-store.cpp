@@ -103,6 +103,25 @@ bool agent_session_context_store::put_internal(const std::string & name, const s
     return store->put_text(request, out, error);
 }
 
+bool agent_session_context_store::append_unverified_draft(const std::string & request_id,const std::string & turn_id,
+        const json & draft,std::string & error) {
+    if(!persistent()) {error.clear();return true;}
+    std::vector<common_agent_conversation_segment> segments;
+    std::optional<common_agent_context_checkpoint> checkpoint;
+    uint64_t epoch=1;
+    if(!load(segments,checkpoint,epoch,error)) return false;
+    uint64_t sequence=0;
+    for(const auto & item:segments)
+        if(item.request_id==request_id && item.role==common_agent_conversation_role::user) sequence=item.sequence;
+    if(!sequence) {error="unverified draft requires a persisted user turn";return false;}
+    json payload{{"schema_version",1},{"request_id",request_id},{"turn_id",turn_id},{"role","assistant"},
+        {"sequence",sequence},{"epoch",epoch},{"recorded_at",static_cast<int64_t>(std::time(nullptr))},
+        {"content",""},{"unverified_draft",draft},{"model_visible",false}};
+    agent_resource_descriptor saved;
+    return put_internal("agent.context.review_draft.v1","review-draft:"+std::to_string(epoch)+":"+request_id+":"+
+        hash_text(draft.dump()),payload,saved,error);
+}
+
 bool agent_session_context_store::append(common_agent_conversation_segment segment, std::string & error) {
     if (!persist || store == nullptr) {
         for (const auto & old : transient_segments) {

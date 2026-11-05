@@ -19,6 +19,7 @@
 #include "plan/plan-context.h"
 #include "plan/plan-workflow-state.h"
 #include "hash/hash.h"
+#include "agent/review-checklist.h"
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -315,6 +316,8 @@ bool common_agent_plan_satisfies_resource_read_binding(
         struct coverage_state {
             size_t count = 0;
             std::set<size_t> indexes;
+            std::set<size_t> unresolved;
+            std::map<size_t, std::pair<size_t, size_t>> unresolved_ranges;
             std::vector<std::pair<size_t, size_t>> ranges;
             bool valid = true;
         } current, prior_orientation;
@@ -338,18 +341,32 @@ bool common_agent_plan_satisfies_resource_read_binding(
             auto & coverage = task_matches ? current : prior_orientation;
             if (lineage.chunk_count == 0 || lineage.chunk_index >= lineage.chunk_count ||
                     (coverage.count != 0 && coverage.count != lineage.chunk_count) ||
-                    lineage.parent_uri != provenance->source_uri ||
-                    observation.source == "resource_chunk_unresolved") {
+                    lineage.parent_uri != provenance->source_uri) {
                 coverage.valid = false;
                 continue;
             }
             coverage.count = lineage.chunk_count;
+            if (observation.source == "resource_chunk_unresolved") {
+                if (coverage.indexes.count(lineage.chunk_index)) coverage.valid = false;
+                else {
+                    const auto bounds = std::make_pair(lineage.byte_offset, lineage.byte_length);
+                    const auto prior = coverage.unresolved_ranges.find(lineage.chunk_index);
+                    if (prior != coverage.unresolved_ranges.end() && prior->second != bounds) coverage.valid = false;
+                    coverage.unresolved_ranges[lineage.chunk_index] = bounds;
+                    coverage.unresolved.insert(lineage.chunk_index);
+                }
+                continue;
+            }
+            const auto prior = coverage.unresolved_ranges.find(lineage.chunk_index);
+            if (prior != coverage.unresolved_ranges.end() &&
+                    prior->second != std::make_pair(lineage.byte_offset, lineage.byte_length)) coverage.valid = false;
+            coverage.unresolved.erase(lineage.chunk_index);
             if (!coverage.indexes.insert(lineage.chunk_index).second) coverage.valid = false;
             coverage.ranges.emplace_back(lineage.byte_offset,
                 lineage.byte_offset + lineage.byte_length);
         }
         const auto complete = [&](coverage_state & coverage) {
-            if (!coverage.valid || coverage.count == 0 || coverage.indexes.size() != coverage.count ||
+            if (!coverage.valid || !coverage.unresolved.empty() || coverage.count == 0 || coverage.indexes.size() != coverage.count ||
                     *coverage.indexes.begin() != 0 || *coverage.indexes.rbegin() != coverage.count - 1) return false;
             std::sort(coverage.ranges.begin(), coverage.ranges.end());
             size_t end = 0;
@@ -383,9 +400,10 @@ bool common_agent_plan_satisfies_resource_read_binding(
                 if (binding.require_full_coverage) {
                     const int64_t offset = arguments.value("offset", int64_t{0});
                     const int64_t max_bytes = arguments.value("max_bytes", int64_t{8192});
+                    const int64_t delivered_limit = std::min<int64_t>(max_bytes, 8192);
                     const auto full_ref = std::find_if(observation->resource_refs.begin(), observation->resource_refs.end(),
                         [&](const auto & ref) { return ref.uri == uri || ref.lineage.parent_uri == uri; });
-                    if (offset != 0 || max_bytes < 0 || static_cast<uint64_t>(max_bytes) < target.size_bytes) continue;
+                    if (offset != 0 || delivered_limit < 0 || static_cast<uint64_t>(delivered_limit) < target.size_bytes) continue;
                     if (full_ref == observation->resource_refs.end() || full_ref->size_bytes < target.size_bytes) continue;
                 }
                 current_single_read = true;
@@ -1474,6 +1492,28 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         return activation != activation_outcome::failed && error.empty();
     };
 
+    const auto yield_workflow_handoff = [&](const common_plan_observation & observation,
+            const std::string & step_id, const std::string & tool_name) {
+        if (!plan.workflow_definition || (!plan.workflow_definition->transitions.empty() &&
+                !common_plan_workflow_is_terminal(plan, *plan.workflow_definition))) return false;
+        const auto value = json::parse(observation.summary, nullptr, false);
+        const bool linked = observation.confidence > 0.0f && (value.is_object() || value.is_array()) &&
+            !plan.workflow_definition->continuation_links.empty();
+        const bool legacy = !observation.dataset_refs.empty() &&
+            !plan.workflow_definition->continuation_workflow_targets.empty();
+        if (!linked && !legacy) return false;
+        result.workflow_handoff_requested = true;
+        result.plan_id = plan.id;
+        result.plan_version = plan.version;
+        result.limit_reached = true;
+        result.response_generation_status = common_agent_generation_status::completed;
+        result.response_stop_reason = common_agent_generation_stop_reason::limit;
+        append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::decided,
+            "yielding terminal workflow outcome to declared continuation resolution",
+            plan.id, step_id, tool_name, observation.id);
+        return true;
+    };
+
     const auto persist_terminal_workflow_choice = [&](const common_agent_workflow_continuation & continuation,
             const std::string & source_step_id, const common_plan_observation & source) -> bool {
         if (!continuation.terminal_choice) return true;
@@ -1656,16 +1696,37 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     size_t plan_revision_count = 0;
     size_t grounding_revision_count = 0;
     size_t reflection_review_count = 0;
+    std::string last_complete_draft;
+    std::string last_complete_draft_evidence;
+    common_agent_review_checklist checklist;
     bool unresolved_review = false;
     for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
         if (item->source != "response_review") continue;
         const auto review = json::parse(item->summary, nullptr, false);
         unresolved_review = !review.is_object() || review.value("accepted", json(false)) != true;
+        if(review.is_object() && review.contains("checklist"))
+            common_agent_review_checklist_from_json(review["checklist"],checklist);
         break;
     }
+    if(unresolved_review) for(const auto & issue:checklist.blocking)
+        guidance.push_back(issue.correction.empty()?issue.description:issue.correction);
     const auto stop_unverified_response = [&](const std::string & reason,
             common_agent_failure_class classification = common_agent_failure_class::limit) {
         result.response.clear();
+        if (classification==common_agent_failure_class::limit && reflection_review_count>0 && !last_complete_draft.empty()) {
+            result.unverified_draft=common_agent_unverified_draft{last_complete_draft,reason,plan.id,
+                hash_sha256_hex(last_complete_draft.data(),last_complete_draft.size()),last_complete_draft_evidence,checklist.blocking};
+            common_plan_operation retained;
+            retained.kind=common_plan_operation_kind::record_observation;
+            retained.plan_id=plan.id; retained.expected_version=plan.version; retained.host_authorized=true;
+            retained.reason_summary="retain an explicitly unverified review draft, never an accepted response";
+            retained.observation=common_plan_observation{"unverified_draft:"+std::to_string(plan.version),
+                "unverified_draft",common_agent_unverified_draft_json(*result.unverified_draft).dump(),1.0f};
+            std::string retain_error;
+            if(!store.apply(retained,plan,retain_error))
+                append_trace(result,common_runtime_trace_stage::response,common_runtime_trace_kind::failed,
+                    "could not persist unverified draft: "+retain_error,plan.id);
+        }
         result.error = reason;
         result.plan_version = plan.version;
         result.limit_reached = classification == common_agent_failure_class::limit;
@@ -1679,12 +1740,6 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     };
     const auto record_response_review = [&](const std::string & draft, bool accepted,
             const std::string & action) {
-        json evidence = json::array();
-        for (const auto & observation : plan.observations) {
-            if (observation.source == "response_review") continue;
-            evidence.push_back({{"id", observation.id}, {"summary", observation.summary}});
-        }
-        const auto evidence_text = evidence.dump();
         common_plan_operation operation;
         operation.kind = common_plan_operation_kind::record_observation;
         operation.plan_id = plan.id;
@@ -1695,8 +1750,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             "response_review:" + std::to_string(plan.version), "response_review",
             json{{"accepted", accepted}, {"action", action}, {"turn_id", request.turn_id},
                 {"draft_fingerprint", hash_sha256_hex(draft.data(), draft.size())},
-                {"evidence_fingerprint", hash_sha256_hex(evidence_text.data(), evidence_text.size())},
+                {"evidence_fingerprint", common_agent_synthesis_evidence_fingerprint(plan)},
                 {"evidence_version", plan.version}}.dump(), 1.0f};
+        auto payload=json::parse(operation.observation->summary);
+        payload["checklist"]=common_agent_review_checklist_json(checklist);
+        payload["synthesis_state"]=common_agent_synthesis_state_json(common_agent_resolve_synthesis_state(plan,request.synthesis_state));
+        operation.observation->summary=payload.dump();
         append_trace(result, common_runtime_trace_stage::reflection,
             common_runtime_trace_kind::recorded, operation.observation->summary, plan.id);
         // A completed plan already retains ordinary successful acceptance.
@@ -2326,13 +2385,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     record.expected_version = plan.version;
                     record.host_authorized = true;
                     record.reason_summary = "declared workflow failure outcome recorded";
-                    record.observation = std::move(handled_failure);
+                    record.observation = handled_failure;
                     if (!store.apply(record, plan, error)) { result.error = error; return result; }
                     append_event(result, request, {common_agent_event_type::plan_updated,
                         "workflow continued with a recorded source limitation", {}, plan.id});
                     append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::decided,
                         "declared workflow failure outcome accepted; tool remains failed",
                         plan.id, tool_step_id, tool_call->name, failure_observation_id);
+                    if (yield_workflow_handoff(handled_failure, tool_step_id, tool_call->name)) return result;
                     const auto activation = activate_next_ready_step();
                     if (activation == activation_outcome::failed) {
                         if (result.error.empty()) result.error = error.empty() ? "workflow failure scheduling failed" : error;
@@ -2352,7 +2412,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             // Evidence retention and prompt projection are different budgets.
             // A contracted result must survive resume without losing required
             // cells to the optional model-context summarizer.
-            std::string tool_result = contracted_result && full_tool_result.size() <= 65536
+            // Candidate identities are host bindings, not merely prompt text.
+            // Keep their bounded original observation intact so a later
+            // continuation never binds a byte-truncated identifier.
+            const bool continuation_candidates = plan.workflow_definition &&
+                std::any_of(plan.workflow_definition->continuation_links.begin(),
+                    plan.workflow_definition->continuation_links.end(), [](const auto & link) {
+                        return std::any_of(link.argument_bindings.begin(), link.argument_bindings.end(),
+                            [](const auto & binding) { return !binding.candidate_id_json_pointer.empty(); });
+                    });
+            std::string tool_result = (contracted_result || continuation_candidates) && full_tool_result.size() <= 65536
                 ? full_tool_result : bounded_tool_observation_payload(
                     full_tool_result, context_budgets.tool_observation_chars);
             const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
@@ -2583,35 +2652,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                             plan.workflow_definition->continuation_links.size()),
                     plan.id, tool_step_id, tool_call->name, observed.observation->id);
             }
-            const auto structured_observation = json::parse(
-                observed.observation->summary, nullptr, false);
-            const bool structured_success = observed.observation->confidence > 0.0f &&
-                (structured_observation.is_object() || structured_observation.is_array());
-            const bool workflow_terminal = plan.workflow_definition &&
-                (plan.workflow_definition->transitions.empty() ||
-                 common_plan_workflow_is_terminal(plan, *plan.workflow_definition));
-            const bool linked_handoff = plan.workflow_definition && structured_success &&
-                !plan.workflow_definition->continuation_links.empty() &&
-                workflow_terminal;
-            const bool legacy_dataset_handoff = plan.workflow_definition &&
-                !observed.observation->dataset_refs.empty() &&
-                !plan.workflow_definition->continuation_workflow_targets.empty() &&
-                workflow_terminal;
-            if ((linked_handoff || legacy_dataset_handoff) && plan.workflow_definition) {
-                result.workflow_handoff_requested = true;
-                result.plan_id = plan.id;
-                result.plan_version = plan.version;
-                result.limit_reached = true;
-                result.response_generation_status = common_agent_generation_status::completed;
-                result.response_stop_reason = common_agent_generation_stop_reason::limit;
-                append_trace(result, common_runtime_trace_stage::plan,
-                    common_runtime_trace_kind::decided,
-                    linked_handoff
-                        ? "yielding successful structured workflow output to declared continuation-link resolution"
-                        : "yielding verified dataset output to legacy continuation-target resolution",
-                    plan.id, tool_step_id, tool_call->name, observed.observation->id);
-                return result;
-            }
+            if (yield_workflow_handoff(*observed.observation, tool_step_id, tool_call->name)) return result;
             if (plan.workflow_definition &&
                     plan.workflow_definition->resource_read_policy ==
                         common_plan_workflow_resource_read_policy::chunked &&
@@ -2645,6 +2686,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             if (!run_common_agent_research_phase(turn)) return result;
             research_deferred_for_workflow = false;
+            if (!turn.research_synthesis_context.empty()) {
+                request.prompt += "\n\nHost-approved research synthesis context:\n";
+                request.prompt += turn.research_synthesis_context;
+                if (request.prompt.size() > 8192) request.prompt.resize(8192);
+            }
             if (!common_agent_runtime_transition_cognitive_mode(
                     turn, common_agent_cognitive_mode::execute,
                     "bounded research evidence is ready for synthesis", "host",
@@ -2789,6 +2835,21 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
         result.response.clear();
         std::string draft;
+        if(result.research_result) common_agent_apply_research_synthesis_state(request,*result.research_result);
+        request.synthesis_state=common_agent_resolve_synthesis_state(plan,request.synthesis_state);
+        request.review_checklist=checklist;
+        if(!draft_deferred_for_tool_repair && request.synthesis_state->mandatory_remaining &&
+            plan.workflow_definition && !plan.workflow_definition->continuation_links.empty() &&
+            common_plan_workflow_is_terminal(plan,*plan.workflow_definition)) {
+            result.workflow_handoff_requested=true;result.plan_id=plan.id;result.plan_version=plan.version;
+            result.limit_reached=true;result.response_generation_status=common_agent_generation_status::completed;
+            result.response_stop_reason=common_agent_generation_stop_reason::limit;
+            append_trace(result,common_runtime_trace_stage::plan,common_runtime_trace_kind::decided,
+                "resolve terminal continuation before synthesis, including restored plans",plan.id);
+            return result;
+        }
+        append_trace(result,common_runtime_trace_stage::response,common_runtime_trace_kind::decided,
+            common_agent_synthesis_state_json(*request.synthesis_state).dump(),plan.id);
         std::vector<common_agent_research_verification_claim> declared_claims;
         if (draft_deferred_for_tool_repair) {
             append_trace(result, common_runtime_trace_stage::response,
@@ -2819,6 +2880,18 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             result.response_stop_reason = draft_result.stop_reason;
             append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::recorded,
                 "draft generated", plan.id);
+            if (draft_result.stop_reason == common_agent_generation_stop_reason::limit) {
+                if (request.enable_reflection && grounding_revision_count < request.max_reflection_rounds &&
+                        iteration + 1 < runtime_iteration_limit) {
+                    ++grounding_revision_count;
+                    guidance.push_back("The previous draft reached the output limit. Provide a complete, more concise answer using the available evidence.");
+                    append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::decided,
+                        "output-limited draft requires bounded regeneration", plan.id);
+                    continue;
+                }
+                stop_unverified_response("draft reached the output limit before completion; no revision budget remains");
+                break;
+            }
         }
         if (!draft_deferred_for_tool_repair) {
             json claims = json::array();
@@ -2891,7 +2964,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     const auto evidence_id = "workflow-claim:" + claim.claim_id;
                     if (std::none_of(turn.research_workspace->sources.begin(), turn.research_workspace->sources.end(),
                             [&](const auto & source) { return source.source_id == source_id; })) {
-                        if (turn.research_workspace->sources.size() >= static_cast<size_t>(turn.research_workspace->budget.max_sources)) {
+                        if (common_agent_research_source_count(*turn.research_workspace) >= static_cast<size_t>(turn.research_workspace->budget.max_sources)) {
                             append_trace(result, common_runtime_trace_stage::research, common_runtime_trace_kind::recorded,
                                 "declared numeric evidence retained in plan; research source budget full", plan.id);
                             continue;
@@ -3034,6 +3107,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             break;
         }
         ++reflection_review_count;
+        if(!draft.empty() && result.response_generation_status==common_agent_generation_status::completed &&
+            result.response_stop_reason!=common_agent_generation_stop_reason::limit) {
+            last_complete_draft=draft;
+            last_complete_draft_evidence=common_agent_synthesis_evidence_fingerprint(plan);
+        }
         common_reflection_result reflection;
         if (!evaluate_common_agent_reflection_phase(
                 turn, plan, draft, executed_step_ids, reflection)) {
@@ -3048,21 +3126,24 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             break;
         }
-        // Completed steps are already recorded by the host. The active final
-        // response is completed by the host only after the review and its
-        // existing evidence and failure checks succeed.
+        // The host already owns completed steps and the active step. A model
+        // may repeat those states while asking for an answer revision.
         const auto discard_redundant_completions = [&](common_reflection_result & review) {
-            if (review.decision != common_reflection_decision::accept ||
-                    review.next_action != common_agent_reflection_next_action::accept) return;
             auto & operations = review.proposed_plan_operations;
             operations.erase(std::remove_if(operations.begin(), operations.end(), [&](const common_plan_operation & op) {
-                if (op.kind != common_plan_operation_kind::complete_step || !op.step_id) return false;
+                if (!op.step_id || (op.kind != common_plan_operation_kind::complete_step &&
+                        op.kind != common_plan_operation_kind::activate_step)) return false;
                 const auto step = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const common_plan_step & item) {
                     return item.id == *op.step_id;
                 });
                 if (step == plan.steps.end()) return false;
+                if (op.kind == common_plan_operation_kind::activate_step)
+                    return plan.active_step_id && *plan.active_step_id == step->id &&
+                        step->status == common_plan_step_status::active;
                 if (step->status == common_plan_step_status::completed) return true;
-                return plan.active_step_id && *plan.active_step_id == step->id &&
+                return review.decision == common_reflection_decision::accept &&
+                    review.next_action == common_agent_reflection_next_action::accept &&
+                    plan.active_step_id && *plan.active_step_id == step->id &&
                     step->status == common_plan_step_status::active &&
                     common_plan_step_effective_mode(*step) == common_plan_step_mode::final_response;
             }), operations.end());
@@ -3129,7 +3210,19 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "reflection follow-up clarified within review budget", plan.id);
             reflection = std::move(clarified);
         }
-        const bool review_accepted = reflection.decision == common_reflection_decision::accept &&
+        common_agent_review_checklist next_checklist;
+        if(!common_agent_advance_review_checklist(checklist,reflection,plan,draft,next_checklist,error)) {
+            stop_unverified_response("invalid reflection checklist: "+error,common_agent_failure_class::validation);
+            break;
+        }
+        checklist=std::move(next_checklist);
+        request.review_checklist=checklist;
+        append_trace(result,common_runtime_trace_stage::reflection,common_runtime_trace_kind::decided,
+            "review_round="+std::to_string(checklist.round)+" blocking="+std::to_string(checklist.blocking.size())+
+            " advisory="+std::to_string(checklist.advisory.size()),plan.id);
+        const bool review_accepted = checklist.blocking.empty() &&
+            !common_agent_resolve_synthesis_state(plan,request.synthesis_state).mandatory_remaining &&
+            reflection.decision == common_reflection_decision::accept &&
             reflection.next_action == common_agent_reflection_next_action::accept &&
             reflection.proposed_plan_operations.empty();
         if (!record_response_review(draft, review_accepted,
@@ -3500,7 +3593,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
         guidance = reflection.revision_guidance;
         for (const auto & issue : reflection.issues) {
-            if (!issue.description.empty()) guidance.push_back(issue.description);
+            if (!issue.correction.empty()) guidance.push_back(issue.correction);
+            else if (!issue.description.empty()) guidance.push_back(issue.description);
         }
         if (guidance.empty()) {
             stop_unverified_response("reflection rejected the response without a supported correction");
@@ -3607,6 +3701,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_trace(result, common_runtime_trace_stage::memory_learning, common_runtime_trace_kind::skipped,
             "post-turn learning skipped because the plan did not complete", plan.id);
     }
+    // Capture evidence added during answer verification or research reopening,
+    // rather than persisting only the workspace produced by the first phase.
+    if (!checkpoint_common_agent_research_workspace(turn)) return result;
     if (!result.response.empty()) {
         append_trace(result, common_runtime_trace_stage::turn, common_runtime_trace_kind::completed,
             "agent runtime turn completed", plan.id);

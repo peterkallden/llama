@@ -127,8 +127,9 @@ bool find_project(const agent_web_server_options & options, const std::string & 
     json resources;
     if (!list_catalog(options, resources, error)) return false;
     bool found = false;
+    const auto expected_name = "llama-agent-web-project-" + project_id + ".json";
     for (const auto & descriptor : resources) {
-        if (!descriptor.is_object() || !has_prefix(descriptor.value("name", std::string()), "llama-agent-web-project-")) continue;
+        if (!descriptor.is_object() || descriptor.value("name", std::string()) != expected_name) continue;
         json record;
         if (!read_catalog_record(options, descriptor.value("uri", std::string()), record, error)) return false;
         if (record.value("kind", std::string()) == "project" && record.value("id", std::string()) == project_id) {
@@ -146,8 +147,9 @@ bool find_chat(const agent_web_server_options & options, const std::string & ses
     json resources;
     if (!list_catalog(options, resources, error)) return false;
     bool found = false;
+    const auto expected_name = "llama-agent-web-chat-" + session_id + ".json";
     for (const auto & descriptor : resources) {
-        if (!descriptor.is_object() || !has_prefix(descriptor.value("name", std::string()), "llama-agent-web-chat-")) continue;
+        if (!descriptor.is_object() || descriptor.value("name", std::string()) != expected_name) continue;
         json record;
         if (!read_catalog_record(options, descriptor.value("uri", std::string()), record, error)) return false;
         if (record.value("kind", std::string()) == "chat" && record.value("id", std::string()) == session_id) {
@@ -664,7 +666,8 @@ bool run_agent_web_server(
         std::vector<message_row> rows;
         for (const auto & descriptor : listing.value("resources", json::array())) {
             if (!descriptor.is_object() || !descriptor.contains("metadata") || !descriptor["metadata"].is_object() ||
-                    descriptor["metadata"].value("purpose", std::string()) != "agent.context.turn.v1") continue;
+                    (descriptor["metadata"].value("purpose", std::string()) != "agent.context.turn.v1" &&
+                     descriptor["metadata"].value("purpose", std::string()) != "agent.context.review_draft.v1")) continue;
             json stored;
             json read;
             if (!daemon_command(options, {{"command", "read_resource"}, {"uri", descriptor.value("uri", std::string())},
@@ -680,8 +683,23 @@ bool run_agent_web_server(
             rows.push_back({stored.value("sequence", uint64_t(0)), json{{"id", stored.value("request_id", std::string()) + "-" + role},
                 {"turn_id", stored.value("turn_id", std::string())}, {"role", role}, {"content", stored.value("content", std::string())},
                 {"recorded_at", stored.value("recorded_at", int64_t(0))}, {"evidence_refs", stored.value("evidence_refs", json::array())}}});
+            if(stored.contains("unverified_draft")) rows.back().value["unverified_draft"]=stored["unverified_draft"];
         }
-        std::sort(rows.begin(), rows.end(), [](const auto & a, const auto & b) { return a.sequence < b.sequence; });
+        // An accepted response supersedes a display-only draft of the same
+        // turn. Several bounded review attempts may retain successive drafts.
+        std::map<std::string,message_row> by_id;
+        for(auto & row:rows) {
+            const auto id=row.value["id"].get<std::string>();
+            auto prior=by_id.find(id);
+            if(prior==by_id.end() || (prior->second.value.contains("unverified_draft") &&
+                (!row.value.contains("unverified_draft") || row.value.value("recorded_at",int64_t(0)) >=
+                    prior->second.value.value("recorded_at",int64_t(0))))) by_id[id]=std::move(row);
+        }
+        rows.clear(); for(auto & row:by_id) rows.push_back(std::move(row.second));
+        std::sort(rows.begin(), rows.end(), [](const auto & a, const auto & b) {
+            if(a.sequence!=b.sequence)return a.sequence<b.sequence;
+            return a.value.value("role",std::string{})=="user" && b.value.value("role",std::string{})!="user";
+        });
         const auto total_messages = rows.size();
         const size_t limit = std::clamp<size_t>(request.has_param("limit")
             ? static_cast<size_t>(std::max(1, std::atoi(request.get_param_value("limit").c_str()))) : 50, 1, 100);

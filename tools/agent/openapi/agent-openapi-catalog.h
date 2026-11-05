@@ -35,6 +35,9 @@ struct agent_openapi_paging_contract {
     // from the response schema; x-agent-pagination can declare other layouts.
     std::string items_pointer = "/results";
     std::string next_cursor_pointer;
+    // Optional provider-declared first cursor. Applied only when the host
+    // collects multiple pages and the caller did not specify a position.
+    std::string initial_cursor;
 };
 
 struct agent_openapi_security_scheme {
@@ -79,6 +82,7 @@ struct agent_openapi_operation {
     std::vector<std::string> security_schemes;
     std::vector<agent_openapi_security_scheme> security_definitions;
     std::string result_schema_json = R"({"type":"object"})";
+    std::string result_view_json;
 };
 
 struct agent_openapi_relation {
@@ -155,7 +159,8 @@ bool classify_agent_openapi_result_json(
     const agent_openapi_result_projection_limits & limits,
     agent_openapi_result_projection & projection,
     std::string & error,
-    const std::string & result_schema_json = {});
+    const std::string & result_schema_json = {},
+    const std::string & items_pointer = {});
 
 // Create deterministic, host-owned candidate handles from a bounded
 // collection result. Only rows containing a scalar item identifier are

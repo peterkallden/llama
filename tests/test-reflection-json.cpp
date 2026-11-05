@@ -236,5 +236,14 @@ int main() {
     require(common_reflection_review_grammar().find("revise_plan") != std::string::npos &&
         common_reflection_review_grammar().find("guidance") != std::string::npos,
         "compact sampling grammar removed actionable evidence repair");
+    require(common_reflection_parse_json(R"({"decision":"revise","assurance_action":"revise_response","issues":[{"description":"Missing limitation","correction":"Disclose unread full text","previous_issue_id":"review-1-1","evidence_ids":["tool:fetch:web.fetch"]}],"advisory_notes":["Shorten the title"],"resolved_issue_ids":[]})",result,error) &&
+        result.structured_review && result.issues.size()==1 && result.issues.front().previous_issue_id=="review-1-1",
+        "structured review lost its blocker identity or correction");
+    require(common_reflection_parse_compact_dsl(
+        "reflect revise\nassurance_action revise_response\nissue description=\"Missing limitation\" correction=\"Disclose unread full text\" previous_issue_id=\"review-1-1\"\nadvisory \"Shorten the title\"",
+        result,error) && result.structured_review && result.issues.size()==1 && result.advisory_notes.size()==1,
+        "DSL checklist fields did not reach the shared reflection contract");
+    require(!common_reflection_parse_json(R"({"decision":"revise","issues":[{"description":"Missing correction"}]})",result,error),
+        "structured blocker accepted an incomplete correction contract");
     return 0;
 }

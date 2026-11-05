@@ -23,6 +23,16 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+# These smokes use assertions for contract checks and must retain them in
+# RelWithDebInfo and release builds as well as debug builds.
+foreach(TARGET llama-agent-openapi-provider-smoke llama-agent-openapi-http-smoke)
+    if (MSVC)
+        target_compile_options(${TARGET} PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(${TARGET} PRIVATE -UNDEBUG)
+    endif()
+endforeach()
+
 # This target intentionally is not registered as a default CTest: it calls
 # the public Eurostat service and is therefore opt-in for live integration.
 set(TARGET llama-agent-openapi-eurostat-live-smoke)
@@ -1012,6 +1022,12 @@ target_include_directories(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE llama-agent-core llama-agent-flydelta)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-synthesis-review-smoke)
+add_executable(${TARGET} smoke/runtime/agent-synthesis-review-smoke.cpp)
+target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-hypothesis-workflow-smoke)
 add_executable(${TARGET} smoke/runtime/agent-hypothesis-workflow-smoke.cpp)
 target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
@@ -1461,6 +1477,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
     llama-agent-research-csv-smoke
+    llama-agent-synthesis-review-smoke
 )
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_TEST_BUILD_TARGETS
@@ -1501,6 +1518,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-deliberation-policy-smoke
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
+    llama-agent-synthesis-review-smoke
 )
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
@@ -1712,6 +1730,9 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-research-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-research-runtime-smoke>)
     set_property(TEST llama-agent-research-runtime-ctest PROPERTY LABELS agent)
+    add_test(NAME llama-agent-synthesis-review-smoke-model-free
+        COMMAND $<TARGET_FILE:llama-agent-synthesis-review-smoke>)
+    set_property(TEST llama-agent-synthesis-review-smoke-model-free PROPERTY LABELS "agent;smoke;model-free")
 
     add_test(NAME llama-agent-research-csv-ctest
         COMMAND $<TARGET_FILE:llama-agent-research-csv-smoke>)

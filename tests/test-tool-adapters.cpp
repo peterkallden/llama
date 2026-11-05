@@ -73,6 +73,17 @@ public:
     bool read_bytes(const std::string & uri,const agent_resource_read_authority & authority,size_t max_bytes,std::string & out,std::string & error) const override {
         return read_text(uri,authority,max_bytes,out,error);
     }
+    bool read_text_range(const std::string & uri, const agent_resource_read_authority & authority,
+            size_t offset, size_t max_bytes, std::string & out, std::string & error) const override {
+        const auto it = contents.find(uri);
+        if (it != contents.end()) {
+            if (offset > it->second.size()) { error = "resource range offset is out of bounds"; return false; }
+            out = it->second.substr(offset, max_bytes);
+            return true;
+        }
+        if (offset != 0) { error = "resource range is unavailable"; return false; }
+        return read_text(uri, authority, max_bytes, out, error);
+    }
     bool stat(const std::string & uri, const agent_resource_read_authority &, agent_resource_descriptor & out, std::string & error) const override {
         const auto stored = resources.find(uri);
         if (stored != resources.end()) {
@@ -1352,6 +1363,28 @@ int main() {
     assert(result.ok && result.resource_refs.size() == 1);
     assert(result.resource_refs.front().uri == "resource://session/long-text");
     assert(result.resource_refs.front().size_bytes == 16000);
+    agent_resource_descriptor paged;
+    paged.uri = "resource://session/paged-text";
+    paged.mime_type = "text/plain";
+    const std::string paged_text = std::string(8191, 'x') + "\xc3\xa5" + std::string(12000, 'y');
+    paged.size_bytes = paged_text.size();
+    foundation_resources.resources[paged.uri] = paged;
+    foundation_resources.contents[paged.uri] = paged_text;
+    result = foundation_registry.execute({"resource.read", nlohmann::json{{"uri", paged.uri}, {"max_bytes", 10485760}}.dump()});
+    assert(result.ok);
+    const auto first_page = nlohmann::json::parse(result.output);
+    assert(first_page["range"]["bytes_read"] == 8191 && first_page["range"]["has_more"] == true);
+    assert(first_page["range"]["next_offset"] == 8191);
+    auto page = first_page;
+    std::string assembled = page["content"].get<std::string>();
+    while (page["range"]["has_more"].get<bool>()) {
+        result = foundation_registry.execute({"resource.read", nlohmann::json{{"uri", paged.uri},
+            {"offset", page["range"]["next_offset"]}, {"max_bytes", page["range"]["remaining_bytes"]}}.dump()});
+        assert(result.ok);
+        page = nlohmann::json::parse(result.output);
+        assembled += page["content"].get<std::string>();
+    }
+    assert(assembled == paged_text && page["range"]["resource_complete"] == true);
     const auto before_patch = foundation_registry.execute({"repository.read", R"({"path":"src/sample.txt"})"});
     assert(before_patch.ok);
     const auto expected_hash = nlohmann::json::parse(before_patch.output).at("sha256").get<std::string>();
@@ -2350,6 +2383,9 @@ int main() {
     result = investigation_registry.execute({"investigate.events", nlohmann::json{
         {"case_id", "graph-case"}, {"case_revision", 1}, {"relation_id", evidence_relation->id}}.dump()});
     assert(!result.ok && result.failure_code == "tool.investigation.stale_cursor");
+    result = investigation_registry.execute({"investigate.events", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 2}, {"entity_id", "alice"}}.dump()});
+    assert(!result.ok && result.failure_code == "tool.investigation.entity_unavailable");
     result = investigation_registry.execute({"investigate.case.items", nlohmann::json{
         {"case_id", "graph-case"}, {"case_revision", 2}, {"type", "entities"}, {"limit", 1}}.dump()});
     assert(result.ok && result.output.find("\"has_more\":true") != std::string::npos);

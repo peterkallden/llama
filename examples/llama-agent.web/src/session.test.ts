@@ -46,6 +46,31 @@ vi.mock("./api/agent-api", () => ({ AgentApiError: class extends Error { constru
 
 afterEach(() => { transport.upload = undefined; transport.history = undefined; transport.detach = undefined; transport.detachRequests.length = 0; transport.uploadedResources.length = 0; vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+it("retains an unapproved draft when terminal SSE precedes the failed turn response", async () => {
+  transport.calls.length=0; transport.replies.length=0;
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  const pending=session.submit("Write a bounded report");
+  const turnId=String(transport.calls[0].turn_id);
+  transport.sink({event_type:"turn.failed",turn_id:turnId,session_id:session.sessionId,error:"Review incomplete"});
+  expect(transport.signals[0]?.aborted).toBe(false);
+  const draft={text:"A provisional report",review_status:"unverified",stop_reason:"Review incomplete",plan_id:"p",
+    draft_fingerprint:"draft",evidence_fingerprint:"evidence",issues:[{id:"review-1-1",description:"Missing disclosure",correction:"Disclose unavailable text",evidence_ids:[]}]};
+  transport.replies[0]({ok:false,response:"",error:"Review incomplete",unverified_draft:draft});
+  expect(await pending).toBe(false);
+  const assistant=session.messages.find(message=>message.role==="assistant");
+  expect(assistant?.unverifiedDraft).toEqual(draft);
+  expect(assistant?.content).not.toBe(draft.text);
+  transport.history=async(id,project)=>({chat:{id,project_id:project,title:"Review"},history_available:true,messages:[{
+    id:assistant?.id,turn_id:turnId,role:"assistant",content:"",recorded_at:1,sequence:1,unverified_draft:draft}]});
+  await session.activateChat({id:session.sessionId,project_id:"",title:"Review",created_at:1,last_active_at:1});
+  expect(session.messages.find(message=>message.role==="assistant")?.unverifiedDraft).toEqual(draft);
+  transport.signals.length=0;
+});
+
 it("retains report metadata from the completed HTTP turn when the event stream was unavailable", async () => {
   transport.calls.length = 0;
   transport.replies.length = 0;

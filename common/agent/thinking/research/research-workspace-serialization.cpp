@@ -84,7 +84,7 @@ json common_agent_research_workspace_to_json(const common_agent_research_workspa
             {"excluded_topics", w.objective.excluded_topics}}},
         {"budget", {{"max_iterations", w.budget.max_iterations}, {"max_tasks", w.budget.max_tasks},
             {"max_tool_calls", w.budget.max_tool_calls}, {"max_sources", w.budget.max_sources},
-            {"max_sources_per_gap", w.budget.max_sources_per_gap}, {"minimum_sources", w.budget.minimum_sources},
+            {"max_sources_per_gap", w.budget.max_sources_per_gap}, {"max_candidates", w.budget.max_candidates}, {"minimum_sources", w.budget.minimum_sources},
             {"max_tokens", w.budget.max_tokens}, {"max_elapsed_ms", w.budget.max_elapsed_ms},
             {"minimum_coverage", w.budget.minimum_coverage}, {"minimum_confidence", w.budget.minimum_confidence}}},
         {"coverage", {{"total_gaps", w.coverage.total_gaps}, {"answered_gaps", w.coverage.answered_gaps},
@@ -92,8 +92,9 @@ json common_agent_research_workspace_to_json(const common_agent_research_workspa
             {"objective_coverage", w.coverage.objective_coverage}, {"evidence_quality", w.coverage.evidence_quality},
             {"source_diversity", w.coverage.source_diversity}}},
         {"iterations_completed", w.iterations_completed}, {"tool_calls", w.tool_calls},
-        {"no_progress_iterations", w.no_progress_iterations}, {"gaps", json::array()}, {"tasks", json::array()},
-        {"sources", json::array()}, {"evidence", json::array()}, {"comparisons", json::array()}};
+        {"no_progress_iterations", w.no_progress_iterations}, {"generation_tokens_reserved", w.generation_tokens_reserved}, {"gaps", json::array()}, {"tasks", json::array()},
+        {"sources", json::array()}, {"evidence", json::array()}, {"comparisons", json::array()},
+        {"source_requirements", json::array()}, {"resource_progress", json::array()}};
     for (const auto & g : w.gaps) out["gaps"].push_back({{"id", g.gap_id}, {"question", g.question},
         {"reason", g.reason}, {"completion_criterion", g.completion_criterion}, {"priority", g.priority},
         {"status", static_cast<int>(g.status)}, {"assessment", static_cast<int>(g.assessment)},
@@ -119,6 +120,16 @@ json common_agent_research_workspace_to_json(const common_agent_research_workspa
     for (const auto & c : w.comparisons) out["comparisons"].push_back({{"id", c.comparison_id},
         {"gap_id", c.gap_id}, {"source_ids", c.source_ids}, {"evidence_ids", c.evidence_ids},
         {"relation", static_cast<int>(c.relation)}, {"summary", c.summary}});
+    for (const auto & requirement : w.source_requirements) out["source_requirements"].push_back({
+        {"gap_id", requirement.gap_id}, {"source_id", requirement.source_id}, {"searched", requirement.searched}});
+    for (const auto & p : w.resource_progress) out["resource_progress"].push_back({
+        {"source_id", p.source_id}, {"gap_id", p.gap_id}, {"chunk_bytes", p.chunk_bytes}, {"overlap_bytes", p.overlap_bytes}, {"overlap_text", p.overlap_text},
+        {"position", {{"schema_version", p.position.schema_version}, {"resource_uri", p.position.resource_uri},
+            {"representation", p.position.representation}, {"content_fingerprint", p.position.content_fingerprint},
+            {"task_fingerprint", p.position.task_fingerprint}, {"unit", static_cast<int>(p.position.unit)},
+            {"next_offset", p.position.next_offset}, {"cursor_ref", p.position.cursor_ref}, {"container", p.position.container},
+            {"query_fingerprint", p.position.query_fingerprint}, {"snapshot_ref", p.position.snapshot_ref},
+            {"more", static_cast<int>(p.position.more)}, {"status", static_cast<int>(p.position.status)}}}});
     return out;
 }
 
@@ -155,6 +166,7 @@ bool common_agent_research_workspace_from_json(const nlohmann::json & value,
         out.budget.max_iterations = b.value("max_iterations", 0); out.budget.max_tasks = b.value("max_tasks", 0);
         out.budget.max_tool_calls = b.value("max_tool_calls", 0); out.budget.max_sources = b.value("max_sources", 0);
         out.budget.max_sources_per_gap = b.value("max_sources_per_gap", 0); out.budget.minimum_sources = b.value("minimum_sources", 1);
+        out.budget.max_candidates = b.value("max_candidates", 16);
         out.budget.max_tokens = b.value("max_tokens", int64_t(0)); out.budget.max_elapsed_ms = b.value("max_elapsed_ms", int64_t(0));
         out.budget.minimum_coverage = b.value("minimum_coverage", 1.0); out.budget.minimum_confidence = b.value("minimum_confidence", 0.0);
         const auto & cov = value.at("coverage");
@@ -164,6 +176,7 @@ bool common_agent_research_workspace_from_json(const nlohmann::json & value,
         out.coverage.source_diversity = cov.value("source_diversity", 0.0);
         out.iterations_completed = value.value("iterations_completed", 0); out.tool_calls = value.value("tool_calls", 0);
         out.no_progress_iterations = value.value("no_progress_iterations", 0);
+        out.generation_tokens_reserved = value.value("generation_tokens_reserved", int64_t(0));
         for (const auto & x : value.at("gaps")) {
             common_agent_research_gap g; g.gap_id=x.at("id").get<std::string>(); g.question=x.at("question").get<std::string>();
             g.reason=x.value("reason",std::string{}); g.completion_criterion=x.at("completion_criterion").get<std::string>();
@@ -213,6 +226,28 @@ bool common_agent_research_workspace_from_json(const nlohmann::json & value,
             c.source_ids=x.value("source_ids",std::vector<std::string>{}); c.evidence_ids=x.value("evidence_ids",std::vector<std::string>{});
             const int relation=x.value("relation",0); if (!bounded_enum(relation,static_cast<int>(common_agent_research_comparison_relation::qualify))) throw std::domain_error("research comparison enum is invalid");
             c.relation=static_cast<common_agent_research_comparison_relation>(relation); c.summary=x.value("summary",std::string{}); out.comparisons.push_back(std::move(c));
+        }
+        if (value.contains("source_requirements")) for (const auto & x : value.at("source_requirements")) {
+            common_agent_research_source_requirement requirement;
+            requirement.gap_id = x.at("gap_id").get<std::string>();
+            requirement.source_id = x.at("source_id").get<std::string>();
+            requirement.searched = x.value("searched", false);
+            out.source_requirements.push_back(std::move(requirement));
+        }
+        if (value.contains("resource_progress")) for (const auto & x : value.at("resource_progress")) {
+            common_agent_research_resource_progress p;
+            p.source_id=x.at("source_id").get<std::string>(); p.gap_id=x.at("gap_id").get<std::string>();
+            p.chunk_bytes=x.at("chunk_bytes").get<size_t>(); p.overlap_bytes=x.at("overlap_bytes").get<size_t>();
+            p.overlap_text=x.value("overlap_text",std::string{});
+            const auto & v=x.at("position");
+            p.position.schema_version=v.at("schema_version").get<unsigned>(); p.position.resource_uri=v.at("resource_uri").get<std::string>();
+            p.position.representation=v.at("representation").get<std::string>(); p.position.content_fingerprint=v.at("content_fingerprint").get<std::string>();
+            p.position.task_fingerprint=v.at("task_fingerprint").get<std::string>();
+            p.position.unit=static_cast<common_resource_position_unit>(v.at("unit").get<int>()); p.position.next_offset=v.value("next_offset",uint64_t(0));
+            p.position.cursor_ref=v.value("cursor_ref",std::string{}); p.position.container=v.value("container",std::string{});
+            p.position.query_fingerprint=v.value("query_fingerprint",std::string{}); p.position.snapshot_ref=v.value("snapshot_ref",std::string{});
+            p.position.more=static_cast<common_resource_more>(v.at("more").get<int>()); p.position.status=static_cast<common_resource_progress_status>(v.at("status").get<int>());
+            out.resource_progress.push_back(std::move(p));
         }
         if (!common_agent_research_workspace_validate(out, error)) { out={}; return false; }
         error.clear(); return true;

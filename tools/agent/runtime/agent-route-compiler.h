@@ -18,6 +18,10 @@ enum class common_agent_route_kind {
     blueprint_workflow,
 };
 
+// Use the same host-derived capability rules for initial selection and resume.
+bool common_agent_route_has_capability(const common_agent_runtime_tooling & tooling,
+        const std::string & capability, const common_plan_workflow_definition * workflow = nullptr);
+
 struct common_agent_route_candidate {
     std::string id;
     common_agent_route_kind kind = common_agent_route_kind::normal_plan;

@@ -32,6 +32,11 @@ int main() {
     agent_resource_chunk_plan plan;
     assert(plan_agent_resource_text_chunks(store, descriptor.uri, authority, policy, plan, error));
     assert(plan.ranges.size() > 1);
+    agent_resource_chunk_plan cancelled;
+    int checks = 0;
+    assert(!plan_agent_resource_text_chunks(store, descriptor.uri, authority, policy, cancelled, error,
+        [&]() { return ++checks > 1; }));
+    assert(cancelled.ranges.empty() && error.find("stopped") != std::string::npos);
 
     for (size_t i = 0; i < plan.ranges.size(); ++i) {
         std::string actual;

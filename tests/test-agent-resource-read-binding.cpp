@@ -84,6 +84,15 @@ int main() {
     assert(!common_agent_plan_satisfies_resource_read_binding(plan, request));
     plan.observations.back().resource_read_provenance->task_fingerprint = "task-orientation-1";
     assert(common_agent_plan_satisfies_resource_read_binding(plan, request));
+
+    // A large requested range only returns its first page; the descriptor
+    // alone must not be treated as proof of full resource coverage.
+    request.resource_read_binding->targets.front().size_bytes = 40000;
+    plan.observations.back().resource_refs.front().size_bytes = 40000;
+    plan.steps.back().tool_call->arguments_json = R"({"uri":"resource://text","offset":0,"max_bytes":10485760})";
+    assert(!common_agent_plan_satisfies_resource_read_binding(plan, request));
+    request.resource_read_binding->targets.front().size_bytes = 100;
+    plan.observations.back().resource_refs.front().size_bytes = 100;
     plan.steps.back().tool_call->arguments_json = R"({"uri":"resource://source","offset":0,"max_bytes":100})";
     assert(!common_agent_plan_satisfies_resource_read_binding(plan, request));
     plan.steps.back().tool_call->arguments_json = R"({"uri":"resource://text","offset":0,"max_bytes":100})";
