@@ -28,6 +28,42 @@ still be requested as needed.
 
 This page describes runtime workflows (not GitHub Actions workflows).
 
+## Development methods and knowledge gaps
+
+The starter package `agent-workflows-starter@v48` adds versioned
+`repository-change-v4` and `regression-repair-v4` blueprints, retaining the
+older definitions for existing installations. The feature blueprint makes a
+material knowledge-gap assessment explicit between orientation and design.
+The regression blueprint separates failure evidence and competing hypotheses
+from an optional, authorized repair. Both share procedures for local-first
+source investigation, diagnosis, execution authority and verification
+evidence. These new blueprints deliberately have no fixed workflow binding:
+the existing version-1 workflows have restricted tool envelopes that do not
+provide the optional research path. The host's ordinary planning route chooses
+among the currently authorized tools instead.
+
+`development-compile-diagnosis-v1` and `development-runtime-diagnosis-v1` are
+standalone blueprints for build failures and runtime symptoms respectively.
+They have no executable workflow binding: the normal blueprint planning path
+chooses available, authorized tools. They can report a diagnosis without
+modifying code, and a denied, unavailable or unrequested build is not a
+successful verification. These templates do not independently authorize
+workspace changes, commands or web access.
+
+The model assesses whether an external question matters and chooses from the
+host's available sources. The shared procedure recommends checking applicable
+local evidence first and primary external sources when needed; a library name
+does not trigger a provider or a web search. Findings carry source and version
+context through existing plan observations and resource references. Graph
+lookup and policy-gated proposals remain optional.
+
+These definitions do not implement a callable framework-research subworkflow
+or an automatic return from research to an enclosing development phase.
+Continuation links transition between workflow segments; the present package
+does not claim a structured `DevelopmentEvidence` object or new cross-workflow
+return contract. Model-backed route choice and execution still need separate
+verification in a host with the corresponding tools and permissions.
+
 ## Hypothesis inquiry
 
 The starter package includes `hypothesis-inquiry-v1` and

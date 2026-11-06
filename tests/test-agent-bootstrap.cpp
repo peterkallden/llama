@@ -264,7 +264,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v47");
+        checked_in_starter.version == "v48");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -321,6 +321,35 @@ int main() {
     assert(has_procedure("eurostat-sdmx-metadata-resolution-v1"));
     assert(has_procedure("eurostat-sdmx-metadata-resolution-v2"));
     assert(has_procedure("json-stat-dataset-interpretation-v1"));
+    assert(has_procedure("development-knowledge-gap-v1"));
+    assert(has_procedure("development-diagnosis-v1"));
+    assert(has_procedure("development-verification-authority-v1"));
+
+    for (const auto * id : {"repository-change-v4", "regression-repair-v4",
+            "development-compile-diagnosis-v1", "development-runtime-diagnosis-v1"}) {
+        const auto blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+            checked_in_starter.blueprints.end(), [&](const auto & item) { return item.id == id; });
+        assert(blueprint != checked_in_starter.blueprints.end());
+        assert(blueprint->source_revision == "agent-workflows-starter@v48");
+        // A fixed legacy workflow would restrict the tool envelope and prevent
+        // the normal planner from choosing optional knowledge sources.
+        assert(blueprint->workflow_bindings.empty());
+        assert(std::find(blueprint->procedure_refs.begin(), blueprint->procedure_refs.end(),
+            "development-knowledge-gap-v1") != blueprint->procedure_refs.end());
+        assert(std::find(blueprint->procedure_refs.begin(), blueprint->procedure_refs.end(),
+            "development-verification-authority-v1") != blueprint->procedure_refs.end());
+        assert(std::any_of(blueprint->steps.begin(), blueprint->steps.end(),
+            [](const auto & step) { return step.id == "knowledge"; }));
+        assert(std::none_of(blueprint->steps.begin(), blueprint->steps.end(),
+            [](const auto & step) { return step.tool_call || step.selected_tool; }));
+    }
+    for (const auto * id : {"development-compile-diagnosis-v1", "development-runtime-diagnosis-v1"}) {
+        const auto blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+            checked_in_starter.blueprints.end(), [&](const auto & item) { return item.id == id; });
+        assert(blueprint != checked_in_starter.blueprints.end() && blueprint->workflow_bindings.empty());
+        assert(std::find(blueprint->procedure_refs.begin(), blueprint->procedure_refs.end(),
+            "development-diagnosis-v1") != blueprint->procedure_refs.end());
+    }
 
     // Exercise the actual installer against an existing immutable blueprint.
     // These checks must remain active independently of assert configuration.
@@ -527,8 +556,8 @@ int main() {
     (*search_json)["transitions"][0]["max_pages"] = uint64_t(4294967301ULL);
     assert(!common_agent_package_parse_json(
         over_budget_package_json.dump(), over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 29 &&
-        checked_in_starter.blueprints.size() == 22);
+    assert(checked_in_starter.procedures.size() == 32 &&
+        checked_in_starter.blueprints.size() == 26);
     assert(checked_in_starter.workflows.size() == 23);
     const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {

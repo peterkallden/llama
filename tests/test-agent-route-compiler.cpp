@@ -997,6 +997,34 @@ int main() {
         }
     }
     assert(report_profile_installed);
+    // The new development methods must remain available as ordinary blueprint
+    // routes with a read-only repository profile. Optional web or mutation
+    // tools neither gate selection nor become authorized by the template.
+    std::vector<common_blueprint_candidate> development_candidates;
+    for (const auto & id : installed.installed_blueprint_ids) {
+        if (id.find(":blueprint:repository-change-v4") == std::string::npos &&
+                id.find(":blueprint:regression-repair-v4") == std::string::npos &&
+                id.find(":blueprint:development-compile-diagnosis-v1") == std::string::npos &&
+                id.find(":blueprint:development-runtime-diagnosis-v1") == std::string::npos) continue;
+        common_blueprint_candidate candidate;
+        candidate.logical_id = id;
+        candidate.persisted_id = id;
+        development_candidates.push_back(std::move(candidate));
+    }
+    assert(development_candidates.size() == 4);
+    common_agent_runtime_tooling development_tools;
+    development_tools.profile_tools_active = true;
+    development_tools.tools.push_back({"repository.read", "Read repository", R"({"type":"object"})"});
+    assert(compile_agent_route_catalog(request, package_plans, scope, development_candidates,
+        development_tools, "", catalog, error));
+    assert(std::count_if(catalog.candidates.begin(), catalog.candidates.end(), [](const auto & candidate) {
+        return candidate.kind == common_agent_route_kind::blueprint &&
+            candidate.blueprint_definition && !candidate.workflow_definition;
+    }) == 4);
+    development_tools.tools.clear();
+    assert(compile_agent_route_catalog(request, package_plans, scope, development_candidates,
+        development_tools, "", catalog, error));
+    assert(catalog.candidates.size() == 1 && catalog.candidates.front().id == "normal-plan");
     std::vector<common_blueprint_candidate> eurostat_candidates;
     for (const auto & id : installed.installed_blueprint_ids) {
         if (id.find("eurostat-") == std::string::npos) continue;
