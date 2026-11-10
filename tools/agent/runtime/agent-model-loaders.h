@@ -6,8 +6,10 @@
 #include "llama.h"
 
 #include <memory>
+#include <mutex>
 
 class common_agent_server_context_host;
+struct common_flydelta_teaching_material_identity;
 
 // Backend-specific resources are hidden behind the residency contract, but
 // remain inspectable by the runtime session adapter that eventually creates a
@@ -24,6 +26,8 @@ struct common_agent_runtime_loaded_model final
     // still need these dimensions.
     size_t model_n_embd = 0;
     size_t model_n_layers = 0;
+    mutable std::mutex flydelta_execution_identity_mutex;
+    std::shared_ptr<const common_flydelta_teaching_material_identity> flydelta_execution_identity;
     common_chat_templates_ptr chat_templates;
     std::shared_ptr<common_agent_server_context_host> server_context_host;
 };

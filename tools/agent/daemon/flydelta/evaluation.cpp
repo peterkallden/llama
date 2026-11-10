@@ -17,6 +17,23 @@
 
 namespace agent_daemon_flydelta_internal {
 
+static json representation_metadata(const common_flydelta_direction_candidate & candidate,
+        const daemon_flydelta_resource_provider & provider, const std::string & concept_ref = {}) {
+    if (candidate.synthesis_semantics != "positive_only") return json::object();
+    const auto & d = candidate.representation_diagnostics;
+    return {{"schema_version", 1}, {"synthesis_semantics", "positive_only"},
+        {"experimental_only", true}, {"learning_eligible", false},
+        {"model_profile_fingerprint", provider.model_profile_fingerprint},
+        {"capture_layout_revision", provider.capture_layout_revision}, {"concept_ref", concept_ref},
+        {"scope", {{"namespace_id", provider.authority.namespace_id}, {"project_id", provider.authority.project_id},
+            {"session_id", provider.authority.session_id}, {"turn_id", provider.authority.turn_id}}},
+        {"sample_count", d.sample_count}, {"retained_count", d.retained_count},
+        {"median_alignment", d.median_alignment}, {"alignment_mad", d.alignment_mad},
+        {"retained_median_alignment", d.retained_median_alignment},
+        {"resultant_norm", d.resultant_norm}, {"direction_stability", d.direction_stability}};
+}
+
+
 bool daemon_flydelta_run_counterfactual(
         std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
@@ -656,7 +673,7 @@ bool daemon_flydelta_register_evaluator(
             : candidate.extraction_id;
         return daemon_flydelta_register_composed_directions(
             provider, source_ref, {std::move(direction)},
-            "flydelta:concept-graft", direction_ref, persist_error);
+            "flydelta:concept-graft", direction_ref, persist_error, json::object(), representation_metadata(candidate, *provider));
     };
     callbacks.persist_experimental_direction_for_job = [provider](
             const common_flydelta_experiment_job & job,
@@ -679,7 +696,7 @@ bool daemon_flydelta_register_evaluator(
             : candidate.extraction_id;
         return daemon_flydelta_register_composed_directions(
             scoped_provider, source_ref, {std::move(direction)},
-            "flydelta:concept-graft", direction_ref, persist_error);
+            "flydelta:concept-graft", direction_ref, persist_error, json::object(), representation_metadata(candidate, *scoped_provider, job.teaching_material_group_ref));
     };
     callbacks.persist_experimental_paired_basis_for_job = [provider](
             const common_flydelta_experiment_job & job,
@@ -766,8 +783,10 @@ bool daemon_flydelta_register_evaluator(
             binding["anchor_layer"] = candidate.layer_index;
             binding.erase("layer_directions");
             std::string reference;
+            common_flydelta_direction_candidate executable;
+            if (!common_flydelta_concept_candidate_to_direction(candidate, executable, persist_error)) return false;
             if (!daemon_flydelta_register_composed_directions(scoped, candidate.extraction_id, {direction},
-                    "flydelta:layer-bound-concept", reference, persist_error, binding)) return false;
+                    "flydelta:layer-bound-concept", reference, persist_error, binding, representation_metadata(executable, *scoped, job.teaching_material_group_ref))) return false;
             provenance["layer_directions"].push_back({{"layer_index", candidate.layer_index},
                 {"direction_ref", reference}, {"extraction_id", candidate.extraction_id},
                 {"kind", common_flydelta_concept_candidate_kind_name(candidate.kind)},

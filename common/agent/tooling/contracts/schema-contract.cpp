@@ -1,4 +1,5 @@
 #include "agent/tooling/contracts/schema-contract.h"
+#include "utf8-bounds.h"
 
 #include <nlohmann/json.hpp>
 
@@ -23,22 +24,25 @@ bool validate_value(
             return false;
         }
         size_t matches = 0;
-        std::string first_error;
+        std::string alternative_errors;
+        size_t index=0;
         for (const auto & alternative : schema.at(key)) {
             std::string candidate_error;
             if (validate_value(value, alternative, field, candidate_error, depth + 1)) {
                 ++matches;
-            } else if (first_error.empty()) {
-                first_error = std::move(candidate_error);
+            } else if (index<4) {
+                if (!alternative_errors.empty()) alternative_errors += "; ";
+                alternative_errors += "alternative "+std::to_string(index+1)+": "+candidate_error.substr(0,256);
             }
+            ++index;
         }
         const bool valid = exactly_one ? matches == 1 : matches > 0;
         if (!valid) {
             error = std::string("contract field '") + field + "' does not match " + key;
             if (exactly_one && matches > 1) {
                 error += ": expected exactly one matching alternative, got " + std::to_string(matches);
-            } else if (!first_error.empty()) {
-                error += ": " + first_error;
+            } else if (!alternative_errors.empty()) {
+                error += ": " + alternative_errors;
             }
         }
         return valid;
@@ -91,9 +95,17 @@ bool validate_value(
         return false;
     }
     if (value.is_string()) {
-        const auto size = value.get_ref<const std::string &>().size();
-        if (schema.contains("minLength") && size < schema["minLength"].get<size_t>()) { error = "contract field '" + field + "' is too short"; return false; }
-        if (schema.contains("maxLength") && size > schema["maxLength"].get<size_t>()) { error = "contract field '" + field + "' is too long"; return false; }
+        const auto size = common_utf8_codepoint_count(value.get_ref<const std::string &>());
+        if (schema.contains("minLength") && size < schema["minLength"].get<size_t>()) {
+            error = "contract field '" + field + "' is too short (" + std::to_string(size) +
+                " characters; minimum " + std::to_string(schema["minLength"].get<size_t>()) + ")";
+            return false;
+        }
+        if (schema.contains("maxLength") && size > schema["maxLength"].get<size_t>()) {
+            error = "contract field '" + field + "' is too long (" + std::to_string(size) +
+                " characters; maximum " + std::to_string(schema["maxLength"].get<size_t>()) + ")";
+            return false;
+        }
     }
     if (value.is_number()) {
         const auto number = value.get<double>();

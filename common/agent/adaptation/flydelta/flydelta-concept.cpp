@@ -295,6 +295,8 @@ const char * common_flydelta_concept_synthesis_semantics_name(
             return "positive_prototype";
         case common_flydelta_concept_synthesis_semantics::negative_repulsion:
             return "negative_repulsion";
+        case common_flydelta_concept_synthesis_semantics::positive_only:
+            return "positive_only";
     }
     return "unknown";
 }
@@ -431,6 +433,7 @@ std::vector<size_t> common_flydelta_select_concept_synthesis_frontier(
     const common_flydelta_concept_synthesis_semantics primary_semantics[] = {
         common_flydelta_concept_synthesis_semantics::control_residualized,
         common_flydelta_concept_synthesis_semantics::positive_prototype,
+        common_flydelta_concept_synthesis_semantics::positive_only,
     };
     for (const auto semantic : primary_semantics) {
         if (selected.size() >= max_candidates) break;
@@ -469,6 +472,8 @@ bool common_flydelta_concept_candidate_validate(
         common_flydelta_concept_synthesis_semantics::control_residualized;
     const bool prototype = candidate.synthesis_semantics ==
         common_flydelta_concept_synthesis_semantics::positive_prototype;
+    const bool positive_only = candidate.synthesis_semantics ==
+        common_flydelta_concept_synthesis_semantics::positive_only;
     const bool negative = candidate.synthesis_semantics ==
         common_flydelta_concept_synthesis_semantics::negative_repulsion;
     if (candidate.schema_version != 1 || !bounded(candidate.concept_key) ||
@@ -476,7 +481,8 @@ bool common_flydelta_concept_candidate_validate(
             !bounded(candidate.behavior_key) ||
             (candidate.origin != "host_taught_extracted" &&
              candidate.origin != "host_taught_positive_prototype" &&
-             candidate.origin != "host_taught_negative_repulsion") ||
+             candidate.origin != "host_taught_negative_repulsion" &&
+             candidate.origin != "host_taught_positive_only") ||
             !bounded(candidate.model_profile_fingerprint) ||
             !bounded(candidate.capture_layout_revision) || candidate.layer_index <= 0 ||
             candidate.values.size() != expected_dimension || !finite_vector(candidate.values) ||
@@ -484,7 +490,26 @@ bool common_flydelta_concept_candidate_validate(
             candidate.source_trajectories < 2 ||
             candidate.retained_trajectories < 2 ||
             !candidate.experimental_only || candidate.learning_eligible ||
-            (!residualized && !prototype && !negative) ||
+            (!residualized && !prototype && !negative && !positive_only) ||
+            (positive_only && (candidate.origin != "host_taught_positive_only" ||
+                candidate.kind != common_flydelta_concept_candidate_kind::trimmed_mean ||
+                candidate.control_residualized || candidate.control_trajectories != 0 ||
+                candidate.retained_control_trajectories != 0 || candidate.negative_trajectories != 0 ||
+                candidate.retained_negative_trajectories != 0 || candidate.source_trajectories < 3 ||
+                candidate.source_trajectories > 64 || candidate.retained_trajectories > candidate.source_trajectories ||
+                candidate.representation_diagnostics.schema_version != 1 ||
+                candidate.representation_diagnostics.sample_count != candidate.source_trajectories ||
+                candidate.representation_diagnostics.retained_count != candidate.retained_trajectories ||
+                !std::isfinite(candidate.representation_diagnostics.resultant_norm) ||
+                candidate.representation_diagnostics.resultant_norm <= 0.0f ||
+                candidate.representation_diagnostics.resultant_norm > 1.0001f ||
+                !std::isfinite(candidate.representation_diagnostics.median_alignment) ||
+                !std::isfinite(candidate.representation_diagnostics.alignment_mad) ||
+                candidate.representation_diagnostics.alignment_mad < 0.0f ||
+                !std::isfinite(candidate.representation_diagnostics.retained_median_alignment) ||
+                !std::isfinite(candidate.representation_diagnostics.direction_stability) ||
+                candidate.representation_diagnostics.direction_stability <= 0.0f ||
+                candidate.representation_diagnostics.direction_stability > 1.0001f)) ||
             (residualized && candidate.origin != "host_taught_extracted") ||
             (prototype && candidate.origin != "host_taught_positive_prototype") ||
             (negative && candidate.origin != "host_taught_negative_repulsion") ||
@@ -524,8 +549,9 @@ bool common_flydelta_concept_candidate_to_direction(
     direction = {};
     switch (candidate.kind) {
         case common_flydelta_concept_candidate_kind::raw_mean:
-            direction.kind = candidate.synthesis_semantics ==
-                    common_flydelta_concept_synthesis_semantics::positive_prototype
+            direction.kind = (candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::positive_prototype ||
+                 candidate.synthesis_semantics == common_flydelta_concept_synthesis_semantics::positive_only)
                 ? common_flydelta_direction_kind::positive_prototype
                 : candidate.synthesis_semantics ==
                     common_flydelta_concept_synthesis_semantics::negative_repulsion
@@ -533,8 +559,9 @@ bool common_flydelta_concept_candidate_to_direction(
                     : common_flydelta_direction_kind::raw_repair;
             break;
         case common_flydelta_concept_candidate_kind::trimmed_mean:
-            direction.kind = candidate.synthesis_semantics ==
-                    common_flydelta_concept_synthesis_semantics::positive_prototype
+            direction.kind = (candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::positive_prototype ||
+                 candidate.synthesis_semantics == common_flydelta_concept_synthesis_semantics::positive_only)
                 ? common_flydelta_direction_kind::positive_prototype_trimmed_mean
                 : candidate.synthesis_semantics ==
                     common_flydelta_concept_synthesis_semantics::negative_repulsion
@@ -542,8 +569,9 @@ bool common_flydelta_concept_candidate_to_direction(
                     : common_flydelta_direction_kind::normalized_trimmed_mean;
             break;
         case common_flydelta_concept_candidate_kind::diagonal_whitened_mean:
-            direction.kind = candidate.synthesis_semantics ==
-                    common_flydelta_concept_synthesis_semantics::positive_prototype
+            direction.kind = (candidate.synthesis_semantics ==
+                    common_flydelta_concept_synthesis_semantics::positive_prototype ||
+                 candidate.synthesis_semantics == common_flydelta_concept_synthesis_semantics::positive_only)
                 ? common_flydelta_direction_kind::positive_prototype_diagonal_whitened_mean
                 : candidate.synthesis_semantics ==
                     common_flydelta_concept_synthesis_semantics::negative_repulsion
@@ -559,6 +587,8 @@ bool common_flydelta_concept_candidate_to_direction(
     direction.retained_samples = candidate.retained_trajectories;
     direction.median_alignment = candidate.median_alignment;
     direction.experimental_only = true;
+    direction.synthesis_semantics = common_flydelta_concept_synthesis_semantics_name(candidate.synthesis_semantics);
+    direction.representation_diagnostics = candidate.representation_diagnostics;
     return common_flydelta_direction_candidate_validate(
         direction, candidate.values.size(), error);
 }
@@ -875,6 +905,113 @@ bool common_flydelta_build_positive_prototype_candidates(
         }
         candidates.push_back(std::move(candidate));
     }
+    return true;
+}
+
+bool common_flydelta_build_positive_only_candidate(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_positive_only_build_config & config,
+        const std::vector<common_flydelta_concept_prototype_sample> & positive,
+        common_flydelta_concept_candidate & candidate,
+        std::string & error,
+        common_flydelta_positive_only_build_status * status) {
+    error.clear();
+    if (status) *status = common_flydelta_positive_only_build_status::invalid;
+    candidate = {};
+    const auto unit_threshold = [](float v) { return std::isfinite(v) && v > 0.0f && v <= 1.0f; };
+    if (!common_flydelta_concept_spec_validate(spec, error)) return false;
+    if (spec.require_control || config.dimension == 0 || config.min_samples < 3 || config.max_samples > 64 ||
+            config.max_samples < config.min_samples || positive.size() < config.min_samples ||
+            positive.size() > config.max_samples || !std::isfinite(config.trim_fraction) ||
+            config.trim_fraction < 0.0f || config.trim_fraction >= 0.5f ||
+            !unit_threshold(config.minimum_resultant_norm) ||
+            !unit_threshold(config.minimum_median_alignment) ||
+            !unit_threshold(config.minimum_direction_stability)) {
+        error = "FlyDelta positive-only configuration or observation count is invalid";
+        return false;
+    }
+    const size_t dimension = config.dimension;
+    std::vector<std::string> ids, captures, observations;
+    for (const auto & sample : positive) {
+        if (!common_flydelta_concept_prototype_sample_validate(spec, sample, dimension, error)) return false;
+        if (!same_prototype_identity(sample, positive.front()) || !std::isfinite(norm(sample.values)) ||
+                !bounded(sample.observation_fingerprint) ||
+                std::find(ids.begin(), ids.end(), sample.id) != ids.end() ||
+                std::find(captures.begin(), captures.end(), sample.capture_ref) != captures.end() ||
+                std::find(observations.begin(), observations.end(), sample.observation_fingerprint) != observations.end()) {
+            error = "FlyDelta positive-only observations repeat a source or have incompatible identities";
+            return false;
+        }
+        ids.push_back(sample.id);
+        captures.push_back(sample.capture_ref);
+        observations.push_back(sample.observation_fingerprint);
+    }
+    // Canonical source ordering makes the robust estimator and LOO repeatable
+    // when host resource enumeration order changes.
+    auto samples = positive;
+    std::sort(samples.begin(), samples.end(), [](const auto & a, const auto & b) {
+        return a.observation_fingerprint < b.observation_fingerprint;
+    });
+    const auto median_value = [](std::vector<float> values) {
+        std::sort(values.begin(), values.end());
+        const size_t n = values.size();
+        return n % 2 ? values[n / 2] : 0.5f * (values[n / 2 - 1] + values[n / 2]);
+    };
+    const auto retained = prototype_retained_indices(samples, config.trim_fraction);
+    const auto mean = prototype_mean(samples, retained);
+    const auto direction = normalized(mean);
+    std::vector<size_t> all(samples.size());
+    std::iota(all.begin(), all.end(), 0);
+    common_flydelta_concept_synthesis_diagnostics diagnostics;
+    diagnostics.sample_count = samples.size();
+    diagnostics.retained_count = retained.size();
+    diagnostics.resultant_norm = norm(prototype_mean(samples, all));
+    if (direction.empty() || !std::isfinite(diagnostics.resultant_norm) ||
+            diagnostics.resultant_norm < config.minimum_resultant_norm) {
+        if (status) *status = common_flydelta_positive_only_build_status::unstable;
+        error = "FlyDelta positive-only observations have a degenerate resultant";
+        return false;
+    }
+    std::vector<float> alignments, retained_alignments;
+    for (const auto & sample : samples) alignments.push_back(cosine(sample.values, direction));
+    for (const auto index : retained) retained_alignments.push_back(alignments[index]);
+    diagnostics.median_alignment = median_value(alignments);
+    diagnostics.retained_median_alignment = median_value(retained_alignments);
+    for (auto & value : alignments) value = std::fabs(value - diagnostics.median_alignment);
+    diagnostics.alignment_mad = median_value(alignments);
+    diagnostics.direction_stability = 1.0f;
+    for (size_t excluded = 0; excluded < samples.size(); ++excluded) {
+        auto subset = samples;
+        subset.erase(subset.begin() + excluded);
+        const auto indices = prototype_retained_indices(subset, config.trim_fraction);
+        const auto loo = normalized(prototype_mean(subset, indices));
+        if (loo.empty()) { diagnostics.direction_stability = -1.0f; break; }
+        diagnostics.direction_stability = std::min(diagnostics.direction_stability, cosine(loo, direction));
+    }
+    if (diagnostics.median_alignment < config.minimum_median_alignment ||
+            diagnostics.direction_stability < config.minimum_direction_stability) {
+        if (status) *status = common_flydelta_positive_only_build_status::unstable;
+        error = "FlyDelta positive-only representation is not stable enough for an experiment";
+        return false;
+    }
+    candidate.kind = common_flydelta_concept_candidate_kind::trimmed_mean;
+    candidate.synthesis_semantics = common_flydelta_concept_synthesis_semantics::positive_only;
+    candidate.concept_key = spec.concept_key;
+    candidate.extraction_id = spec.extraction_id;
+    candidate.behavior_key = spec.behavior_key;
+    candidate.origin = "host_taught_positive_only";
+    candidate.model_profile_fingerprint = spec.model_profile_fingerprint;
+    candidate.capture_layout_revision = spec.capture_layout_revision;
+    candidate.layer_index = samples.front().layer_index;
+    candidate.values = direction;
+    candidate.source_trajectories = samples.size();
+    candidate.retained_trajectories = retained.size();
+    candidate.median_alignment = diagnostics.median_alignment;
+    candidate.representation_diagnostics = diagnostics;
+    candidate.experimental_only = true;
+    candidate.learning_eligible = false;
+    if (!common_flydelta_concept_candidate_validate(candidate, dimension, error)) { candidate = {}; return false; }
+    if (status) *status = common_flydelta_positive_only_build_status::ready;
     return true;
 }
 

@@ -6,6 +6,7 @@
 #include <string>
 
 #include <nlohmann/json.hpp>
+#include "utf8-bounds.h"
 
 using common_agent_projection_json = nlohmann::ordered_json;
 
@@ -14,7 +15,7 @@ inline common_agent_projection_json common_agent_project_observation_json(
         size_t max_object_fields, size_t max_array_items, size_t max_string_chars) {
     if (value.is_string()) {
         auto text = value.get<std::string>();
-        if (text.size() > max_string_chars) text.resize(max_string_chars);
+        if (text.size() > max_string_chars) text.resize(common_utf8_prefix_bytes(text, max_string_chars));
         return text;
     }
     if (value.is_primitive() || value.is_null()) return value;

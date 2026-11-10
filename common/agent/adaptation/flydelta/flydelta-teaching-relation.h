@@ -20,6 +20,7 @@ enum class common_flydelta_teaching_relation_status {
     no_contrast,
     not_reusable,
     unsupported_behavior,
+    rejected, // Explicit host assessment, never inferred from incomplete material.
 };
 
 const char * common_flydelta_teaching_relation_status_name(
@@ -90,6 +91,8 @@ struct common_flydelta_teaching_relation {
     common_flydelta_teaching_origin control_origin = common_flydelta_teaching_origin::none;
     float confidence = 0.0f;
     bool host_approved = false;
+    // Schema v2 host-authorized representations; no behavioral contrast claimed.
+    bool positive_only = false;
 };
 
 bool common_flydelta_teaching_relation_validate(
@@ -204,7 +207,8 @@ using common_agent_user_correction_teaching_request_provider = std::function<boo
         std::string & error)>;
 
 // Host-owned grounding seam for an explicit user principle. Each returned
-// relation represents one independently verified minimal contrast; the host
+// relation represents one independently verified minimal contrast or an explicit
+// v2 positive-only authorization (never a behavioral success label); the host
 // must return no relations rather than inventing an unverified pair. Existing
 // concept extraction enforces its own minimum compatible-trajectory count.
 using common_agent_user_taught_concept_relation_provider = std::function<bool(

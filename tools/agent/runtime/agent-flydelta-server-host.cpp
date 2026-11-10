@@ -1240,6 +1240,10 @@ bool daemon_flydelta_execute_batch(
         return daemon_flydelta_score_teacher_forced_margin_batch(
             provider, arms, contexts, scorer, margins, callback_error);
     };
+    if (provider->run_prepared_batch) {
+        if (!common_flydelta_arm_batch_request_validate(request, error)) return false;
+        return provider->run_prepared_batch(binding, request, result, error);
+    }
     const bool native_batch = provider->host->server().per_sequence_cvec_batch_enabled() &&
         provider->host->context_key().n_parallel > 1;
     return common_agent_server_context_host_run_flydelta_arm_batch(

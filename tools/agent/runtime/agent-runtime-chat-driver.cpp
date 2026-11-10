@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <ctime>
 #include "agent/input-resources.h"
+#include "plan/plan-context.h"
 
 namespace {
 
@@ -287,6 +288,16 @@ bool common_agent_select_tool_families(
         const auto user = std::find_if(request.messages.rbegin(), request.messages.rend(),
             [](const auto & message) { return message.role == "user"; });
         if (user != request.messages.rend()) routing_prompt = user->content;
+    }
+    if (request.blueprint_definition && request.blueprint_definition->phase_review_required) {
+        const auto & method = *request.blueprint_definition;
+        routing_prompt += "\n[Host-selected method for this turn]\nGoal: " + method.goal +
+            "\nSuccess criteria: " + method.success_criteria +
+            "\nDecide whether the first dependency-ready phase needs an authorized operation "
+            "or can be completed using evidence already supplied. A phase that does not "
+            "edit or build may still need tools to inspect local sources. NO_TOOLS "
+            "keeps the method active; it does not complete the method or claim evidence.\n" +
+            common_plan_make_blueprint_outline(method, method.id).summary;
     }
     common_chat_msg user{"user", common_tool_family_selection_user_prompt(routing_prompt) +
         common_agent_render_input_resource_context(

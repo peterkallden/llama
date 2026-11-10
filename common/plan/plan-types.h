@@ -407,6 +407,8 @@ struct common_plan_step {
     // exposing host-owned step IDs as the model-facing contract.
     std::optional<std::string> semantic_alias;
     std::optional<common_plan_artifact_binding> artifact_binding;
+    // Host-owned method provenance; distinct from model-facing step aliases.
+    std::optional<std::string> method_phase_id, method_turn_id;
 };
 
 inline std::optional<common_plan_artifact_binding> common_plan_artifact_binding_effective(
@@ -439,6 +441,9 @@ struct common_plan_state {
     // Retained with the blueprint so package export does not lose the bounded
     // selection text that was used to build a candidate projection.
     std::string selection_description;
+    // Imported method metadata. Older plans default to ordinary execution.
+    bool phase_review_required = false;
+    std::vector<std::string> supersedes_blueprints;
     common_plan_kind kind = common_plan_kind::task;
     std::optional<std::string> derived_from_plan_id;
     common_plan_scope scope = common_plan_scope::turn;

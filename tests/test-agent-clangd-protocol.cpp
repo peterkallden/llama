@@ -44,7 +44,9 @@ static int fake_clangd() {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             send(agent_clangd_notification("$/progress", {{"token", "index"}, {"value", {{"kind", "end"}}}}));
             send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", agent_clangd_json::array()}});
-        } else if (method == "shutdown") send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", nullptr}});
+        } else if (method == "textDocument/references" || method == "textDocument/prepareCallHierarchy")
+            send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", agent_clangd_json::array()}});
+        else if (method == "shutdown") send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", nullptr}});
         else if (method == "exit") return 0;
     }
 }
@@ -164,6 +166,20 @@ int main(int argc, char ** argv) {
             agent_clangd_code_provider provider(std::move(config));
             assert(provider.refresh().ok);
             assert(fs::is_regular_file(cached));
+            // Both public position forms reach the provider unchanged. A stale
+            // line or column must explain the actual problem to MCP clients.
+            const auto reference = provider.references(R"({"symbol":"fixture","path_hint":"source.cpp","line":1,"column":5})");
+            assert(reference.ok);
+            assert(provider.references(R"({"symbol":"fixture","definition_path":"source.cpp","definition_line":1})").ok);
+            const auto calls = provider.call_hierarchy(R"({"symbol":"fixture","definition_path":"source.cpp","definition_line":1,"definition_column":5})");
+            assert(calls.ok);
+            assert(provider.call_hierarchy(R"({"symbol":"fixture","path_hint":"source.cpp","line":1})").ok);
+            const auto stale = provider.references(R"({"symbol":"missing","definition_path":"source.cpp","definition_line":1})");
+            assert(!stale.ok && stale.safe_summary.find("location may be stale") != std::string::npos);
+            const auto column = provider.call_hierarchy(R"({"symbol":"fixture","path_hint":"source.cpp","line":1,"column":6})");
+            assert(!column.ok && column.safe_summary.find("UTF-16 column") != std::string::npos);
+            const auto no_location = provider.references(R"({"symbol":"fixture"})");
+            assert(!no_location.ok && no_location.safe_summary.find("requires a source location") != std::string::npos);
             { std::ofstream output(database); output << "invalid json"; }
             assert(!provider.refresh().ok);
             assert(provider.symbol(R"({"symbol":"fixture"})").ok);

@@ -62,9 +62,22 @@ int main() {
             sources.empty() && automatic.requests.front().json_schema.find("\"mode\"") == std::string::npos,
             "automatic source choice retained a redundant mode or stale sources");
         selection_inference named;
-        named.replies = {R"({"sources":["Catalog"]})"};
+        named.replies = {R"({"sources":[{"quote":"Catalog","source_id":"catalog"}]})"};
         require(select_agent_research_source(named, config, request, "Search Catalog", {"catalog"}, sources, error) &&
             sources == std::vector<std::string>{"catalog"}, "named source was not resolved to its registered identity");
+        selection_inference semantic;
+        semantic.replies = {R"({"sources":[{"quote":"på nätet","source_id":"web"}]})"};
+        require(select_agent_research_source(semantic, config, request, "Sök officiell dokumentation på nätet", {"web"}, sources, error) &&
+            sources == std::vector<std::string>{"web"}, "semantic source binding required a literal internal ID");
+        selection_inference repaired;
+        repaired.replies = {R"({"sources":[{"quote":"invented","source_id":"web"}]})",
+            R"({"sources":[{"quote":"online","source_id":"web"}]})"};
+        require(select_agent_research_source(repaired, config, request, "Read official docs online", {"web"}, sources, error) &&
+            repaired.requests.size() == 2 && sources == std::vector<std::string>{"web"}, "source quote repair did not preserve registered identity");
+        selection_inference unavailable;
+        unavailable.replies = {R"({"sources":[{"quote":"Catalog","source_id":""}]})"};
+        require(!select_agent_research_source(unavailable, config, request, "Search Catalog", {"web"}, sources, error) &&
+            sources.empty() && error.find("unavailable") != std::string::npos, "unavailable explicit source silently substituted web");
         request.tool_output_format = common_agent_tool_output_format::compact_dsl;
         selection_inference dsl;
         dsl.replies = {"open! selection.research_source\nsources: []"};

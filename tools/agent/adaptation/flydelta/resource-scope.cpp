@@ -21,6 +21,7 @@ daemon_flydelta_provider_for_scope(
     if (!source) return {};
     auto scoped = std::make_shared<daemon_flydelta_resource_provider>();
     scoped->host = source->host;
+    scoped->run_prepared_batch = source->run_prepared_batch;
     scoped->resources = source->resources;
     scoped->authority.namespace_id = scope.namespace_id.empty()
         ? source->authority.namespace_id : scope.namespace_id;

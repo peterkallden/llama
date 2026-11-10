@@ -230,6 +230,7 @@ bool run_agent_runtime_host(
                 execution.turn_request.memory_enabled,
                 execution.tooling,
                 {},
+                false,
                 {},
                 false,
                 execution.turn_request.request.input_resources,

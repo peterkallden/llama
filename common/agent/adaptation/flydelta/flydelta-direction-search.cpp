@@ -523,7 +523,12 @@ bool common_flydelta_direction_candidate_validate(
         size_t expected_dimension,
         std::string & error) {
     error.clear();
-    if (candidate.schema_version != 1 || !supported_kind(candidate.kind) ||
+    if ((candidate.synthesis_semantics == "positive_only" &&
+            (!candidate.experimental_only || candidate.origin != "host_taught_positive_only" ||
+             candidate.representation_diagnostics.sample_count < 3 ||
+             candidate.representation_diagnostics.sample_count != candidate.source_samples ||
+             candidate.representation_diagnostics.retained_count != candidate.retained_samples)) ||
+            candidate.schema_version != 1 || !supported_kind(candidate.kind) ||
             candidate.layer_index < 0 || expected_dimension == 0 ||
             (!candidate.origin.empty() && !nonempty_bounded(candidate.origin)) ||
             (!candidate.extraction_id.empty() && !nonempty_bounded(candidate.extraction_id)) ||

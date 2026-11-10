@@ -118,12 +118,17 @@ struct common_agent_daemon_runtime {
     // production FlyDelta binding must observe the same durable state.
     std::shared_ptr<common_flydelta_teaching_material_runtime>
         flydelta_teaching_material_runtime;
+    std::shared_ptr<const common_flydelta_teaching_material_identity> flydelta_execution_identity;
+
     // Shared projection over the existing lifecycle journal. Runtime
     // assembly and daemon reuse must observe the same session candidates;
     // this is not a new evidence store.
     std::shared_ptr<common_agent_concept_candidate_index>
         flydelta_concept_candidate_index;
     std::shared_ptr<const common_flydelta_evaluator_callbacks> flydelta_evaluator_callbacks;
+    std::function<bool(const common_flydelta_experiment_job &, common_flydelta_teaching_material_mode,
+        common_flydelta_experiment_collection_result &, std::string &)> flydelta_concept_admit;
+
     // Host-owned learning ingress. These are forwarded into the existing
     // runtime assembly; the daemon does not interpret semantic evidence.
     common_agent_procedure_teaching_request_provider
@@ -282,6 +287,8 @@ struct common_agent_daemon_scope_payload {
 
 struct common_agent_daemon_flydelta_admin_payload {
     std::string operation;
+    std::optional<common_flydelta_experiment_job> concept_context;
+    common_flydelta_teaching_material_mode concept_mode = common_flydelta_teaching_material_mode::automatic;
     std::string candidate_id;
     std::string candidate_manifest_ref;
     std::string suite_ref;

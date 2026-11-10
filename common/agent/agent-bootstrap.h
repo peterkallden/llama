@@ -51,6 +51,8 @@ struct common_agent_bootstrap_blueprint {
     // Short, untrusted-model-safe description used only to choose among
     // already installed candidates.
     std::string selection_description;
+    bool phase_review_required = false;
+    std::vector<std::string> supersedes_blueprints;
     std::string purpose;
     std::string goal;
     std::string success_criteria;
@@ -79,8 +81,8 @@ struct common_agent_bootstrap_package {
     std::vector<common_plan_artifact_profile> artifact_profiles;
 };
 
-// The built-in package is a fallback. Callers may install a file/package using
-// the same installer instead of depending on a second hard-coded candidate list.
+// The built-in package is a minimal dataset/OpenAPI fallback. Development
+// methods belong to the JSON starter package and use the same installer.
 common_agent_bootstrap_package common_agent_default_bootstrap_package();
 
 using common_agent_bootstrap_embedder = std::function<bool(const std::string &, std::vector<float> &, std::string &)>;

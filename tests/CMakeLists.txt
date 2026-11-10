@@ -398,6 +398,7 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-research-driver.cpp
         test-agent-workflow-recovery.cpp
         test-agent-synthesis-state.cpp
+        test-agent-method-phases.cpp
         test-agent-response-protocol.cpp
         test-agent-runtime-json.cpp
         test-agent-chat-routing.cpp
@@ -606,7 +607,7 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-plan-context")
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "orchestration;model-free")
         endif()
-        if (TEST_NAME STREQUAL "test-agent-synthesis-state")
+        if (TEST_NAME STREQUAL "test-agent-synthesis-state" OR TEST_NAME STREQUAL "test-agent-method-phases")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "agent;model-free;orchestration")
         endif()
@@ -906,6 +907,11 @@ test-agent-flydelta-alpha-response-search.cpp
         target_compile_definitions(test-agent-flydelta-teaching-material-cozo PRIVATE
             LLAMA_AGENT_ADAPTATION_TEST_COZO)
         set_property(TEST test-agent-flydelta-teaching-material-cozo PROPERTY LABELS agent-adaptation)
+        llama_build_and_test(test-agent-flydelta-positive-integration.cpp)
+        target_include_directories(test-agent-flydelta-positive-integration PRIVATE ${PROJECT_SOURCE_DIR})
+        target_link_libraries(test-agent-flydelta-positive-integration PRIVATE
+            llama-agent-core llama-agent-daemon-library llama-agent-adaptation-storage llama-agent-flydelta)
+        set_property(TEST test-agent-flydelta-positive-integration PROPERTY LABELS "agent;flydelta;model-free;integration;recovery")
     endif()
     set_property(TEST test-agent-learning-transaction-backends PROPERTY LABELS agent)
 

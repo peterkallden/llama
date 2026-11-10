@@ -304,11 +304,30 @@ common_agent_runtime_assembly make_agent_runtime_assembly(
                             std::vector<common_flydelta_teaching_relation> relations;
                             if (!provider(request, plan, result, transaction, relations, error)) return false;
                             for (const auto & teaching_relation : relations) {
+                                if (teaching_relation.status == common_flydelta_teaching_relation_status::rejected &&
+                                        teaching_relation.source == common_adaptation_evidence_source::user_taught_concept) {
+                                    if (!teaching_material_observer) {
+                                        error = "host contrast rejection requires the teaching-material journal";
+                                        return false;
+                                    }
+                                    if (!teaching_material_observer(teaching_relation, error)) return false;
+                                    continue;
+                                }
                                 if (teaching_relation.source != common_adaptation_evidence_source::user_taught_concept ||
                                         teaching_relation.status != common_flydelta_teaching_relation_status::resolved ||
-                                        !teaching_relation.host_approved || teaching_relation.contrast_ref.empty()) {
+                                        !teaching_relation.host_approved ||
+                                        (!teaching_relation.positive_only && teaching_relation.contrast_ref.empty()) ||
+                                        !common_flydelta_teaching_relation_validate(teaching_relation, error)) {
                                     error = "user-taught concept provider returned an unresolved or ungrounded relation";
                                     return false;
+                                }
+                                if (teaching_relation.positive_only) {
+                                    if (!teaching_material_observer) {
+                                        error = "positive-only teaching requires a host material observer";
+                                        return false;
+                                    }
+                                    if (!teaching_material_observer(teaching_relation, error)) return false;
+                                    continue;
                                 }
                                 if (concept_candidate_index &&
                                         !concept_candidate_index->observe_resolved_relation(

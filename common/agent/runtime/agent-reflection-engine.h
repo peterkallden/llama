@@ -20,6 +20,16 @@ struct common_reflection_learning_hint {
     std::string category, statement;
     float expected_reuse = 0.5f;
 };
+struct common_agent_method_phase_review {
+    std::string phase_id;
+    std::string status; // satisfied, not_needed, blocked, remaining
+    std::string reason;
+    std::vector<std::string> evidence_ids;
+    // Legacy optional annotations. Accepted on input, never used to select
+    // executable work; the normal planner owns continuation selection.
+    std::string next_work_kind; // inspect_source, external_lookup, reason
+    std::string next_work_goal;
+};
 struct common_reflection_result {
     common_reflection_decision decision = common_reflection_decision::accept;
     std::vector<common_reflection_issue> issues;
@@ -33,6 +43,10 @@ struct common_reflection_result {
     std::optional<common_agent_generated_text_result> generation;
     std::vector<std::string> advisory_notes, resolved_issue_ids;
     bool structured_review = false;
+    // Model assessment of the user's outcome, independent of finished plan steps.
+    // Empty preserves compatibility with existing reviewers.
+    std::string task_outcome; // satisfied, remaining, blocked
+    std::vector<common_agent_method_phase_review> phase_reviews;
 };
 
 class common_reflection_engine {

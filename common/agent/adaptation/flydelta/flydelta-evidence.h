@@ -120,6 +120,9 @@ struct common_flydelta_experiment_seed {
     std::string action_contract_fingerprint;
     std::string evidence_ref;
     std::vector<std::string> transaction_ids;
+    // Schema 2 is host-authorized experimental concept material, not an
+    // adaptation evidence record. Its immutable admission is checked by the host.
+    std::string admission_ref;
 };
 
 bool common_flydelta_experiment_seed_validate(

@@ -944,7 +944,8 @@ bool common_parse_compact_dsl_plan(
         const std::string & text,
         const std::vector<common_chat_tool> & tools,
         std::string & proposal_json,
-        std::string & error) {
+        std::string & error,
+        bool allow_reasoning) {
     proposal_json.clear();
     error.clear();
     std::vector<std::string> lines;
@@ -1023,39 +1024,52 @@ bool common_parse_compact_dsl_plan(
             ? std::string()
             : step_line.substr(5, separator - 5);
         std::string alias;
+        std::string repair;
         size_t meta_position = 0;
         while (meta_position < metadata.size()) {
             while (meta_position < metadata.size() && std::isspace(static_cast<unsigned char>(metadata[meta_position]))) ++meta_position;
             if (meta_position >= metadata.size()) break;
             std::string key;
             std::string value;
-            if (!parse_identifier(metadata, meta_position, key) || key != "as") {
-                error = "compact DSL plan step metadata supports only `as=alias`";
+            if (!parse_identifier(metadata, meta_position, key) || (key != "as" && key != "repair")) {
+                error = "compact DSL plan step metadata supports `as=alias` and `repair=host_handle`";
                 return false;
             }
             while (meta_position < metadata.size() && std::isspace(static_cast<unsigned char>(metadata[meta_position]))) ++meta_position;
             if (meta_position >= metadata.size() || metadata[meta_position++] != '=') {
-                error = "compact DSL plan alias must use as=alias";
+                error = "compact DSL plan metadata requires key=value";
                 return false;
             }
-            if (!parse_identifier(metadata, meta_position, value) || value == "previous" || value.size() > 64 || !alias.empty()) {
+            auto & destination=key=="as"?alias:repair;
+            if (!parse_identifier(metadata, meta_position, value) || value == "previous" || value.size() > 64 || !destination.empty()) {
                 error = "compact DSL plan alias is invalid, reserved, or repeated";
                 return false;
             }
-            alias = std::move(value);
+            destination = std::move(value);
         }
         if (!alias.empty() && !aliases.insert(alias).second) {
             error = "compact DSL plan repeats alias: " + alias;
             return false;
         }
-        common_agent_tool_call call;
         const std::string call_text = step_line.substr(separator + 3);
+        if (allow_reasoning && call_text == "reason") {
+            if (!repair.empty()) {
+                error = "a reasoning step cannot repair a tool operation";
+                return false;
+            }
+            json step = {{"mode", "reasoning"}};
+            if (!alias.empty()) step["as"] = alias;
+            steps.push_back(std::move(step));
+            continue;
+        }
+        common_agent_tool_call call;
         const bool parsed_call = tools.empty()
             ? parse_compact(call_text, call, error)
             : parse_flat_compact(call_text, tools, call, error);
         if (!parsed_call) return false;
         json step = {{"tool", call.name}, {"args", json::parse(call.arguments_json)}};
         if (!alias.empty()) step["as"] = alias;
+        if (!repair.empty()) step["repair"] = repair;
         steps.push_back(std::move(step));
     }
     proposal_json = json{{"goal", goal_value}, {"steps", std::move(steps)}}.dump();

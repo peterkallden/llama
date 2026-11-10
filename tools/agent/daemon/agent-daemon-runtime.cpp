@@ -1,6 +1,7 @@
 #include "agent/tooling/contracts/tool-budget.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent-daemon-adapter.h"
+#include "agent-daemon-flydelta-internal.h"
 #include "agent-daemon-runtime-config.h"
 #include "agent-template-library.h"
 #include "../adaptation/semi-oracle-store-factory.h"
@@ -565,8 +566,9 @@ bool daemon_semi_oracle_put_forced_context(
 
 common_agent_semi_oracle_teaching_relation_provider
 make_daemon_semi_oracle_relation_provider(
-        common_semi_oracle_store & store, agent_resource_store & resources) {
-    return [&store, &resources](const common_agent_request & request,
+        common_semi_oracle_store & store, agent_resource_store & resources,
+        std::shared_ptr<common_flydelta_teaching_material_runtime> material) {
+    return [&store, &resources, material](const common_agent_request & request,
             const common_plan_state &, const common_agent_result & result,
             const common_learning_transaction &, std::vector<common_flydelta_teaching_relation> & relations,
             std::string & error) {
@@ -610,10 +612,13 @@ make_daemon_semi_oracle_relation_provider(
                         rejected, accepted, scope, interaction.id, interaction.task_fingerprint,
                         baseline_ref, preferred_ref, control_ref, interaction.evidence_ref,
                         relation, error)) return false;
-                relation.model_profile_fingerprint = "daemon-resident-model-v1";
-                relation.tokenizer_fingerprint = "daemon-tokenizer-v1";
-                relation.template_fingerprint = "semi-oracle-forced-context-v1";
-                relation.capture_layout_revision = "forced-context-boundary-v1";
+                if (material) {
+                    const auto & execution = material->identity();
+                    relation.model_profile_fingerprint = execution.model_profile_fingerprint;
+                    relation.tokenizer_fingerprint = execution.tokenizer_fingerprint;
+                    relation.template_fingerprint = execution.template_fingerprint;
+                    relation.capture_layout_revision = execution.capture_layout_revision;
+                }
                 relations.push_back(std::move(relation));
                 continue;
             }
@@ -641,10 +646,13 @@ make_daemon_semi_oracle_relation_provider(
             common_flydelta_teaching_relation relation;
             if (!service.make_preference_relation(*baseline, *preferred, interaction.id,
                     baseline_ref, preferred_ref, control_ref, interaction.evidence_ref, relation, error)) return false;
-            relation.model_profile_fingerprint = "daemon-resident-model-v1";
-            relation.tokenizer_fingerprint = "daemon-tokenizer-v1";
-            relation.template_fingerprint = "semi-oracle-forced-context-v1";
-            relation.capture_layout_revision = "forced-context-boundary-v1";
+            if (material) {
+                const auto & execution = material->identity();
+                relation.model_profile_fingerprint = execution.model_profile_fingerprint;
+                relation.tokenizer_fingerprint = execution.tokenizer_fingerprint;
+                relation.template_fingerprint = execution.template_fingerprint;
+                relation.capture_layout_revision = execution.capture_layout_revision;
+            }
             relations.push_back(std::move(relation));
         }
         return true;
@@ -1659,11 +1667,18 @@ make_daemon_flydelta_deployment_resolver(
         common_agent_model_profile profile;
         profile.id = model_handle->selection.profile_id;
         profile.base_model_id = model_handle->selection.base_model_id;
-        profile.base_model_fingerprint = effective_options.adaptation_flydelta_model_profile_fingerprint.empty()
-            ? "model:" + std::filesystem::path(model_handle->selection.path).filename().string()
-            : effective_options.adaptation_flydelta_model_profile_fingerprint;
-        profile.tokenizer_fingerprint = "daemon:tokenizer-unspecified-v1";
-        profile.chat_template_fingerprint = "daemon:template-unspecified-v1";
+        {
+            std::lock_guard<std::mutex> identity_lock(loaded->flydelta_execution_identity_mutex);
+            if (!loaded->flydelta_execution_identity) {
+                common_flydelta_teaching_material_identity identity;
+                if (!agent_daemon_flydelta_internal::daemon_flydelta_execution_identity(effective_options,
+                        loaded->server_context_host, identity, error)) return false;
+                loaded->flydelta_execution_identity = std::make_shared<const common_flydelta_teaching_material_identity>(identity);
+            }
+            profile.base_model_fingerprint = loaded->flydelta_execution_identity->model_profile_fingerprint;
+            profile.tokenizer_fingerprint = loaded->flydelta_execution_identity->tokenizer_fingerprint;
+            profile.chat_template_fingerprint = loaded->flydelta_execution_identity->template_fingerprint;
+        }
         profile.context_size_tokens = model_handle->selection.context_size_tokens;
         profile.n_parallel = model_handle->selection.n_parallel;
         profile.n_sequences = model_handle->selection.n_sequences;
@@ -2030,9 +2045,7 @@ bool initialize_agent_daemon_environment(
     // SemiOracle uses the ordinary host-relation ingress.  The provider only
     // materializes already verified interactions; it does not evaluate moves,
     // create activations or activate an overlay.
-    runtime.semi_oracle_teaching_relation_provider =
-        make_daemon_semi_oracle_relation_provider(
-            *runtime.semi_oracle_store, *runtime.resource_store);
+
     if (!open_daemon_model_residency(options, runtime.model_residency, error)) {
         return false;
     }
@@ -2040,6 +2053,9 @@ bool initialize_agent_daemon_environment(
             options, runtime, error)) {
         return false;
     }
+    runtime.semi_oracle_teaching_relation_provider =
+        make_daemon_semi_oracle_relation_provider(
+            *runtime.semi_oracle_store, *runtime.resource_store, runtime.flydelta_teaching_material_runtime);
     if (options.adaptation_flydelta_enabled) {
         runtime.flydelta_observation_budget =
             std::make_shared<common_flydelta_observation_budget>();

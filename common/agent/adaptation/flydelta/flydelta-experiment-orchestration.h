@@ -500,7 +500,8 @@ bool common_flydelta_plan_search_continuation(
         const common_flydelta_search_continuation & continuation,
         const common_flydelta_evidence_depth_result & evidence_depth,
         common_flydelta_experiment_plan & plan,
-        std::string & error);
+        std::string & error,
+        bool allow_uncredited_bootstrap = false);
 
 // Advances one bounded phase after the host has evaluated that phase's arms.
 // Evidence depth limits the maximum phase; utility determines whether the

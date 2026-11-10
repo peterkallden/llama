@@ -293,6 +293,7 @@ bool select_model_tool_families(
         std::string & error) {
     const bool caller_requires_tool_execution = execution.require_tool_execution;
     execution.model_tools.clear();
+    execution.model_tools_selected = false;
     const auto & generation_config = execution.runtime_config.generation_config;
     execution.family_chat_routed = false;
     execution.family_chat_result = {};
@@ -308,6 +309,10 @@ bool select_model_tool_families(
     // catalog and let the normal planner choose the concrete read operation.
     const bool attachment_orientation = request.resource_read_binding &&
         request.resource_read_binding->intent == common_agent_resource_read_intent::orientation;
+    const bool phased_method = request.blueprint_definition &&
+        request.blueprint_definition->phase_review_required &&
+        execution.route_selected &&
+        execution.selected_route.kind == common_agent_route_kind::blueprint;
     if (attachment_orientation) {
         const auto families = common_generate_tool_family_index(
             execution.tooling.tools, execution.tooling.family_descriptions,
@@ -321,6 +326,7 @@ bool select_model_tool_families(
         }
         execution.model_tools = common_expand_tool_family_prerequisites(
             execution.tooling.tools, family_ids, execution.tooling.additional_tool_families);
+        execution.model_tools_selected = true;
         if (execution.model_tools.empty()) {
             error = "attachment orientation has no permitted resource inspection tools";
             return false;
@@ -368,6 +374,10 @@ bool select_model_tool_families(
         execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
             common_runtime_trace_kind::decided,
             "tool routing outcome=empty_authorized_catalog; using existing conversation driver", {}});
+        if (phased_method) {
+            execution.model_tools_selected = true;
+            return true;
+        }
         return run_tool_free_conversation();
     }
     if (!generation_config.enable_tool_family_routing) {
@@ -387,6 +397,7 @@ bool select_model_tool_families(
             &invalid_family_selection)) {
         if (!invalid_family_selection) return false;
         execution.model_tools = execution.tooling.tools;
+        execution.model_tools_selected = true;
         execution.require_tool_execution = true;
         execution.pre_turn_trace.push_back({common_runtime_trace_stage::plan,
             common_runtime_trace_kind::decided,
@@ -404,10 +415,15 @@ bool select_model_tool_families(
             error = "tool family selection declined tools for a tool-required request";
             return false;
         }
+        if (phased_method) {
+            execution.model_tools_selected = true;
+            return true;
+        }
         return run_tool_free_conversation();
     }
     execution.model_tools = common_expand_tool_family_prerequisites(
         execution.tooling.tools, selection.family_ids, execution.tooling.additional_tool_families);
+    execution.model_tools_selected = true;
     if (execution.model_tools.empty()) {
         error = "tool family selection did not resolve any registered tools";
         return false;
@@ -422,7 +438,7 @@ bool select_model_tool_families(
     // model-authored plan. Reuse the normal chat/tool driver, but keep the
     // request marked as tool-required so it cannot silently answer without
     // dispatching the selected tool.
-    if (execution.model_tools.size() == 1 &&
+    if (!phased_method && execution.model_tools.size() == 1 &&
             tool_has_no_required_arguments(execution.model_tools.front())) {
         common_agent_runtime_tooling chat_tooling = execution.tooling;
         chat_tooling.tools = execution.model_tools;
@@ -1054,6 +1070,7 @@ common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
         inputs.memory_enabled,
         inputs.tooling,
         {},
+        false,
         {},
         false,
         inputs.input_resources,
@@ -1332,16 +1349,24 @@ common_agent_request make_agent_runtime_driver_request(
             const auto source_families = common_generate_tool_family_index(available, execution.tooling.family_descriptions,
                 execution.tooling.additional_tool_families);
             std::vector<std::string> source_ids;
-            for (const auto & family : source_families) source_ids.push_back(family.id);
+            std::map<std::string, std::string> source_descriptions;
+            for (const auto & family : source_families) {
+                source_ids.push_back(family.id);
+                source_descriptions[family.id] = family.description;
+            }
             for (const auto & tool : available) {
-                if (!tool.mcp_provider_id.empty() && std::find(source_ids.begin(), source_ids.end(), tool.mcp_provider_id) == source_ids.end())
-                    source_ids.push_back(tool.mcp_provider_id);
+                if (!tool.mcp_provider_id.empty()) {
+                    if (std::find(source_ids.begin(), source_ids.end(), tool.mcp_provider_id) == source_ids.end())
+                        source_ids.push_back(tool.mcp_provider_id);
+                    auto & description = source_descriptions[tool.mcp_provider_id];
+                    if (description.size() < 1024) description += tool.name + ": " + tool.description.substr(0, 256) + "\n";
+                }
             }
             // Generated gap instructions are not user-authored constraints.
             const std::string user_source_context = "[Original user request]\n" + workspace.objective.question +
                 "\n[Current user request]\n" + selection_request.prompt;
             if (!select_agent_research_source(inference, execution.runtime_config.generation_config,
-                    current, user_source_context, source_ids, named_sources, error)) return false;
+                    current, user_source_context, source_ids, named_sources, error, source_descriptions)) return false;
             if (!named_sources.empty()) {
                 // Requirements belong to the current gap and only a successful
                 // operation from that registered source satisfies them.
@@ -2597,9 +2622,8 @@ bool run_agent_runtime_driver(
                 continue;
             }
         }
-        const auto & model_tools = execution.model_tools.empty()
-            ? execution.tooling.tools
-            : execution.model_tools;
+        const auto & model_tools = (execution.model_tools_selected || !execution.model_tools.empty())
+            ? execution.model_tools : execution.tooling.tools;
         common_agent_request request = make_agent_runtime_driver_request(execution);
         request.yield_after_plan_creation = execution.resource_chunk_needs_plan;
         request.result_requirement_selector = [&execution, &model_tools](

@@ -51,7 +51,7 @@ bool common_flydelta_admit_training_cases(
                 !common_adaptation_evidence_validate(evidence, 64, error) ||
                 !common_learning_case_validate(learning_case, 64, 2048, error) ||
                 !common_learning_transaction_validate(transaction, 64, error)) return false;
-        if (relation.status != common_flydelta_teaching_relation_status::resolved ||
+        if (relation.positive_only || relation.status != common_flydelta_teaching_relation_status::resolved ||
                 !relation.host_approved || !evidence.host_verified ||
                 evidence.id != relation.evidence_ref ||
                 evidence.source != relation.source ||

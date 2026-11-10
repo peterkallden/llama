@@ -600,6 +600,9 @@ bool common_agent_package_parse_json(const std::string & text, common_agent_boot
                 if (!item.is_object() || !item.contains("steps") || !item["steps"].is_array()) { error = "package blueprint requires steps"; return false; }
                 common_agent_bootstrap_blueprint blueprint;
                 blueprint.id = item.value("id", std::string{}); blueprint.source_revision = item.value("source_revision", std::string{}); blueprint.selection_description = item.value("selection_description", std::string{});
+                if (item.contains("phase_review_required") && !item["phase_review_required"].is_boolean()) { error="phase_review_required must be a boolean"; return false; }
+                blueprint.phase_review_required = item.value("phase_review_required", false);
+                if (item.contains("supersedes_blueprints") && !strings(item["supersedes_blueprints"], blueprint.supersedes_blueprints)) { error="supersedes_blueprints must be strings"; return false; }
                 blueprint.purpose = item.value("purpose", std::string{});
         blueprint.goal = item.value("goal", std::string{}); blueprint.success_criteria = item.value("success_criteria", std::string{});
         if (item.contains("required_capabilities") && !strings(item["required_capabilities"], blueprint.required_capabilities)) { error = "blueprint required_capabilities must be strings"; return false; }
@@ -700,6 +703,8 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
         json value = {{"id", blueprint.id}, {"goal", blueprint.goal}, {"success_criteria", blueprint.success_criteria}, {"steps", json::array()}};
         if (!blueprint.source_revision.empty()) value["source_revision"] = blueprint.source_revision;
         if (!blueprint.selection_description.empty()) value["selection_description"] = blueprint.selection_description;
+        if (blueprint.phase_review_required) value["phase_review_required"] = true;
+        if (!blueprint.supersedes_blueprints.empty()) value["supersedes_blueprints"] = blueprint.supersedes_blueprints;
         if (!blueprint.purpose.empty()) value["purpose"] = blueprint.purpose;
         if (blueprint.workflow_policy != common_plan_workflow_policy::preferred) value["workflow_policy"] = workflow_policy_name(blueprint.workflow_policy);
         if (!blueprint.procedure_refs.empty()) value["procedure_refs"] = blueprint.procedure_refs;

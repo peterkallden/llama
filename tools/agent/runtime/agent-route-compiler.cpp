@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
+#include <set>
 #include <sstream>
 
 namespace {
@@ -577,7 +579,41 @@ bool compile_agent_route_catalog(
         route.blueprint_revision = blueprint->source_revision;
         route.required_capabilities = blueprint->required_capabilities;
         route.procedure_refs = blueprint->procedure_refs;
+        for (const auto & tool:tooling.tools) route.resolved_tools.push_back(tool.name);
         catalog.candidates.push_back(std::move(route));
+    }
+
+    // Package-declared replacement is selection metadata, never task keyword
+    // routing. Keep old definitions available for explicit choice and resume.
+    if (explicit_blueprint.empty()) {
+        std::set<std::string> superseded;
+        std::map<std::string,std::set<std::string>> replacements;
+        for (const auto & route:catalog.candidates) {
+            if (!route.blueprint_definition) continue;
+            std::string prefix;
+            if (tooling.template_libraries) {
+                const auto * origin=tooling.template_libraries->find(route.blueprint_persisted_id);
+                if (origin) prefix=origin->library_id+":";
+            }
+            for (const auto & id:route.blueprint_definition->supersedes_blueprints) {
+                const auto target=prefix+id;
+                if (target==route.blueprint_logical_id) {error="blueprint cannot supersede itself";return false;}
+                superseded.insert(target);
+                replacements[route.blueprint_logical_id].insert(target);
+            }
+        }
+        std::set<std::string> visiting,visited;
+        std::function<bool(const std::string &)> acyclic=[&](const std::string & id) {
+            if (visiting.count(id)) return false;
+            if (visited.count(id)) return true;
+            visiting.insert(id);
+            const auto found=replacements.find(id);
+            if (found!=replacements.end()) for (const auto & next:found->second) if (!acyclic(next)) return false;
+            visiting.erase(id);visited.insert(id);return true;
+        };
+        for (const auto & item:replacements) if (!acyclic(item.first)) {error="cyclic blueprint supersession";return false;}
+        catalog.candidates.erase(std::remove_if(catalog.candidates.begin(),catalog.candidates.end(),
+            [&](const auto & route) {return superseded.count(route.blueprint_logical_id)!=0;}),catalog.candidates.end());
     }
 
     std::ostringstream catalog_text;

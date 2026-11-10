@@ -529,7 +529,9 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
 
 bool common_agent_runtime_apply_safe_tool_defaults(
         const common_agent_request & request,
-        common_agent_tool_call & call) {
+        common_agent_tool_call & call,
+        std::string * normalization_error) {
+    if (normalization_error) normalization_error->clear();
     const auto arguments = json::parse(call.arguments_json, nullptr, false);
     json normalized_arguments;
     bool changed = false;
@@ -541,6 +543,7 @@ bool common_agent_runtime_apply_safe_tool_defaults(
             normalized_arguments,
             changed,
             error)) {
+        if (normalization_error) *normalization_error = error;
         return false;
     }
 

@@ -9,12 +9,12 @@
 namespace {
 bool finite(float value) { return std::isfinite(value); }
 
-bool valid_depth(const common_flydelta_evidence_depth_result & value) {
+bool valid_depth(const common_flydelta_evidence_depth_result & value, bool allow_uncredited_bootstrap) {
     // A search surface may be continued experimentally before any natural
     // HELPED evidence exists. That is still Bootstrap capacity; it must not
     // be mistaken for rank-backed Shallow/Deep capacity.
     const bool empty_bootstrap = value.compatible_samples == 0 &&
-        value.experimental_samples > 0 &&
+        (value.experimental_samples > 0 || allow_uncredited_bootstrap) &&
         value.depth == common_flydelta_search_depth::bootstrap &&
         value.effective_rank == 0;
     const bool ranked = value.compatible_samples > 0 && value.effective_rank > 0;
@@ -138,12 +138,13 @@ bool common_flydelta_plan_search_continuation(
         const common_flydelta_search_continuation & continuation,
         const common_flydelta_evidence_depth_result & evidence_depth,
         common_flydelta_experiment_plan & plan,
-        std::string & error) {
+        std::string & error,
+        bool allow_uncredited_bootstrap) {
     error.clear();
     plan = {};
     if (continuation.schema_version != 1 || continuation.intervention_ref.size() > 512 || continuation.region.layer_indices.empty() ||
             continuation.region.anchor_layer_index == 0 || !finite(continuation.search_score) ||
-            !valid_depth(evidence_depth)) {
+            !valid_depth(evidence_depth, allow_uncredited_bootstrap)) {
         error = "FlyDelta continuation or evidence depth is invalid";
         return false;
     }

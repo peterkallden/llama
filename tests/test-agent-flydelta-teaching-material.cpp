@@ -7,6 +7,8 @@
 #include <nlohmann/json.hpp>
 
 #include <memory>
+#include <filesystem>
+#include <chrono>
 #include <thread>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
@@ -51,6 +53,19 @@ int main() {
     common_flydelta_teaching_material_store store;
     const auto material_identity = identity();
     CHECK(common_flydelta_teaching_material_identity_validate(material_identity, error));
+    CHECK(common_flydelta_teaching_material_execution_matches(material_identity,
+        "model:v1", "tokenizer:v1", "template:v1", "context:v1", "capture:v1", error));
+    CHECK(!common_flydelta_teaching_material_execution_matches(material_identity,
+        "model:v1", "tokenizer:other", "template:v1", "context:v1", "capture:v1", error));
+    CHECK(error.find("tokenizer fingerprint") != std::string::npos);
+    CHECK(!common_flydelta_teaching_material_execution_matches(material_identity,
+        "model:v1", "tokenizer:v1", "template:v1", "context:v1", "capture:other", error));
+    CHECK(error.find("capture layout revision") != std::string::npos);
+    auto incompatible_source = relation("relation:historical");
+    incompatible_source.tokenizer_fingerprint = "tokenizer:historical";
+    CHECK(!store.observe(incompatible_source, material_identity, error));
+    CHECK(incompatible_source.tokenizer_fingerprint == "tokenizer:historical");
+    CHECK(store.groups().empty());
     CHECK(store.observe(relation("relation:1"), material_identity, error));
     CHECK(store.observe(relation("relation:1"), material_identity, error));
 
@@ -147,6 +162,158 @@ int main() {
         "dataset.missing", "tool_choice/dataset/grouped_sum",
         family_group, family_available, error));
     CHECK(!family_available);
+
+    // Positive-only and contrast material are alternative representations of
+    // the same family. The established contrast route must win regardless of
+    // insertion order, while incomplete material must not mask a ready group.
+    auto positive_relation = [](const std::string & id) {
+        auto value = relation(id);
+        value.schema_version = 2;
+        value.positive_only = true;
+        value.source = common_adaptation_evidence_source::user_taught_concept;
+        value.baseline_ref.clear();
+        value.control_ref.clear();
+        value.baseline_origin = common_flydelta_teaching_origin::none;
+        value.control_origin = common_flydelta_teaching_origin::none;
+        value.conditioned_origin = common_flydelta_teaching_origin::user_supplied;
+        return value;
+    };
+    for (bool positive_first : {false, true}) {
+        common_flydelta_teaching_material_runtime mixed(material_identity);
+        if (positive_first) {
+            for (int i = 0; i < 3; ++i)
+                CHECK(mixed.observe_relation(positive_relation("positive:" + std::to_string(i)), error));
+        }
+        CHECK(mixed.observe_relation(relation("contrast:1"), error));
+        CHECK(mixed.observe_relation(relation("contrast:2"), error));
+        if (!positive_first) {
+            for (int i = 0; i < 3; ++i)
+                CHECK(mixed.observe_relation(positive_relation("positive:" + std::to_string(i)), error));
+        }
+        CHECK(mixed.resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+            family_group, family_available, error));
+        CHECK(family_available && !family_group.positive_only);
+        CHECK(mixed.resolve_group_for_behavior("tool_choice/dataset/grouped_sum",
+            family_group, family_available, error));
+        CHECK(family_available && !family_group.positive_only);
+        CHECK(mixed.resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+            family_group, family_available, error, common_flydelta_teaching_material_mode::positive_only));
+        CHECK(family_available && family_group.positive_only);
+        CHECK(mixed.store().group_ready("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+            material_identity, 2, family_group, error));
+        CHECK(family_group.relation_set_ready && !family_group.positive_only);
+    }
+    // A rejected contrast must not mutate or replace a valid selected group.
+    auto rejected_contrast = relation("contrast:rejected");
+    rejected_contrast.host_approved = false;
+    CHECK(!material_runtime->observe_relation(rejected_contrast, error));
+    CHECK(material_runtime->resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(family_available && !family_group.positive_only);
+
+    common_flydelta_teaching_material_store partially_ready;
+    CHECK(partially_ready.observe(relation("contrast:incomplete"), material_identity, error));
+    for (int i = 0; i < 3; ++i)
+        CHECK(partially_ready.observe(positive_relation("positive:ready:" + std::to_string(i)), material_identity, error));
+    CHECK(partially_ready.group_ready("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        material_identity, 2, family_group, error));
+    CHECK(family_group.relation_set_ready && family_group.positive_only);
+
+    // Missing extraction control is incomplete material, not rejected contrast.
+    common_flydelta_teaching_material_store missing_control;
+    auto pending_contrast = relation("contrast:pending-control");
+    pending_contrast.control_ref.clear();
+    pending_contrast.control_origin = common_flydelta_teaching_origin::none;
+    CHECK(missing_control.observe(pending_contrast, material_identity, error));
+    CHECK(missing_control.groups().front().relation_refs.empty());
+    CHECK(missing_control.groups().front().pending_relation_refs.size() == 1);
+    for (int i = 0; i < 3; ++i)
+        CHECK(missing_control.observe(positive_relation("positive:pending:" + std::to_string(i)), material_identity, error));
+    common_flydelta_teaching_material_store restored_pending;
+    CHECK(common_flydelta_teaching_material_store_from_json(
+        common_flydelta_teaching_material_store_to_json(missing_control), restored_pending, error));
+    CHECK(restored_pending.group_ready("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        material_identity, 2, family_group, error));
+    CHECK(family_group.relation_set_ready && family_group.positive_only);
+    CHECK(restored_pending.observe(relation("contrast:pending-control"), material_identity, error));
+    CHECK(restored_pending.groups().front().pending_relation_refs.empty());
+    CHECK(restored_pending.groups().front().relation_refs.size() == 1);
+
+    // Rejection is a durable assessment, not absence of usable material.
+    // Replay the real lifecycle codec after closing its JSONL writer.
+    const auto assessment_path = std::filesystem::temp_directory_path() /
+        ("flydelta-contrast-assessment-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".jsonl");
+    auto journal = std::make_shared<common_learning_jsonl_lifecycle_store>();
+    CHECK(journal->open(assessment_path, error));
+    auto assessed = std::make_shared<common_flydelta_teaching_material_runtime>(material_identity);
+    assessed->bind_assessment_journal(journal);
+    CHECK(assessed->observe_relation(relation("assessed:contrast:1"), error));
+    CHECK(assessed->observe_relation(relation("assessed:contrast:2"), error));
+    for (int i = 0; i < 3; ++i)
+        CHECK(assessed->observe_relation(positive_relation("assessed:positive:" + std::to_string(i)), error));
+    CHECK(assessed->resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(family_available && !family_group.positive_only);
+    const auto rejected_group_ref = family_group.group_ref;
+    CHECK(assessed->assess_contrast(rejected_group_ref, "verifier:assessment", {"evidence:rejected"}, true, error,
+        common_flydelta_teaching_material_revision(assessed->store().groups().front()), "verifier:v1"));
+    CHECK(!assessed->resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(error.find("reassessment") != std::string::npos);
+    CHECK(assessed->resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error, common_flydelta_teaching_material_mode::positive_only));
+    CHECK(family_available && family_group.positive_only);
+    // A rejected contrast need not have reached the accepted-material store.
+    // The resolver must still replay it before falling back to positives.
+    for (int i = 0; i < 3; ++i) {
+        auto positive = positive_relation("standalone:positive:" + std::to_string(i));
+        positive.teaching_key = "concept:standalone";
+        CHECK(assessed->observe_relation(positive, error));
+    }
+    auto rejected_source = relation("standalone:rejected");
+    rejected_source.teaching_key = "concept:standalone";
+    rejected_source.status = common_flydelta_teaching_relation_status::rejected;
+    rejected_source.baseline_ref.clear();
+    rejected_source.control_ref.clear();
+    const auto accepted_groups = assessed->store().groups().size();
+    CHECK(assessed->observe_relation(rejected_source, error));
+    CHECK(assessed->store().groups().size() == accepted_groups);
+    CHECK(!assessed->resolve_group_for_family("concept:standalone", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    const auto assessed_snapshot = common_flydelta_teaching_material_store_to_json(assessed->store());
+    assessed.reset();
+    journal.reset();
+    journal = std::make_shared<common_learning_jsonl_lifecycle_store>();
+    CHECK(journal->open(assessment_path, error));
+    assessed = std::make_shared<common_flydelta_teaching_material_runtime>(material_identity);
+    CHECK(common_flydelta_teaching_material_store_from_json(assessed_snapshot, assessed->store(), error));
+    assessed->bind_assessment_journal(journal);
+    CHECK(!assessed->resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(!assessed->resolve_group_for_family("concept:standalone", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(assessed->resolve_group_for_family("concept:standalone", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error, common_flydelta_teaching_material_mode::positive_only));
+    CHECK(family_available && family_group.positive_only);
+    CHECK(assessed->observe_relation(relation("assessed:contrast:3"), error));
+    CHECK(!assessed->resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(!assessed->assess_contrast(rejected_group_ref, "verifier:assessment", {"evidence:revalidated"}, false, error,
+        "sha256:stale-material", "verifier:v1"));
+    CHECK(assessed->assess_contrast(rejected_group_ref, "verifier:assessment", {"evidence:revalidated"}, false, error,
+        common_flydelta_teaching_material_revision(assessed->store().groups().front()), "verifier:v1"));
+    CHECK(assessed->resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    CHECK(family_available && !family_group.positive_only);
+    // A later rejection must not be swallowed by an earlier idempotency key.
+    CHECK(assessed->assess_contrast(rejected_group_ref, "verifier:assessment", {"evidence:rejected"}, true, error,
+        common_flydelta_teaching_material_revision(assessed->store().groups().front()), "verifier:v1"));
+    CHECK(!assessed->resolve_group_for_family("dataset.grouped_sum.v1", "tool_choice/dataset/grouped_sum",
+        family_group, family_available, error));
+    assessed.reset();
+    journal.reset();
+    std::error_code assessment_cleanup_error;
+    std::filesystem::remove(assessment_path, assessment_cleanup_error);
 
     // Concurrent workers update the same durable index through the runtime
     // facade. Neither completed relation may be lost from the saved snapshot.
@@ -366,5 +533,51 @@ int main() {
     };
     CHECK(common_flydelta_evaluate_job(challenge, evaluator_config, callbacks, evaluator_result, error));
     CHECK(evaluator_result.next_action == common_flydelta_next_action::retain && evaluator_result.graft_direction_refs.empty());
+    // An explicit v2 representation-only relation has no fake contrast.
+    auto positive_sample = relation("positive:1");
+    positive_sample.schema_version = 2;
+    positive_sample.positive_only = true;
+    positive_sample.source = common_adaptation_evidence_source::user_taught_concept;
+    positive_sample.baseline_ref.clear(); positive_sample.control_ref.clear();
+    positive_sample.baseline_origin = common_flydelta_teaching_origin::none;
+    positive_sample.control_origin = common_flydelta_teaching_origin::none;
+    CHECK(common_flydelta_teaching_relation_validate(positive_sample, error));
+    common_learning_transaction positive_transaction;
+    positive_transaction.id = "transaction:positive";
+    common_adaptation_evidence_relation behavioral_relation;
+    CHECK(!common_agent_teaching_relation_to_evidence_relation(
+        positive_sample, positive_transaction, behavioral_relation, error));
+    auto wrong_mode = positive_sample;
+    wrong_mode.schema_version = 1;
+    CHECK(!common_flydelta_teaching_relation_validate(wrong_mode, error));
+    CHECK(store.observe(positive_sample, material_identity, error));
+    const auto positive_group_ref = store.groups().back().group_ref;
+    CHECK(positive_group_ref != group.group_ref && store.groups().back().positive_only);
+    CHECK(!store.groups().back().relation_set_ready);
+    for (int i = 2; i <= 3; ++i) {
+        auto next = positive_sample;
+        next.id += ":" + std::to_string(i);
+        next.task_fingerprint += ":" + std::to_string(i);
+        next.conditioned_ref += ":" + std::to_string(i);
+        CHECK(store.observe(next, material_identity, error));
+    }
+    CHECK(store.groups().back().relation_set_ready && !store.groups().back().trajectory_material_ready);
+    for (int i = 1; i <= 3; ++i) CHECK(store.observe_trajectory(positive_group_ref,
+        "positive-trajectory:" + std::to_string(i), material_identity, error));
+    common_flydelta_teaching_material_store positive_restored;
+    CHECK(common_flydelta_teaching_material_store_from_json(
+        common_flydelta_teaching_material_store_to_json(store), positive_restored, error));
+    CHECK(positive_restored.groups().back().positive_only &&
+        positive_restored.groups().back().trajectory_material_ready);
+    auto positive_plan = capture_plan;
+    positive_plan.schema_version = 2; positive_plan.positive_only = true;
+    positive_plan.baseline_ref.clear(); positive_plan.control_ref.clear();
+    CHECK(common_flydelta_concept_capture_plan_validate(positive_plan, error));
+    CHECK(common_flydelta_concept_capture_plan_from_json(
+        common_flydelta_concept_capture_plan_to_json(positive_plan), decoded_capture_plan, error));
+    CHECK(decoded_capture_plan.positive_only && decoded_capture_plan.baseline_ref.empty());
+    positive_plan.schema_version = 1;
+    CHECK(!common_flydelta_concept_capture_plan_validate(positive_plan, error));
+
     return 0;
 }

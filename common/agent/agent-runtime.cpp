@@ -1,3 +1,4 @@
+#include "agent/method-phases.h"
 #include "agent/agent-runtime.h"
 #include "agent/grounding/workflow-grounding.h"
 #include "agent/context/observation-projection.h"
@@ -969,6 +970,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "\nDevelop a concrete plan using these method steps and dependencies. "
                 "Use step aliases for the method phases when applicable. This is a planning template, not proof that a step ran.\n" +
                 common_plan_make_blueprint_outline(method, method.id).summary;
+            if (method.phase_review_required) planning_request.prompt +=
+                "\nCreate a bounded slice for the first dependency-ready method phase only. "
+                "Later phases remain pending host review; do not claim the whole task is complete. "
+                "A phase may consist of reasoning without a tool; use ordinary family selection when tools are useful.";
+
             for (const auto & constraint : method.constraints)
                 planning_request.prompt += "\n[Host blueprint constraint " + constraint.id + "] " + constraint.description;
             for (const auto & assumption : method.assumptions)
@@ -1017,6 +1023,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         if (request.blueprint_definition) {
             const auto & method = *request.blueprint_definition;
             proposal.plan.source_revision = method.source_revision;
+            proposal.plan.phase_review_required = method.phase_review_required;
             proposal.plan.purpose = method.purpose.empty() ? method.goal : method.purpose;
             if (proposal.plan.success_criteria.empty()) proposal.plan.success_criteria = method.success_criteria;
             else if (!method.success_criteria.empty() && proposal.plan.success_criteria != method.success_criteria)
@@ -1739,7 +1746,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             common_runtime_trace_kind::failed, reason, plan.id);
     };
     const auto record_response_review = [&](const std::string & draft, bool accepted,
-            const std::string & action) {
+            const std::string & action, const std::string & task_outcome = std::string{}) {
         common_plan_operation operation;
         operation.kind = common_plan_operation_kind::record_observation;
         operation.plan_id = plan.id;
@@ -1754,6 +1761,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 {"evidence_version", plan.version}}.dump(), 1.0f};
         auto payload=json::parse(operation.observation->summary);
         payload["checklist"]=common_agent_review_checklist_json(checklist);
+        if (!task_outcome.empty()) payload["task_outcome"] = task_outcome;
         payload["synthesis_state"]=common_agent_synthesis_state_json(common_agent_resolve_synthesis_state(plan,request.synthesis_state));
         operation.observation->summary=payload.dump();
         append_trace(result, common_runtime_trace_stage::reflection,
@@ -2165,7 +2173,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 }
             }
             const std::string model_arguments_json = tool_call->arguments_json;
-            const bool defaults_applied = common_agent_runtime_apply_safe_tool_defaults(request, *tool_call);
+            std::string normalization_error;
+            const bool defaults_applied = common_agent_runtime_apply_safe_tool_defaults(request, *tool_call, &normalization_error);
             append_trace(result, common_runtime_trace_stage::tool, common_runtime_trace_kind::started,
                 "tool call prepared args=" + tool_argument_keys(tool_call->arguments_json) +
                     tool_argument_resource_ref(tool_call->arguments_json) +
@@ -2176,7 +2185,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     " defaults_applied=" + (defaults_applied ? "true" : "false") +
                     tool_trace_attempt_arguments(tool_step_id, model_arguments_json, tool_call->arguments_json),
                 plan.id, tool_step_id, tool_call->name);
-            if (!tools->validate(*tool_call, error)) {
+            if (!normalization_error.empty() || !tools->validate(*tool_call, error)) {
+                if (!normalization_error.empty()) error = normalization_error;
                 const std::string failure_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);
                 const auto validation_error = error;
                 auto repair = tools->make_repair_context(*tool_call, validation_error);
@@ -3090,6 +3100,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
         }
         if (artifact_report_ready || !request.enable_reflection) {
+            if (common_agent_method_has_remaining(plan)) {
+                stop_unverified_response("phased method requires phase review before final acceptance");break;
+            }
             if (artifact_report_ready && !record_response_review(draft, true, "verified_report_export")) {
                 result.error = error; return result;
             }
@@ -3215,18 +3228,41 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             stop_unverified_response("invalid reflection checklist: "+error,common_agent_failure_class::validation);
             break;
         }
+        if (plan.phase_review_required && !reflection.phase_reviews.empty()) {
+            json phase_progress;
+            if (!common_agent_method_review(plan,reflection.phase_reviews,phase_progress,error)) { result.error=error;return result; }
+            common_plan_operation observed;observed.kind=common_plan_operation_kind::record_observation;
+            observed.plan_id=plan.id;observed.expected_version=plan.version;
+            observed.reason_summary="host-validated model method phase decisions";
+            observed.observation=common_plan_observation{"method-review:"+std::to_string(plan.version),"method_phase_review",
+                json{{"schema","method-phase-review.v1"},{"method_revision",plan.source_revision},
+                    {"phases",phase_progress}}.dump(),0.0f};
+            if (!store.apply(observed,plan,error)) {result.error=error;return result;}
+            append_trace(result,common_runtime_trace_stage::plan,common_runtime_trace_kind::updated,
+                observed.observation->summary,plan.id);
+        }
         checklist=std::move(next_checklist);
         request.review_checklist=checklist;
         append_trace(result,common_runtime_trace_stage::reflection,common_runtime_trace_kind::decided,
             "review_round="+std::to_string(checklist.round)+" blocking="+std::to_string(checklist.blocking.size())+
             " advisory="+std::to_string(checklist.advisory.size()),plan.id);
+        // A phase decision that asks for further execution is a planning
+        // continuation, not an answer wording retry. It consumes the existing
+        // runtime/tool/revision budgets; reserve answer-review rounds for the
+        // eventual final verdict and response repairs.
+        const bool method_continuation_requested = plan.phase_review_required &&
+            common_agent_method_has_remaining(plan) && reflection.task_outcome=="remaining" &&
+            (reflection.next_action==common_agent_reflection_next_action::revise_plan ||
+             reflection.next_action==common_agent_reflection_next_action::escalate_research ||
+             reflection.next_action==common_agent_reflection_next_action::escalate_deliberate);
+        if (method_continuation_requested && reflection_review_count) --reflection_review_count;
         const bool review_accepted = checklist.blocking.empty() &&
             !common_agent_resolve_synthesis_state(plan,request.synthesis_state).mandatory_remaining &&
             reflection.decision == common_reflection_decision::accept &&
             reflection.next_action == common_agent_reflection_next_action::accept &&
             reflection.proposed_plan_operations.empty();
         if (!record_response_review(draft, review_accepted,
-                common_agent_reflection_next_action_name(reflection.next_action))) {
+                common_agent_reflection_next_action_name(reflection.next_action), reflection.task_outcome)) {
             result.error = error; return result;
         }
         if (reflection.decision == common_reflection_decision::abort ||
@@ -3252,7 +3288,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
         }
         const bool tool_execution_closed = common_plan_tool_execution_closed(plan);
-        if (tool_execution_closed) {
+        if (tool_execution_closed && !(plan.phase_review_required && !plan.workflow_definition &&
+                reflection.task_outcome == "remaining")) {
             bool attempted_reopen = reflection.decision == common_reflection_decision::replan;
             bool policy_violation = false;
             for (const auto & op : reflection.proposed_plan_operations) {
@@ -3350,12 +3387,24 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 error.clear();
             }
         }
+        // A descriptive next_action is guidance, not an executable plan slice.
+        // Feed it to the method planner when it is the only proposed operation.
+        if (method_continuation_requested &&
+                reflection.next_action == common_agent_reflection_next_action::revise_plan &&
+                !reflection.proposed_plan_operations.empty() &&
+                std::all_of(reflection.proposed_plan_operations.begin(), reflection.proposed_plan_operations.end(),
+                    [](const auto & op) { return op.kind == common_plan_operation_kind::set_next_action; })) {
+            for (const auto & op : reflection.proposed_plan_operations)
+                if (op.value && !op.value->empty()) reflection.revision_guidance.push_back(*op.value);
+            reflection.proposed_plan_operations.clear();
+        }
         if (reflection.next_action == common_agent_reflection_next_action::revise_plan &&
                 reflection.proposed_plan_operations.empty()) {
             if (!prepare_common_agent_reflection_plan_repair(turn, plan, planner, reflection)) {
                 const auto reason = "reflection evidence repair could not be prepared: " + error;
                 const bool cancelled = result.response_generation_status == common_agent_generation_status::cancelled;
-                stop_unverified_response(reason, common_agent_failure_class::execution);
+                const bool capacity_exhausted = error.find("method plan step capacity exhausted") != std::string::npos;
+                stop_unverified_response(reason, capacity_exhausted ? common_agent_failure_class::limit : common_agent_failure_class::execution);
                 if (cancelled) {
                     result.response_generation_status = common_agent_generation_status::cancelled;
                     result.response_stop_reason = common_agent_generation_stop_reason::cancelled;

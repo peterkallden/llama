@@ -12,6 +12,7 @@ struct common_plan_proposal {
     common_plan_state plan;
     std::vector<common_plan_operation> operations;
     std::optional<common_agent_generated_text_result> generation;
+    std::string selected_method_phase; // Validated host phase identity; continuation only.
 };
 
 class common_planner {

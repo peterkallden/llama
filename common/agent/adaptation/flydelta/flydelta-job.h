@@ -83,6 +83,8 @@ struct common_flydelta_experiment_job {
     std::string code_revision;
     // Frozen per-job proposal policy. Missing in legacy jobs means local only.
     size_t whirlpool_global_probes_per_round = 1;
+    // Immutable source artifact; unlike candidate_ref this survives search refinements.
+    std::string concept_synthesis_ref;
 };
 
 // Stable across capture/synthesis/search follow-ups; changing any immutable

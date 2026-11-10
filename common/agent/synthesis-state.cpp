@@ -15,7 +15,7 @@ json items_json(const std::vector<common_agent_review_item> & items) {
 std::string common_agent_synthesis_evidence_fingerprint(const common_plan_state & plan) {
     auto evidence=json::array();
     for(const auto & observation:plan.observations) {
-        if(observation.source=="response_review" || observation.source=="reflection_hint" ||
+        if(observation.source=="response_review" || observation.source=="method_phase_review" || observation.source=="reflection_hint" ||
             observation.source=="workflow_continuation_resolution" || observation.source=="unverified_draft") continue;
         evidence.push_back({{"id",observation.id},{"source",observation.source},{"summary",observation.summary}});
     }
@@ -84,7 +84,7 @@ json common_agent_synthesis_state_json(const common_agent_synthesis_state & stat
     const char * evidence = state.evidence==common_agent_synthesis_evidence::sufficient ? "sufficient" :
         state.evidence==common_agent_synthesis_evidence::partial ? "partial" :
         state.evidence==common_agent_synthesis_evidence::insufficient ? "insufficient" : "unknown";
-    return {{"work",work},{"evidence",evidence},{"mandatory_remaining",state.mandatory_remaining},
+    return {{"work",work},{"completion_scope","scheduled_plan_steps"},{"evidence",evidence},{"mandatory_remaining",state.mandatory_remaining},
         {"partial_allowed",state.partial_allowed},{"stop_reason",state.stop_reason},{"continuation_reason",state.continuation_reason},
         {"evidence_ids",state.evidence_ids},{"plan_id",state.plan_id},{"plan_version",state.plan_version},
         {"evidence_fingerprint",state.evidence_fingerprint}};
@@ -92,7 +92,9 @@ json common_agent_synthesis_state_json(const common_agent_synthesis_state & stat
 std::string common_agent_render_synthesis_state(const common_agent_synthesis_state & state,const std::string & phase) {
     auto value=common_agent_synthesis_state_json(state); value["phase"]=phase;
     return "\n[Host execution and answer contract]\n"+value.dump()+
-        "\nWork completion and evidence completeness are separate. When partial_allowed is true and mandatory_remaining is false, "
+        "\nThe work field reports scheduled plan-step execution, not satisfaction of the user's full task. "
+        "Review the requested outcome separately; additional authorized inspection or operations require plan repair. "
+        "Work completion and evidence completeness are separate. When partial_allowed is true and mandatory_remaining is false, "
         "a correctly qualified partial report is acceptable; unavailable evidence alone is not a blocking defect. "
         "Reject unsupported claims, false access claims or omitted material limitations. Advisory wording preferences do not require revision.\n";
 }

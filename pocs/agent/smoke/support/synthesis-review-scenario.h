@@ -69,6 +69,7 @@ inline common_agent_result run(bool reject_all,bool fail_generation=false,bool r
     common_agent_runtime runtime(store,p,e,r);
     common_agent_request request;request.prompt="Write a partial report from the available abstract";
     request.max_iterations=6;request.max_reflection_rounds=2;request.enable_memory=false;
+    if(resume) { request.session_id="review-session";request.plan_scope=common_plan_scope::session; }
     common_agent_synthesis_state state;
     state.evidence=common_agent_synthesis_evidence::partial;state.partial_allowed=true;
     state.stop_reason="source_access_blocked";request.synthesis_state=state;
@@ -85,7 +86,8 @@ inline common_agent_result run(bool reject_all,bool fail_generation=false,bool r
             "generation transport failure was relabelled as a complete review draft");
         return result;
     }
-    require(r.calls==2 && e.calls==2,"review did not perform exactly one bounded revision");
+    require(r.calls==2 && e.calls==2,"review did not perform exactly one bounded revision: reviews="+
+        std::to_string(r.calls)+" drafts="+std::to_string(e.calls)+" error="+result.error);
     if(reject_all) {
         require(!result.error.empty() && result.response.empty() && result.unverified_draft &&
             result.unverified_draft->issues.size()==1,"rejected response was not retained as a separate draft");

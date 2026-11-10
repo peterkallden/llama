@@ -47,7 +47,8 @@ bool common_parse_model_tool_call(
 // Parse the compact multi-step planner form into the canonical JSON proposal
 // consumed by the ordinary plan parser and host validation pipeline.
 // Grammar: `plan goal="..."`, then one `step [as=alias] | open! TOOL ...`
-// line per operation. Steps are sequential unless the host adds dependencies.
+// line per operation. When explicitly enabled, `step | reason` is a reasoning
+// step. Steps are sequential unless the host adds dependencies.
 bool common_parse_compact_dsl_plan(
         const std::string & text,
         std::string & proposal_json,
@@ -57,7 +58,8 @@ bool common_parse_compact_dsl_plan(
         const std::string & text,
         const std::vector<common_chat_tool> & tools,
         std::string & proposal_json,
-        std::string & error);
+        std::string & error,
+        bool allow_reasoning = false);
 
 // Normalize a string that the caller's schema explicitly defines as a
 // comma-separated list. Whitespace inside ordinary scalar strings is never

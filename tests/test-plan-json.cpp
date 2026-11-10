@@ -437,6 +437,7 @@ int main() {
     assert(compact_schema_error.empty());
     assert(model_compact_schema.find("tool form: tool:string; args:object") != std::string::npos);
     assert(model_compact_schema.find("reasoning form: mode:reasoning") != std::string::npos);
+    assert(model_compact_schema.find("objective?:string") != std::string::npos);
     const auto tool_required_compact_schema = common_render_compact_plan_schema(
         common_plan_model_facing_json_schema({"document.table", "data.aggregate"}, true), compact_schema_error);
     assert(compact_schema_error.empty());

@@ -36,6 +36,12 @@ make_daemon_flydelta_resource_binding_factory(
 
         daemon_flydelta_bind_execution_callbacks(
             provider, teaching_material_runtime, binding);
+        binding.admit_concept_experiment = [provider, queue_root = options.adaptation_flydelta_queue_path](
+                const common_flydelta_experiment_job & context, common_flydelta_teaching_material_mode mode,
+                common_flydelta_experiment_collection_result & result, std::string & error) {
+            return daemon_flydelta_admit_concept_experiment(provider, queue_root, {}, context, mode, result, error);
+        };
+
         binding.register_evaluator = [provider](common_flydelta_evaluator_config & config,
                 common_flydelta_evaluator_callbacks & callbacks, std::string & callback_error) {
             return daemon_flydelta_register_evaluator(provider, config, callbacks, callback_error);
@@ -109,6 +115,8 @@ bool configure_daemon_flydelta_teaching_material(
     identity.scope_fingerprint = "daemon:teaching-material-v1";
     identity.verifier_revision = "daemon:host-verifier-v1";
 
+    if (runtime.flydelta_execution_identity) identity = *runtime.flydelta_execution_identity;
+
     // The adaptation transaction path is already the host's durable Cozo
     // location. Cozo stores teaching material in its own relation, so this
     // does not mix ledger rows with material rows. An empty path deliberately
@@ -131,7 +139,8 @@ bool configure_daemon_flydelta_teaching_material(
             material_runtime, configured_observer, resource_store](
             const common_flydelta_teaching_relation & relation,
             std::string & observer_error) {
-        if (configured_observer && !configured_observer(relation, observer_error)) {
+        if (relation.status != common_flydelta_teaching_relation_status::rejected &&
+                configured_observer && !configured_observer(relation, observer_error)) {
             return false;
         }
         agent_resource_read_authority authority;
@@ -323,14 +332,42 @@ bool configure_daemon_flydelta_runtime(
         const daemon_options & options,
         common_agent_daemon_runtime & runtime,
         std::string & error) {
-    if (!configure_daemon_flydelta_teaching_material(options, runtime, error)) {
-        error = "FlyDelta teaching-material runtime initialization failed: " + error;
-        return false;
-    }
     if (!configure_daemon_flydelta_review_store(options, runtime, error)) {
         error = "FlyDelta review-store initialization failed: " + error;
         return false;
     }
+    if (options.adaptation_flydelta_enabled && !runtime.flydelta_execution_identity) {
+        if (!runtime.model_residency) {
+            error = "FlyDelta teaching material requires a resident execution profile";
+            return false;
+        }
+        common_flydelta_teaching_material_identity identity;
+        common_agent_runtime_model_resident_handle handle;
+        const auto profile = options.model_profile.empty()
+            ? runtime.model_residency->catalog().default_profile : options.model_profile;
+        if (!runtime.model_residency->acquire(profile, handle, error)) return false;
+        const auto loaded = common_agent_runtime_loaded_model_cast(handle.model);
+        const bool resolved = loaded && loaded->server_context_host &&
+            daemon_flydelta_execution_identity(options, loaded->server_context_host, identity, error);
+        if (resolved) {
+            loaded->flydelta_execution_identity = std::make_shared<const common_flydelta_teaching_material_identity>(identity);
+            runtime.flydelta_execution_identity = loaded->flydelta_execution_identity;
+        }
+        std::string release_error;
+        const bool released = runtime.model_residency->release(handle, release_error);
+        if (!resolved) {
+            if (error.empty()) error = "FlyDelta teaching material requires a loaded server-context profile";
+            return false;
+        }
+        if (!released) { error = release_error; return false; }
+    }
+
+    if (!configure_daemon_flydelta_teaching_material(options, runtime, error)) {
+        error = "FlyDelta teaching-material runtime initialization failed: " + error;
+        return false;
+    }
+    if (runtime.flydelta_teaching_material_runtime)
+        runtime.flydelta_teaching_material_runtime->bind_assessment_journal(runtime.flydelta_review_lifecycle_store);
     if (options.adaptation_flydelta_enabled &&
             !runtime.flydelta_server_binding_factory &&
             !runtime.flydelta_server_binding_callbacks.has_value()) {
@@ -364,6 +401,8 @@ void configure_daemon_flydelta_runtime_config(
                 ? "model:" + options.model
                 : "profile:" + options.model_profile)
             : options.adaptation_flydelta_model_profile_fingerprint;
+    if (runtime.flydelta_execution_identity)
+        config.flydelta_model_profile_fingerprint = runtime.flydelta_execution_identity->model_profile_fingerprint;
     config.flydelta_capture_layout_revision =
         options.adaptation_flydelta_capture_layout_revision;
     config.flydelta_max_capture_candidates =

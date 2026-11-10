@@ -267,6 +267,24 @@ public:
                     {"name", "agent_response"}, {"strict", selection_.strict_json_schema}, {"schema", response_schema}}}};
             }
         } catch (const std::exception &) {
+            // Identify the failing field without copying prompt content or
+            // provider credentials into the diagnostic.
+            for (size_t i = 0; i < messages.size(); ++i) {
+                try { (void) messages[i].to_json_oaicompat().dump(); }
+                catch (const std::exception &) {
+                    return fail("HTTP inference message " + std::to_string(i) + " cannot be serialized as JSON (check UTF-8)");
+                }
+            }
+            for (size_t i = 0; i < tools.size(); ++i) {
+                try { (void) json::parse(tools[i].parameters); }
+                catch (const std::exception &) {
+                    return fail("HTTP inference tool schema " + std::to_string(i) + " is invalid JSON");
+                }
+            }
+            if (!request.json_schema.empty()) {
+                try { (void) json::parse(request.json_schema); }
+                catch (const std::exception &) { return fail("HTTP inference response schema is invalid JSON"); }
+            }
             return fail("HTTP inference request contains invalid message or JSON-schema data");
         }
 

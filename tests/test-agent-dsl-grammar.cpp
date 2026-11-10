@@ -90,6 +90,11 @@ void plan_contracts() {
     std::string canonical;
     require(common_parse_compact_dsl_plan(chain, {inspect, lookup}, canonical, error), error);
     const auto single = common_build_tool_dsl_grammar({inspect}, common_tool_dsl_grammar_form::plan, error, 1);
+    const auto repair_grammar=common_build_tool_dsl_grammar({inspect},common_tool_dsl_grammar_form::plan,error,2,32,{"r1"});
+    require(!repair_grammar.empty() && matches(repair_grammar,"plan goal=\"inspect\"\nstep as=fixed repair=r1 | open! code.inspect") &&
+        !matches(repair_grammar,"plan goal=\"inspect\"\nstep repair=r2 | open! code.inspect") &&
+        !matches(single,"plan goal=\"inspect\"\nstep repair=r1 | open! code.inspect"),
+        "repair grammar accepted unissued handles or changed ordinary plan syntax");
     require(matches(single, one) && !matches(single, one + "\nstep | open! code.inspect"), "one-step host bound was lost");
 }
 

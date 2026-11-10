@@ -439,6 +439,14 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
         has_model_work_step = true;
         common_plan_operation operation;
         operation.kind = common_plan_operation_kind::add_step;
+        if (source.contains("repair")) {
+            if (!source["repair"].is_string() || source["repair"].get<std::string>().empty() ||
+                    source["repair"].get<std::string>().size() > 64) {
+                error = "repair must name a host-issued repair handle"; return false;
+            }
+            operation.kind = common_plan_operation_kind::replace_step;
+            operation.step_id = source["repair"].get<std::string>();
+        }
         operation.reason_summary = source.value("reason_summary", std::string());
         operation.step = std::move(step);
         operations.push_back(std::move(operation));
@@ -511,7 +519,8 @@ std::string common_plan_model_facing_json_schema(
         const std::vector<std::string> & allowed_tools,
         bool require_tool_execution,
         size_t max_steps,
-        size_t max_goal_length) {
+        size_t max_goal_length,
+        const std::vector<std::string> & repair_handles) {
     max_steps = std::max<size_t>(1, std::min<size_t>(max_steps, 5));
     max_goal_length = std::max<size_t>(1, std::min<size_t>(max_goal_length, 256));
     json tool_schema = { {"type", "string"}, {"maxLength", 256} };
@@ -521,7 +530,7 @@ std::string common_plan_model_facing_json_schema(
     // host-owned final response and a tool-required turn has nothing to run.
     // Keep the richer persisted-plan grammar unchanged; this is only the
     // model-facing projection used while generating a new compact plan.
-    const json tool_step_schema = {
+    json tool_step_schema = {
         {"type", "object"}, {"additionalProperties", false}, {"required", {"tool", "args"}},
         {"properties", {
             {"tool", tool_schema},
@@ -530,10 +539,13 @@ std::string common_plan_model_facing_json_schema(
             {"mode", {{"type", "string"}, {"enum", {"tool"}}}}
         }}
     };
+    if (!repair_handles.empty())
+        tool_step_schema["properties"]["repair"] = {{"type", "string"}, {"enum", repair_handles}};
     const json reasoning_step_schema = {
         {"type", "object"}, {"additionalProperties", false}, {"required", {"mode"}},
         {"properties", {
             {"as", {{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}},
+            {"objective", {{"type", "string"}, {"minLength", 1}, {"maxLength", 256}}},
             {"mode", {{"type", "string"}, {"enum", {"reasoning"}}}}
         }}
     };
@@ -630,8 +642,19 @@ std::string common_render_compact_plan_schema(
         // work from explicit reasoning. Preserve that distinction in the
         // compact prompt instead of rendering both forms as optional fields.
         step_fields = "tool form: tool:string; args:object; as?:string; mode?:tool; "
-            "reasoning form: mode:reasoning; as?:string";
+            "reasoning form: mode:reasoning; objective?:string; as?:string";
     }
+    auto repair_schema=json::object();
+    const auto repair_properties=[&](const json & schema) {
+        if (!schema.is_object()) return json::object();
+        const auto properties=schema.value("properties",json::object());
+        return properties.is_object() ? properties.value("repair",json::object()) : json::object();
+    };
+    if (step_schema.contains("oneOf") && step_schema["oneOf"].is_array() && !step_schema["oneOf"].empty())
+        repair_schema=repair_properties(step_schema["oneOf"][0]);
+    else repair_schema=repair_properties(step_schema);
+    if (repair_schema.is_object() && !repair_schema.empty())
+        step_fields += "; repair?:host handle from "+repair_schema.value("enum",json::array()).dump();
     std::string result = "plan\nrequired: " + required +
         "\noptional: " + (optional.empty() ? "none" : optional) +
         "\nsteps: step[]" +

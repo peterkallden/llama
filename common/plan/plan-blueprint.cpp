@@ -1,4 +1,5 @@
 #include "plan/plan-blueprint.h"
+#include "plan/plan-context.h"
 
 #include <algorithm>
 #include <queue>
@@ -45,6 +46,15 @@ bool common_plan_validate_blueprint(
                 !workflow_refs.insert(binding.workflow_ref + "@" + binding.workflow_revision).second) {
             error = "blueprint contains an invalid or duplicate workflow binding";
             return false;
+        }
+    }
+    if (blueprint.supersedes_blueprints.size()>16 || (blueprint.phase_review_required && !blueprint.workflow_bindings.empty())) {
+        error="invalid phased method or supersession bounds";return false;
+    }
+    std::unordered_set<std::string> replacements;
+    for (const auto & id:blueprint.supersedes_blueprints) {
+        if (id.empty() || id.size()>256 || !replacements.insert(id).second) {
+            error="invalid or duplicate superseded blueprint identity";return false;
         }
     }
     if (blueprint.steps.empty() || blueprint.steps.size() > config.maximum_steps) {
@@ -146,6 +156,8 @@ bool common_plan_instantiate_blueprint(
     out.session_id = session_id;
     out.source_revision = blueprint.source_revision;
     out.selection_description = blueprint.selection_description;
+    out.phase_review_required = blueprint.phase_review_required;
+    out.supersedes_blueprints = blueprint.supersedes_blueprints;
     out.kind = common_plan_kind::task;
     out.derived_from_plan_id = blueprint.id;
     out.scope = scope;
@@ -188,6 +200,7 @@ bool common_plan_instantiate_blueprint(
         out.status = common_plan_status::active;
         break;
     }
+    if (out.phase_review_required) out.observations.push_back(common_plan_make_blueprint_outline(blueprint, instance_id));
     instance = std::move(out);
     error.clear();
     return true;

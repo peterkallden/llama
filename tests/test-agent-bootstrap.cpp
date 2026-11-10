@@ -23,7 +23,7 @@ public:
         seen = candidates;
         common_blueprint_selection selection;
         selection.decision = common_blueprint_selection_decision::instantiate;
-        selection.logical_id = "repository-change";
+        selection.logical_id = "fixture-change";
         selection.confidence = 0.9f;
         return selection;
     }
@@ -41,9 +41,31 @@ class low_confidence_selector final : public common_blueprint_selector {
 public:
     common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> &, std::string & error) override {
         error.clear();
-        return {common_blueprint_selection_decision::instantiate, "repository-change", 0.1f, "model selected below threshold"};
+        return {common_blueprint_selection_decision::instantiate, "fixture-change", 0.1f, "model selected below threshold"};
     }
 };
+
+// Selection/compatibility contracts use test-owned methods, not retired
+// development content in the production starter or built-in fallback.
+static common_agent_bootstrap_package selection_fixture_package() {
+    auto package=common_agent_default_bootstrap_package();
+    package.name="selection-fixture";
+    package.procedures.push_back({"fixture-evidence","Retain fixture evidence.","Fixture evidence"});
+    package.procedures.push_back({"fixture-diagnosis","Inspect fixture failures.","Fixture diagnosis"});
+    common_agent_bootstrap_blueprint change;
+    change.id="fixture-change";change.purpose="Exercise scoped method selection.";
+    change.goal="Implement the fixture change";
+    change.success_criteria="The requested change is implemented and verified by relevant tests.";
+    change.constraints={{"scope","Keep the fixture bounded",true},{"evidence","Use inspected evidence",true}};
+    change.assumptions={{"workspace","A fixture workspace is available",0.9f,true,{}}};
+    change.steps={{"inspect","Inspect","Inspect the fixture"},{"verify","Verify","Verify the fixture"}};
+    change.steps[1].depends_on={"inspect"};
+    change.next_action="inspect";
+    auto regression=change;regression.id="fixture-regression";regression.goal="Diagnose the fixture regression";
+    std::swap(package.blueprints[0],package.blueprints[1]); // Preserve the fixture dataset slot.
+    package.blueprints.insert(package.blueprints.begin(),change);package.blueprints.push_back(regression);
+    return package;
+}
 
 int main() {
     common_memory_in_memory_store memory;
@@ -64,7 +86,7 @@ int main() {
     };
 
     common_agent_bootstrap_result first;
-    assert(common_agent_install_default_bootstrap(memory, plans, config, embed, first, error));
+    assert(common_agent_install_bootstrap_package(memory, plans, config, selection_fixture_package(), embed, first, error));
     assert(first.installed_memory_ids.size() == 4);
     assert(first.installed_blueprint_ids.size() == 4);
     const auto procedure = memory.get(first.installed_memory_ids.front(), error);
@@ -81,8 +103,8 @@ int main() {
     assert(error.empty() && bootstrap_procedures.size() == first.installed_memory_ids.size());
     const auto blueprint = plans.get(first.installed_blueprint_ids.front(), error);
     assert(blueprint && blueprint->kind == common_plan_kind::blueprint);
-    assert(blueprint->source_revision == "default@v1");
-    assert(blueprint->purpose == "Safely modify a repository while preserving intended behavior.");
+    assert(blueprint->source_revision == "selection-fixture@v1");
+    assert(blueprint->purpose == "Exercise scoped method selection.");
     assert(blueprint->constraints.size() == 2 && blueprint->assumptions.size() == 1);
     assert(!blueprint->steps.empty() && !blueprint->steps.front().tool_call);
 
@@ -90,7 +112,7 @@ int main() {
     host_config.session_id = "session-b";
     host_config.project_id.clear();
     common_agent_bootstrap_result host_install;
-    assert(common_agent_install_default_bootstrap(memory, plans, host_config, embed, host_install, error));
+    assert(common_agent_install_bootstrap_package(memory, plans, host_config, selection_fixture_package(), embed, host_install, error));
     const auto host_procedure = memory.get(host_install.installed_memory_ids.front(), error);
     assert(host_procedure && host_procedure->scope == common_memory_scope::global);
     const auto host_blueprint = plans.get(host_install.installed_blueprint_ids.front(), error);
@@ -123,15 +145,23 @@ int main() {
     assert(error.find("assumption") != std::string::npos);
 
     common_agent_bootstrap_result second;
-    assert(common_agent_install_default_bootstrap(memory, plans, config, embed, second, error));
+    assert(common_agent_install_bootstrap_package(memory, plans, config, selection_fixture_package(), embed, second, error));
     assert(second.installed_memory_ids.empty() && second.installed_blueprint_ids.empty());
     assert(second.existing_memory_ids.size() == 4 && second.existing_blueprint_ids.size() == 4);
 
     std::string package_json;
     const auto default_package = common_agent_default_bootstrap_package();
-    assert(default_package.blueprints.size() == 4);
-    assert(default_package.blueprints[2].id == "dataset-inspect-summarize");
-    assert(default_package.blueprints[3].id == "openapi-paged-retrieval");
+    assert(default_package.blueprints.size() == 2 && default_package.procedures.size() == 2);
+    assert(default_package.blueprints[0].id == "dataset-inspect-summarize");
+    assert(default_package.blueprints[1].id == "openapi-paged-retrieval");
+    {
+        common_memory_in_memory_store fallback_memory;common_plan_in_memory_store fallback_plans;
+        assert(fallback_memory.open("",error) && fallback_plans.open("",error));
+        common_agent_bootstrap_result fallback;
+        assert(common_agent_install_default_bootstrap(fallback_memory,fallback_plans,config,embed,fallback,error));
+        assert(fallback.installed_memory_ids.size()==2 && fallback.installed_blueprint_ids.size()==2);
+    }
+
     assert(common_agent_package_to_json(default_package, package_json, error));
     common_agent_bootstrap_package parsed_package;
     assert(common_agent_package_parse_json(package_json, parsed_package, error));
@@ -264,7 +294,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v48");
+        checked_in_starter.version == "v49");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -325,30 +355,24 @@ int main() {
     assert(has_procedure("development-diagnosis-v1"));
     assert(has_procedure("development-verification-authority-v1"));
 
-    for (const auto * id : {"repository-change-v4", "regression-repair-v4",
-            "development-compile-diagnosis-v1", "development-runtime-diagnosis-v1"}) {
-        const auto blueprint = std::find_if(checked_in_starter.blueprints.begin(),
-            checked_in_starter.blueprints.end(), [&](const auto & item) { return item.id == id; });
-        assert(blueprint != checked_in_starter.blueprints.end());
-        assert(blueprint->source_revision == "agent-workflows-starter@v48");
-        // A fixed legacy workflow would restrict the tool envelope and prevent
-        // the normal planner from choosing optional knowledge sources.
-        assert(blueprint->workflow_bindings.empty());
-        assert(std::find(blueprint->procedure_refs.begin(), blueprint->procedure_refs.end(),
-            "development-knowledge-gap-v1") != blueprint->procedure_refs.end());
-        assert(std::find(blueprint->procedure_refs.begin(), blueprint->procedure_refs.end(),
-            "development-verification-authority-v1") != blueprint->procedure_refs.end());
-        assert(std::any_of(blueprint->steps.begin(), blueprint->steps.end(),
-            [](const auto & step) { return step.id == "knowledge"; }));
-        assert(std::none_of(blueprint->steps.begin(), blueprint->steps.end(),
-            [](const auto & step) { return step.tool_call || step.selected_tool; }));
+    for (const auto * retired : {"repository-investigation-v2","repository-change-v3","repository-change-v4",
+            "regression-repair-v3","regression-repair-v4","development-compile-diagnosis-v1","development-runtime-diagnosis-v1"}) {
+        assert(std::none_of(checked_in_starter.blueprints.begin(),checked_in_starter.blueprints.end(),
+            [&](const auto & b){return b.id==retired;}));
     }
-    for (const auto * id : {"development-compile-diagnosis-v1", "development-runtime-diagnosis-v1"}) {
-        const auto blueprint = std::find_if(checked_in_starter.blueprints.begin(),
-            checked_in_starter.blueprints.end(), [&](const auto & item) { return item.id == id; });
-        assert(blueprint != checked_in_starter.blueprints.end() && blueprint->workflow_bindings.empty());
-        assert(std::find(blueprint->procedure_refs.begin(), blueprint->procedure_refs.end(),
-            "development-diagnosis-v1") != blueprint->procedure_refs.end());
+    for (const auto * retired : {"workflow://repository/inspection","workflow://repository/change","workflow://development/regression-repair"}) {
+        assert(std::none_of(checked_in_starter.workflows.begin(),checked_in_starter.workflows.end(),
+            [&](const auto & w){return w.definition.workflow_ref==retired;}));
+    }
+    for (const auto * id : {"repository-change-v5","regression-repair-v5","repository-investigation-v3",
+            "development-compile-diagnosis-v2","development-runtime-diagnosis-v2"}) {
+        const auto blueprint=std::find_if(checked_in_starter.blueprints.begin(),checked_in_starter.blueprints.end(),
+            [&](const auto & item){return item.id==id;});
+        assert(blueprint!=checked_in_starter.blueprints.end() && blueprint->phase_review_required &&
+            blueprint->workflow_bindings.empty() && blueprint->supersedes_blueprints.empty() &&
+            blueprint->source_revision=="agent-workflows-starter@v49");
+        if (std::string(id)=="regression-repair-v5") assert(std::any_of(blueprint->steps.begin(),blueprint->steps.end(),
+            [](const auto & step){return step.id=="guard";}));
     }
 
     // Exercise the actual installer against an existing immutable blueprint.
@@ -360,23 +384,20 @@ int main() {
     common_plan_in_memory_store code_plans;
     require_code_workflow(code_memory.open("", error) && code_plans.open("", error),
         "code workflow stores failed to open");
-    auto older_package = checked_in_starter;
-    auto old_blueprint = std::find_if(older_package.blueprints.begin(), older_package.blueprints.end(),
-        [](const auto & b) { return b.id == "repository-change-v3"; });
-    require_code_workflow(old_blueprint != older_package.blueprints.end(), "change blueprint is missing");
-    old_blueprint->id = "repository-change-v2";
-    old_blueprint->source_revision = "agent-workflows-starter@v34";
-    old_blueprint->goal = "Preserved older change goal";
+    auto older_package=selection_fixture_package();
+    older_package.name="compatibility-fixture";
+    older_package.blueprints.resize(1);
+    older_package.blueprints.front().id="historical-method";
+    older_package.blueprints.front().goal="Preserved historical fixture goal";
     common_agent_bootstrap_result older_result, code_result, code_repeat;
     require_code_workflow(common_agent_install_bootstrap_package(code_memory, code_plans,
         config, older_package, embed, older_result, error), "old code package install failed");
     require_code_workflow(common_agent_install_bootstrap_package(code_memory, code_plans,
         config, checked_in_starter, embed, code_result, error), "improved code package install failed");
-    const auto old_change = code_plans.get("bootstrap:local:project:project-a:blueprint:repository-change-v2", error);
-    require_code_workflow(old_change && old_change->goal == "Preserved older change goal",
+    const auto old_change = code_plans.get("bootstrap:local:project:project-a:blueprint:historical-method", error);
+    require_code_workflow(old_change && old_change->goal == "Preserved historical fixture goal",
         "upgrade overwrote an immutable blueprint");
-    for (const auto * id : {"repository-investigation-v2", "code-overview-v2",
-            "code-entry-point-investigation-v2", "repository-change-v3", "regression-repair-v3"}) {
+    for (const auto * id : {"code-overview-v2", "code-entry-point-investigation-v2"}) {
         const auto plan = code_plans.get(std::string("bootstrap:local:project:project-a:blueprint:") + id, error);
         require_code_workflow(plan.has_value(), "improved code blueprint was not installed");
         require_code_workflow(plan->source_revision == "agent-workflows-starter@v35",
@@ -556,9 +577,9 @@ int main() {
     (*search_json)["transitions"][0]["max_pages"] = uint64_t(4294967301ULL);
     assert(!common_agent_package_parse_json(
         over_budget_package_json.dump(), over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 32 &&
-        checked_in_starter.blueprints.size() == 26);
-    assert(checked_in_starter.workflows.size() == 23);
+    assert(checked_in_starter.procedures.size() == 35 &&
+        checked_in_starter.blueprints.size() == 24);
+    assert(checked_in_starter.workflows.size() == 20);
     const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {
             return blueprint.id == "code-overview-v2";
@@ -947,7 +968,7 @@ int main() {
     assert(reparsed_eurostat_metadata != reparsed_starter.workflows.end() &&
         reparsed_eurostat_metadata->definition.transitions.front().model_instruction ==
             eurostat_metadata_workflow->definition.transitions.front().model_instruction);
-    assert(reparsed_starter.workflows.size() == 23 &&
+    assert(reparsed_starter.workflows.size() == 20 &&
         reparsed_dataset_blueprint->workflow_bindings.size() == 3 &&
         reparsed_starter.workflows[0].definition.required_capabilities ==
             checked_in_starter.workflows[0].definition.required_capabilities &&
@@ -990,7 +1011,7 @@ int main() {
     auto task_selection_request = selection_request;
     task_selection_request.prompt = "Report the measured shielding effect for the requested article.";
     assert(common_agent_select_and_instantiate_blueprint(plans, task_selection_request, selector,
-        {{"repository-change", first.installed_blueprint_ids.front(), "repository work",
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work",
           "Safely modify the repository.", "Implement the requested change.", "The change is verified.",
           {{"scope", "Keep the change bounded.", true}},
           {{"workspace", "A controlled workspace is available.", 0.9f, true, {}}},
@@ -1098,10 +1119,10 @@ int main() {
             materialization_error = "host Oracle rejected the proposal";
             return common_blueprint_materialization_outcome::failed_safely;
         };
-    common_explicit_blueprint_selector rejected_selector("repository-change");
+    common_explicit_blueprint_selector rejected_selector("fixture-change");
     assert(common_agent_select_and_instantiate_blueprint(
         plans, selection_request, rejected_selector,
-        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}},
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}},
         rejected_selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
     assert(plans.get(rejected_selection_config.task_plan_id, error) == std::nullopt);
@@ -1109,7 +1130,7 @@ int main() {
     selection_config.expected_source_revision = "default@v0";
     selection_config.task_plan_id = "stale-source-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
-        { {"repository-change", first.installed_blueprint_ids.front(), "repository work"} },
+        { {"fixture-change", first.installed_blueprint_ids.front(), "repository work"} },
         selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::declined &&
         selection_result.eligible_count == 0 && selection_result.rejections.size() == 1 &&
@@ -1122,7 +1143,7 @@ int main() {
     assert(plans.create(invalid_assumption, error));
     selection_config.task_plan_id = "invalid-assumption-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
-        {{"repository-change", invalid_assumption.id, "repository work"}}, selection_config, selection_result, error));
+        {{"fixture-change", invalid_assumption.id, "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::declined && selector.calls == 1);
     assert(selection_result.candidate_count == 1 && selection_result.eligible_count == 0 && selection_result.rejections.size() == 1);
     common_plan_state capability_blueprint = *blueprint;
@@ -1154,7 +1175,7 @@ int main() {
     selection_config.available_capabilities.clear();
     selection_config.task_plan_id = "selected-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
-        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
 
     common_plan_state wrong_scope = *selected_instance;
@@ -1163,7 +1184,7 @@ int main() {
     assert(plans.create(wrong_scope, error));
     selection_config.task_plan_id = wrong_scope.id;
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
-        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
 
     // Compatibility-only opt-in: production routing and the default never
@@ -1174,11 +1195,11 @@ int main() {
     selection_config.task_plan_id = "fallback-instance";
     selection_request.prompt = "Diagnose unexpected behavior in an agent regression.";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, low_confidence,
-        {{"repository-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
-         {"agent-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        {{"fixture-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"fixture-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
         selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
-    assert(selection_result.logical_id && *selection_result.logical_id == "agent-regression");
+    assert(selection_result.logical_id && *selection_result.logical_id == "fixture-regression");
     assert(selection_result.reason.rfind("native keyword fallback", 0) == 0);
 
     // A single generic overlap such as "tool" must not make auto-plan replace
@@ -1187,8 +1208,8 @@ int main() {
     selection_config.task_plan_id = "single-keyword-fallback-instance";
     selection_request.prompt = "Use the data and statistics tool families to inspect a dataset.";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, low_confidence,
-        {{"repository-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
-         {"agent-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        {{"fixture-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"fixture-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
         selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
 
@@ -1198,15 +1219,15 @@ int main() {
     selection_config.task_plan_id = "explicit-decline-instance";
     selection_request.prompt = "Diagnose unexpected behavior in an agent regression.";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
-        {{"repository-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
-         {"agent-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        {{"fixture-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"fixture-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
         selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
 
     selection_config.allow_keyword_fallback = false;
     selection_config.task_plan_id = "fallback-disabled-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
-        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}},
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}},
         selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
     selection_config.allow_keyword_fallback = true;
@@ -1270,13 +1291,13 @@ int main() {
     assert(plans.create(incompatible, error));
     selection_config.task_plan_id = incompatible.id;
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
-        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
 
-    common_explicit_blueprint_selector explicit_selector("repository-change");
+    common_explicit_blueprint_selector explicit_selector("fixture-change");
     selection_config.task_plan_id = "explicit-instance";
     assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, explicit_selector,
-        {{"repository-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
     assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
 
     common_agent_bootstrap_config invalid;

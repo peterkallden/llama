@@ -5,6 +5,7 @@
 #include "common.h"
 #include "log.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/adaptation/flydelta/flydelta-collection.h"
 
 #include <functional>
 #include <memory>
@@ -121,6 +122,9 @@ struct common_agent_server_flydelta_binding {
             common_flydelta_search_pipeline_result &,
             common_flydelta_representation_augmentation_state &,
             std::string &)> run_representation_augmentation_with_state;
+    // Host administration only; this is not a model-facing tool or activation.
+    std::function<bool(const common_flydelta_experiment_job &, common_flydelta_teaching_material_mode,
+        common_flydelta_experiment_collection_result &, std::string &)> admit_concept_experiment;
 };
 
 // Host-owned semantic callbacks used to compose a production binding.  This

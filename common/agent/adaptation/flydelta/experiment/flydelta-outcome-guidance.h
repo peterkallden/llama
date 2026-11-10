@@ -47,6 +47,21 @@ bool common_flydelta_outcome_guidance_config_validate(
 // Compatibility is intentionally an exact hard partition in V1. No history
 // crosses scope, model, baseline deployment, verifier, RuleSet or action
 // contract revisions.
+// Descriptive geometry only. It is deliberately excluded from posterior,
+// compatibility partitions and search policy until separately qualified.
+struct common_flydelta_guidance_synthesis_features {
+    int schema_version = 1;
+    std::string source_ref;
+    std::string synthesis_semantics;
+    std::string concept_ref;
+    std::string direction_fingerprint;
+    int32_t layer_index = -1;
+    size_t sample_count = 0;
+    double median_alignment = 0.0;
+    double alignment_mad = 0.0;
+    double direction_stability = 0.0;
+};
+
 struct common_flydelta_outcome_guidance_context {
     std::string scope_fingerprint;
     std::string model_profile_fingerprint;
@@ -65,6 +80,7 @@ struct common_flydelta_outcome_guidance_context {
     std::optional<common_flydelta_progress_assessment> local_parent;
     std::string local_parent_ref;
     std::optional<common_flydelta_progress_assessment> progress_baseline;
+    std::vector<common_flydelta_guidance_synthesis_features> synthesis_features;
 };
 
 struct common_flydelta_outcome_guidance_observation {

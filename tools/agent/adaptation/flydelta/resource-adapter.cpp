@@ -729,7 +729,7 @@ bool daemon_flydelta_register_composed_directions(
         std::vector<common_flydelta_basis_direction> directions,
         const std::string & derivation,
         std::string & reference,
-        std::string & error, const json & localization) {
+        std::string & error, const json & localization, const json & synthesis) {
     error.clear();
     const std::string parent_ref = source_ref; // output may alias the source argument
     if (directions.empty() || directions.size() > 64 || derivation.empty()) {
@@ -741,6 +741,7 @@ bool daemon_flydelta_register_composed_directions(
         {"derivation", derivation},
     };
     if (!localization.empty()) serialized["localization"] = localization;
+    if (!synthesis.empty()) serialized["synthesis"] = synthesis;
     if (derivation == "flydelta:paired-concept-graft") {
         serialized["composition_kind"] = "paired_prefer_avoid";
         serialized["allow_duplicate_layers"] = true;
@@ -755,6 +756,12 @@ bool daemon_flydelta_register_composed_directions(
             {"layer_index", static_cast<uint32_t>(direction.layer_index)},
             {"values", direction.values},
         });
+    }
+    if (!synthesis.empty()) {
+        const auto direction_bytes = serialized["directions"].dump();
+        serialized["synthesis"]["direction_fingerprint"] = "sha256:" +
+            hash_sha256_hex(direction_bytes.data(), direction_bytes.size());
+        serialized["synthesis"]["source_ref"] = parent_ref;
     }
     identity += "\n" + serialized.dump();
     reference = "flydelta://runtime/composed/" +

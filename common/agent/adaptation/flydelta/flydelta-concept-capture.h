@@ -22,6 +22,7 @@ struct common_flydelta_concept_capture_plan {
     std::string semantic_anchor;
     int32_t layer_index = -1;
     common_flydelta_teaching_material_identity identity;
+    bool positive_only = false;
 };
 
 bool common_flydelta_concept_capture_plan_validate(

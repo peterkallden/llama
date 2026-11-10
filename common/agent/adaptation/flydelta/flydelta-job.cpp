@@ -109,6 +109,7 @@ bool common_flydelta_experiment_job_validate(
                 !bounded(job.representation_augmentation_state_ref)) ||
             (!job.teaching_material_group_ref.empty() &&
                 !bounded(job.teaching_material_group_ref)) ||
+            (!job.concept_synthesis_ref.empty() && !bounded(job.concept_synthesis_ref)) ||
             (!job.evaluation_candidate_id.empty() && !bounded(job.evaluation_candidate_id)) ||
             (!job.evaluation_suite_ref.empty() && !bounded(job.evaluation_suite_ref)) ||
             (!job.evaluation_revision.empty() && !bounded(job.evaluation_revision)) ||
@@ -167,8 +168,18 @@ bool common_flydelta_experiment_job_validate(
             return false;
         }
     }
+    if (job.seed.schema_version == 2 &&
+            ((job.kind != common_flydelta_experiment_job_kind::concept_capture &&
+              job.kind != common_flydelta_experiment_job_kind::concept_synthesis &&
+              job.kind != common_flydelta_experiment_job_kind::search_pipeline) ||
+             !bounded(job.teaching_material_group_ref) || !job.behavior_delta_ids.empty() ||
+             !job.capture_manifest_ids.empty() || !job.training_example_ids.empty())) {
+        error = "FlyDelta concept-only admission cannot be used as contrast, training or promotion evidence";
+        return false;
+    }
     if (job.kind == common_flydelta_experiment_job_kind::search_pipeline &&
-            (!check_refs(job.capture_manifest_ids) || !check_refs(job.behavior_delta_ids) ||
+            ((job.seed.schema_version != 2 && (!check_refs(job.capture_manifest_ids) || !check_refs(job.behavior_delta_ids))) ||
+             (job.seed.schema_version == 2 && job.seed.candidate_ref.empty() && job.bootstrap_zoom_state_ref.empty()) ||
              !common_flydelta_alpha_search_config_validate(job.alpha_search, error))) {
         if (error.empty()) error = "FlyDelta search pipeline job requires captures, deltas and bounds";
         return false;
@@ -266,6 +277,11 @@ std::string common_flydelta_experiment_job_to_json(
         {"decay", job.decay},
         {"code_revision", job.code_revision},
     };
+    if (job.seed.schema_version != 1) {
+        value["seed"]["schema_version"] = job.seed.schema_version;
+        value["seed"]["admission_ref"] = job.seed.admission_ref;
+    }
+    if (!job.concept_synthesis_ref.empty()) value["concept_synthesis_ref"] = job.concept_synthesis_ref;
     if (job.whirlpool_global_probes_per_round)
         value["whirlpool_global_probes_per_round"] = job.whirlpool_global_probes_per_round;
     if (!job.concept_localization.layers.empty()) {
@@ -296,6 +312,8 @@ bool common_flydelta_experiment_job_from_json(
             return false;
         }
         const auto seed = value.value("seed", json::object());
+        job.seed.schema_version = seed.value("schema_version", 1);
+        job.seed.admission_ref = seed.value("admission_ref", "");
         job.seed.id = seed.value("id", "");
         job.seed.teaching_key = seed.value("teaching_key", "");
         job.seed.behavior_key = seed.value("behavior_key", "");
@@ -335,6 +353,7 @@ bool common_flydelta_experiment_job_from_json(
         job.representation_augmentation_state_ref = value.value(
             "representation_augmentation_state_ref", "");
         job.teaching_material_group_ref = value.value("teaching_material_group_ref", "");
+        job.concept_synthesis_ref = value.value("concept_synthesis_ref", "");
         const auto localization = value.value("concept_localization", json::object());
         job.concept_localization.capture_set_ref = localization.value("capture_set_ref", "");
         job.concept_localization.origin_state_ref = localization.value("origin_state_ref", "");

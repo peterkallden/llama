@@ -40,6 +40,7 @@ struct smoke_args {
     int n_predict = 64;
     int n_gpu_layers = -1;
     std::vector<uint32_t> localization_layers;
+    bool positive_only = false;
 };
 
 int fail(const std::string & message) {
@@ -74,6 +75,8 @@ bool parse_args(int argc, char ** argv, smoke_args & args, std::string & error) 
             std::string text;
             if (!next("--n-gpu-layers", text)) return false;
             args.n_gpu_layers = std::stoi(text);
+        } else if (value == "--positive-only") {
+            args.positive_only = true;
         } else if (value == "--localization-layers") {
             std::string text;
             if (!next("--localization-layers", text)) return false;
@@ -101,7 +104,7 @@ bool parse_args(int argc, char ** argv, smoke_args & args, std::string & error) 
         } else if (value == "--help" || value == "-h") {
             std::cout << "usage: " << argv[0]
                       << " --model PATH [--config PATH] [--threads N]"
-                      << " [--n-predict N] [--n-gpu-layers N] [--localization-layers L1,L2,...]\n";
+                      << " [--n-predict N] [--n-gpu-layers N] [--positive-only] [--localization-layers L1,L2,...]\n";
             std::exit(0);
         } else {
             error = "unknown argument: " + value;
@@ -171,7 +174,7 @@ ordered_json model_facing_dataset_tools() {
             {"function", {
                 {"name", "data.aggregate"},
                 {"description", "Aggregate measures, optionally grouped, from a bounded dataset."},
-                {"parameters", ordered_json::parse(R"({"type":"object","additionalProperties":false,"required":["dataset","measures"],"properties":{"dataset":{"type":"string"},"group_by":{"type":"array","items":{"type":"string"}},"measures":{"type":"array","items":{"type":"object","required":["function"],"properties":{"function":{"type":"string","enum":["count","sum","avg","min","max"]},"column":{"type":"string"}}}}}})")}
+                {"parameters", ordered_json::parse(R"({"type":"object","additionalProperties":false,"required":["dataset","measures"],"properties":{"dataset":{"type":"string"},"group_by":{"type":"array","items":{"type":"string"}},"measures":{"type":"array","minItems":1,"maxItems":1,"items":{"type":"object","required":["function"],"properties":{"function":{"type":"string","enum":["count","sum","avg","min","max"]},"column":{"type":"string"}}}}}})")}
             }}
         },
         {
@@ -413,6 +416,160 @@ void print_search_summary(
     }.dump() << '\n';
 }
 
+// Positive-only uses the actual daemon admission and queue. The WHERE origin
+// is an explicit host-selected starting layer with no completed evidence.
+int run_positive_only(common_agent_daemon_runtime & runtime, const daemon_options & options,
+        const common_flydelta_evaluator_config & config,
+        const common_flydelta_evaluator_callbacks & callbacks, const common_agent_scope & scope,
+        const std::string & baseline_ref, const std::string & verifier_ref, size_t n_layers) {
+    std::string error;
+    if (!runtime.flydelta_concept_admit || !runtime.flydelta_execution_identity ||
+            !callbacks.persist_bootstrap_zoom_state_for_job || !callbacks.run_counterfactual) {
+        return fail("positive-only admission, execution identity or evaluation callback unavailable");
+    }
+    const auto & identity = *runtime.flydelta_execution_identity;
+    const std::vector<std::string> examples = {
+        "Compute grouped sales totals per region. Select data.aggregate with group_by region and sum of amount for dataset://local/sales.",
+        "Find the sum of amount for each region in dataset://local/sales; use data.aggregate and group on region.",
+        "Use data.aggregate to total amount by region for dataset://local/sales, specifying a sum measure and region grouping."};
+    for (size_t i = 0; i < examples.size(); ++i) {
+        std::string source_ref;
+        if (!put_json_resource(*runtime.resource_store, scope, "positive-example-" + std::to_string(i) + ".json",
+                ordered_json{{"prompt", examples[i]}, {"tools", model_facing_dataset_tools()},
+                    {"tool_choice", "required"}, {"n_predict", 64}}, source_ref, error))
+            return fail("positive source: " + error);
+        common_flydelta_teaching_relation source;
+        source.schema_version = 2;
+        source.positive_only = true;
+        source.id = "teaching://positive-model/" + std::to_string(i);
+        source.teaching_key = "dataset.grouped-aggregation.v1";
+        source.behavior_key = "dataset/grouped-aggregation";
+        source.source = common_adaptation_evidence_source::user_taught_concept;
+        source.scope = scope;
+        source.task_fingerprint = "task:positive-model:example:" + std::to_string(i);
+        source.conditioned_ref = source_ref;
+        source.conditioned_origin = common_flydelta_teaching_origin::user_supplied;
+        source.verifier_ref = verifier_ref;
+        source.evidence_ref = source_ref;
+        source.host_approved = true;
+        source.status = common_flydelta_teaching_relation_status::resolved;
+        if (!runtime.flydelta_teaching_material_observer(source, error))
+            return fail("positive material observation: " + error);
+    }
+
+    common_flydelta_experiment_job context;
+    context.seed.scope = scope;
+    context.seed.teaching_key = "dataset.grouped-aggregation.v1";
+    context.seed.behavior_key = "dataset/grouped-aggregation";
+    context.seed.task_fingerprint = "task:positive-model:search";
+    context.seed.model_profile_fingerprint = identity.model_profile_fingerprint;
+    context.seed.tokenizer_fingerprint = identity.tokenizer_fingerprint;
+    context.seed.template_fingerprint = identity.template_fingerprint;
+    context.seed.execution_context_fingerprint = identity.execution_context_fingerprint;
+    context.seed.baseline_ref = baseline_ref;
+    context.seed.verifier_ref = verifier_ref;
+    context.alpha_search.candidates = {0.05f};
+    context.alpha_search.max_candidates = 1;
+    common_flydelta_bootstrap_zoom_state origin;
+    origin.behavior_key = context.seed.behavior_key;
+    origin.model_profile_fingerprint = identity.model_profile_fingerprint;
+    origin.capture_layout_revision = identity.capture_layout_revision;
+    origin.anchor_layer = static_cast<uint32_t>(std::max<size_t>(1, n_layers / 2));
+    origin.local_layers = {origin.anchor_layer};
+    origin.selected_scale = 0.05f;
+    origin.evidence_rank = 0;
+    if (!callbacks.persist_bootstrap_zoom_state_for_job(context, origin, context.bootstrap_zoom_state_ref, error))
+        return fail("positive WHERE origin: " + error);
+    common_flydelta_experiment_collection_result collected;
+    if (!runtime.flydelta_concept_admit(context, common_flydelta_teaching_material_mode::positive_only,
+            collected, error) || collected != common_flydelta_experiment_collection_result::enqueued)
+        return fail("positive host admission: " + error);
+
+    const std::filesystem::path queue = options.adaptation_flydelta_queue_path;
+    common_flydelta_experiment_worker_report capture;
+    if (!common_flydelta_experiment_worker_run_evaluator_once(queue, {}, config, callbacks, capture, error) ||
+            !report_succeeded(capture, common_flydelta_experiment_job_kind::concept_capture, error) ||
+            capture.concept_trajectory_refs.size() != examples.size())
+        return fail("positive capture: " + error);
+    if (!common_flydelta_collect_next_action_job(queue, {}, capture.completed_job,
+            common_flydelta_next_action::run_concept_synthesis, capture.bootstrap_zoom_state_ref,
+            capture.search_state_ref, capture.representation_augmentation_state_ref, {}, collected, error) ||
+            collected != common_flydelta_experiment_collection_result::enqueued)
+        return fail("positive synthesis enqueue: " + error);
+    common_flydelta_experiment_worker_report synthesis;
+    if (!common_flydelta_experiment_worker_run_evaluator_once(queue, {}, config, callbacks, synthesis, error) ||
+            !report_succeeded(synthesis, common_flydelta_experiment_job_kind::concept_synthesis, error))
+        return fail("positive synthesis: " + error);
+    if (synthesis.concept_candidates.size() != 1 || synthesis.graft_direction_ref.empty() ||
+            synthesis.concept_candidates.front().synthesis_semantics != common_flydelta_concept_synthesis_semantics::positive_only ||
+            !synthesis.concept_candidates.front().experimental_only || synthesis.concept_candidates.front().learning_eligible)
+        return fail("positive synthesis did not produce exactly one experimental-only candidate");
+    if (!common_flydelta_collect_next_action_job(queue, {}, synthesis.completed_job,
+            common_flydelta_next_action::run_bootstrap, synthesis.bootstrap_zoom_state_ref,
+            synthesis.search_state_ref, synthesis.representation_augmentation_state_ref,
+            synthesis.graft_direction_ref, collected, error) ||
+            collected != common_flydelta_experiment_collection_result::enqueued)
+        return fail("positive search enqueue: " + error);
+    common_flydelta_experiment_worker_report search;
+    if (!common_flydelta_experiment_worker_run_evaluator_once(queue, {}, config, callbacks, search, error) ||
+            !report_succeeded(search, common_flydelta_experiment_job_kind::search_pipeline, error))
+        return fail("positive search: " + error);
+    print_search_summary(search, "positive-only-search");
+
+    // Evaluate a fixed dose on prompts excluded from both synthesis and search.
+    // This is an observation, not automatic activation or proof of training.
+    const std::vector<std::string> holdouts = {
+        "For dataset://local/sales, group by region and calculate the total amount. Return only the tool call.",
+        "Return only a tool call: aggregate dataset://local/sales by region and calculate the amount total."};
+    ordered_json comparisons = ordered_json::array();
+    size_t comparable = 0, helped = 0, harmed = 0;
+    for (size_t i = 0; i < holdouts.size(); ++i) {
+        std::string holdout_ref;
+        if (!put_json_resource(*runtime.resource_store, scope, "positive-holdout-" + std::to_string(i) + ".json",
+                ordered_json{{"prompt", holdouts[i]}, {"tools", model_facing_dataset_tools()},
+                    {"tool_choice", "required"}, {"n_predict", 128}}, holdout_ref, error))
+            return fail("holdout resource: " + error);
+        auto evaluation = synthesis.completed_job;
+        evaluation.id = "positive-holdout-" + std::to_string(i);
+        evaluation.seed.baseline_ref = holdout_ref;
+        evaluation.seed.task_fingerprint = "task:positive-model:holdout:" + std::to_string(i);
+        evaluation.seed.candidate_ref = synthesis.graft_direction_ref;
+        evaluation.alpha_search.candidates = {0.05f};
+        evaluation.alpha_search.max_candidates = 1;
+        std::vector<common_flydelta_counterfactual_report> reports;
+        if (!callbacks.run_counterfactual(evaluation, reports, error) || reports.size() != 1)
+            return fail("holdout counterfactual: " + error);
+        const auto & report = reports.front();
+        if (!report.baseline.executed || !report.candidate.executed || !report.candidate.overlay_applied)
+            return fail("holdout did not execute both arms with the experimental overlay");
+        if (report.baseline.verifier_known && report.candidate.verifier_known &&
+                report.outcome != common_flydelta_counterfactual_outcome::unknown) ++comparable;
+        if (report.outcome == common_flydelta_counterfactual_outcome::helped) ++helped;
+        if (report.outcome == common_flydelta_counterfactual_outcome::harmed) ++harmed;
+        comparisons.push_back({{"baseline_known", report.baseline.verifier_known},
+            {"baseline_passed", report.baseline.passed}, {"candidate_known", report.candidate.verifier_known},
+            {"candidate_passed", report.candidate.passed}, {"overlay_applied", report.candidate.overlay_applied},
+            {"outcome", common_flydelta_counterfactual_outcome_name(report.outcome)},
+            {"quality_delta", report.quality_delta}, {"baseline_decision", report.baseline.observed_decision_summary},
+            {"candidate_decision", report.candidate.observed_decision_summary}});
+    }
+    const auto & d = synthesis.concept_candidates.front().representation_diagnostics;
+    std::cout << "flydelta_positive_only_model=" << ordered_json{
+        {"source_count", examples.size()}, {"capture_count", capture.concept_trajectory_refs.size()},
+        {"direction_ref", synthesis.graft_direction_ref}, {"sample_count", d.sample_count},
+        {"median_alignment", d.median_alignment}, {"direction_stability", d.direction_stability},
+        {"experimental_only", true}, {"learning_eligible", false},
+        {"holdout_count", holdouts.size()}, {"comparable", comparable}, {"helped", helped},
+        {"harmed", harmed}, {"fixed_dose", 0.05}, {"comparisons", comparisons},
+        {"weights_changed", false}, {"promotion", false}}.dump() << '\n';
+    if (comparable != holdouts.size()) {
+        std::cout << "model_smoke_event " << ordered_json{{"version", 1}, {"kind", "precondition_not_observed"},
+            {"reason", "holdout verifier did not produce comparable outcomes"}}.dump() << '\n';
+        return 77;
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -423,6 +580,7 @@ int main(int argc, char ** argv) {
         return fail(error);
     }
 
+    if (args.positive_only && args.n_predict == 64) args.n_predict = 128;
     daemon_options options;
     if (!load_config(args.config_path, options, error)) return fail("config: " + error);
     configure_model_catalog(options, args);
@@ -508,6 +666,10 @@ int main(int argc, char ** argv) {
             }, verifier_ref, error)) {
         return fail("fixture resource: " + error);
     }
+    if (args.positive_only) {
+        return run_positive_only(runtime, options, evaluator_config, callbacks, scope, baseline_ref, verifier_ref, n_layers);
+    }
+
     std::string direction_ref;
     ordered_json direction = ordered_json{{"directions", ordered_json::array()}};
     ordered_json values = ordered_json::array();

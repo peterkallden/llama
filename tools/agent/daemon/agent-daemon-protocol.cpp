@@ -281,7 +281,7 @@ bool parse_agent_daemon_command_name(
         error.clear();
         return true;
     }
-    if (command_name == "flydelta.evaluate_candidate" ||
+    if (command_name == "flydelta.admit_concept" || command_name == "flydelta.evaluate_candidate" ||
             command_name == "flydelta.get_evaluation" ||
             command_name == "flydelta.get_promotion_summary" ||
             command_name == "flydelta.review_candidate" ||
@@ -296,6 +296,38 @@ bool parse_agent_daemon_command_name(
         command.type = common_agent_daemon_command_type::flydelta_admin;
         common_agent_daemon_flydelta_admin_payload payload;
         payload.operation = command_name;
+        if (command_name == "flydelta.admit_concept") {
+            common_flydelta_experiment_job context;
+            context.seed.scope.namespace_id = parsed.value("namespace_id", "");
+            context.seed.scope.project_id = parsed.value("project_id", "");
+            context.seed.scope.session_id = parsed.value("session_id", "");
+            context.seed.scope.turn_id = parsed.value("turn_id", "");
+            context.seed.teaching_key = parsed.value("teaching_key", "");
+            context.seed.behavior_key = parsed.value("behavior_key", "");
+            context.seed.task_fingerprint = parsed.value("task_fingerprint", "");
+            context.seed.baseline_ref = parsed.value("baseline_ref", "");
+            context.seed.verifier_ref = parsed.value("verifier_ref", "");
+            context.seed.verifier_contract_revision = parsed.value("verifier_revision", "");
+            context.bootstrap_zoom_state_ref = parsed.value("where_origin_ref", "");
+            context.alpha_search.candidates = {0.05f};
+            context.alpha_search.max_candidates = 1;
+            const auto mode = parsed.value("synthesis_mode", "auto");
+            if (mode == "auto") payload.concept_mode = common_flydelta_teaching_material_mode::automatic;
+            else if (mode == "contrast") payload.concept_mode = common_flydelta_teaching_material_mode::contrast;
+            else if (mode == "positive_only") payload.concept_mode = common_flydelta_teaching_material_mode::positive_only;
+            else { error = "flydelta.admit_concept synthesis_mode must be auto, contrast or positive_only"; return false; }
+            const auto bounded = [](const std::string & value) { return !value.empty() && value.size() <= 512; };
+            if (!bounded(context.seed.scope.namespace_id) || !bounded(context.seed.scope.session_id) ||
+                    context.seed.scope.project_id.size() > 512 || context.seed.scope.turn_id.size() > 512 || !bounded(context.seed.teaching_key) ||
+                    !bounded(context.seed.behavior_key) || !bounded(context.seed.task_fingerprint) ||
+                    !bounded(context.seed.baseline_ref) || !bounded(context.seed.verifier_ref) ||
+                    !bounded(context.bootstrap_zoom_state_ref)) {
+                error = "flydelta.admit_concept requires bounded scope, concept, task, baseline, verifier and WHERE references";
+                return false;
+            }
+            payload.concept_context = std::move(context);
+        }
+
         payload.candidate_id = parsed.value("candidate_id", "");
         payload.candidate_manifest_ref = parsed.value("candidate_manifest_ref", "");
         payload.suite_ref = parsed.value("suite_ref", "");

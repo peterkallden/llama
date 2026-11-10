@@ -64,6 +64,27 @@ common_blueprint_candidate make_candidate() {
 } // namespace
 
 int main() {
+    {
+        common_plan_in_memory_store store;std::string error;assert(store.open("",error));
+        auto old=make_blueprint(false);old.workflow_bindings.clear();
+        old.id="legacy";assert(store.create(old,error));
+        auto replacement=old;replacement.id="current";replacement.supersedes_blueprints={"legacy"};
+        replacement.phase_review_required=true;assert(store.create(replacement,error));
+        common_blueprint_candidate a,b;a.logical_id="legacy";a.persisted_id="legacy";
+        b.logical_id="current";b.persisted_id="current";
+        common_agent_request request;request.session_id="s";
+        common_agent_scope scope;scope.session_id="s";scope.plan_scope=common_plan_scope::session;
+        common_agent_runtime_tooling tooling;tooling.profile_tools_active=true;common_agent_route_catalog catalog;
+        assert(compile_agent_route_catalog(request,store,scope,{a,b},tooling,"",catalog,error));
+        const auto has=[&](const std::string & id){return std::any_of(catalog.candidates.begin(),catalog.candidates.end(),
+            [&](const auto & c){return c.blueprint_logical_id==id;});};
+        assert(has("current") && !has("legacy"));
+        assert(compile_agent_route_catalog(request,store,scope,{a,b},tooling,"legacy",catalog,error) && has("legacy"));
+        // An ineligible replacement cannot hide the still-usable old route.
+        replacement.required_capabilities={"unavailable.capability"};replacement.id="ineligible";
+        assert(store.create(replacement,error));b.persisted_id="ineligible";
+        assert(compile_agent_route_catalog(request,store,scope,{a,b},tooling,"",catalog,error) && has("legacy"));
+    }
     // Exercise the checked-in package against a host with saved-report tools
     // only. Optional acquisition tools must neither block nor be invented.
     {
@@ -278,7 +299,7 @@ int main() {
     repository_workflow.kind = common_plan_kind::workflow;
     repository_workflow.scope = common_plan_scope::session;
     repository_workflow.workflow_definition = common_plan_workflow_definition{
-        "workflow://repository/inspection", "v1", "repository", "graph-repository-v1", {},
+        "workflow://fixture/repository-inspection", "v1", "repository", "graph-repository-v1", {},
         {"repository.read"}, {}, {"context.repository.available"}};
     assert(store.create(repository_workflow, error));
 
@@ -286,7 +307,7 @@ int main() {
     repository_blueprint.id = "bootstrap:local:session:s:blueprint:repository-change";
     repository_blueprint.goal = "Inspect and change a repository";
     repository_blueprint.required_capabilities = {"repository.read"};
-    repository_blueprint.workflow_bindings = {{"workflow://repository/inspection", "v1"}};
+    repository_blueprint.workflow_bindings = {{"workflow://fixture/repository-inspection", "v1"}};
     assert(store.create(repository_blueprint, error));
 
     common_blueprint_candidate repository_candidate = make_candidate();
@@ -303,7 +324,7 @@ int main() {
     assert(catalog.candidates.size() == 2);
     assert(catalog.candidates[1].kind == common_agent_route_kind::blueprint_workflow);
     assert(catalog.candidates[1].workflow &&
-        catalog.candidates[1].workflow->workflow_ref == "workflow://repository/inspection");
+        catalog.candidates[1].workflow->workflow_ref == "workflow://fixture/repository-inspection");
     tooling.available_context.clear();
     assert(compile_agent_route_catalog(request, store, scope, {repository_candidate},
         tooling, "", catalog, error));
@@ -588,6 +609,9 @@ int main() {
     auto bounded_route = graph_route;
     bounded_route.workflow_definition->transitions[1].choices.push_back(
         {"A1", "Select the observed author", "selected", {}, 1});
+    bounded_route.workflow_definition->transitions[1].choices.push_back(
+        {"exit", "Exit only when the observation permits it", "complete", {"/missing"}, 0});
+    bounded_route.workflow_definition->transitions[2].to_state = "candidates"; // Test a genuine revisit of the same choice.
     auto bounded_plan = graph_plan;
     bounded_plan.workflow_definition = bounded_route.workflow_definition;
     common_plan_step used_choice{"used-choice", "Used choice", "Prior selection"};
@@ -601,7 +625,7 @@ int main() {
         });
     continuation_steps.clear(); error.clear();
     assert(!bounded_continuation(bounded_plan, "resolve", candidates, continuation_steps, error));
-    assert(error.find("no available fixed choices") != std::string::npos);
+    if (error.find("no available fixed choices") == std::string::npos) throw std::runtime_error("unexpected bounded choice error: " + error);
     auto rejected_graph_continuation = make_agent_workflow_graph_continuation(graph_route,
         [](const common_plan_observation &, const common_plan_workflow_transition &, std::string & id, std::string & selection_error) {
             id = "invented-author"; selection_error.clear(); return true;
@@ -1002,10 +1026,10 @@ int main() {
     // tools neither gate selection nor become authorized by the template.
     std::vector<common_blueprint_candidate> development_candidates;
     for (const auto & id : installed.installed_blueprint_ids) {
-        if (id.find(":blueprint:repository-change-v4") == std::string::npos &&
-                id.find(":blueprint:regression-repair-v4") == std::string::npos &&
-                id.find(":blueprint:development-compile-diagnosis-v1") == std::string::npos &&
-                id.find(":blueprint:development-runtime-diagnosis-v1") == std::string::npos) continue;
+        if (id.find(":blueprint:repository-change-v5") == std::string::npos &&
+                id.find(":blueprint:regression-repair-v5") == std::string::npos &&
+                id.find(":blueprint:development-compile-diagnosis-v2") == std::string::npos &&
+                id.find(":blueprint:development-runtime-diagnosis-v2") == std::string::npos) continue;
         common_blueprint_candidate candidate;
         candidate.logical_id = id;
         candidate.persisted_id = id;

@@ -1080,6 +1080,18 @@ bool common_flydelta_append_outcome_guidance_decision_lifecycle(
         {"fallback_reason", decision.fallback_reason},
         {"predictions", json::array()},
     };
+    if (!context.synthesis_features.empty()) {
+        json diagnostics = json::array();
+        for (const auto & features : context.synthesis_features) {
+            diagnostics.push_back({{"schema_version", features.schema_version},
+                {"source_ref", features.source_ref}, {"concept_ref", features.concept_ref},
+                {"direction_fingerprint", features.direction_fingerprint}, {"layer_index", features.layer_index},
+                {"synthesis_semantics", features.synthesis_semantics}, {"sample_count", features.sample_count},
+                {"median_alignment", features.median_alignment}, {"alignment_mad", features.alignment_mad},
+                {"direction_stability", features.direction_stability}});
+        }
+        payload["synthesis_diagnostics"] = diagnostics.size() == 1 ? diagnostics.front() : diagnostics;
+    }
     payload["progress_query"] = {{"task_fingerprint", context.local_task_fingerprint},
         {"lineage_ref", context.local_lineage_ref}, {"parent_ref", context.local_parent_ref},
         {"baseline", context.progress_baseline ? json::parse(common_flydelta_progress_assessment_to_json(*context.progress_baseline)) : json(nullptr)},

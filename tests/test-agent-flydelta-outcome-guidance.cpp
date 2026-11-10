@@ -686,6 +686,29 @@ int main() {
         candidates, 2, 17, projected_decision, error));
     CHECK(common_flydelta_outcome_guidance_build_decision(config, c, chronological,
         candidates, 2, 17, raw_decision, error));
+    // Positive-only geometry remains descriptive metadata: the same frozen
+    // evidence and seed must produce identical posteriors and search choices.
+    auto described = c;
+    common_flydelta_guidance_synthesis_features features;
+    features.source_ref = "resource:positive-synthesis";
+    features.concept_ref = "material:positive-concept";
+    features.direction_fingerprint = "sha256:positive-direction";
+    features.layer_index = 2;
+    features.synthesis_semantics = "positive_only";
+    features.sample_count = 3;
+    features.median_alignment = features.direction_stability = 1.0;
+    described.synthesis_features.push_back(features);
+    common_flydelta_outcome_guidance_decision described_decision;
+    CHECK(common_flydelta_outcome_guidance_decide_from_projection(config, described, frozen_projection,
+        candidates, 2, 17, described_decision, error));
+    CHECK(described_decision.history_fingerprint == projected_decision.history_fingerprint);
+    CHECK(described_decision.selected_order == projected_decision.selected_order);
+    CHECK(described_decision.predictions.size() == projected_decision.predictions.size());
+    for (size_t i = 0; i < described_decision.predictions.size(); ++i) {
+        CHECK(described_decision.predictions[i].posterior_identity == projected_decision.predictions[i].posterior_identity);
+        CHECK(described_decision.predictions[i].p_helped_given_known == projected_decision.predictions[i].p_helped_given_known);
+        CHECK(described_decision.predictions[i].sampled_utility == projected_decision.predictions[i].sampled_utility);
+    }
     CHECK(projected_decision.history_fingerprint == raw_decision.history_fingerprint);
     CHECK(projected_decision.selected_order == raw_decision.selected_order);
     CHECK(projected_decision.predictions.size() == raw_decision.predictions.size());

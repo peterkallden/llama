@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v48",
+  "version": "v49",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -226,6 +226,27 @@
       "content": "State the hypothesis and scope neutrally. Search for material that could support it and separately for material that could contradict, qualify or offer an alternative explanation. Search results and article metadata are discovery leads, not evidence of what a source concludes. Inspect relevant source content or dataset results before assigning a stance; preserve source references, uncertainty and study or coverage limits. Do not assume that a successful read supports the hypothesis. Report when a perspective could not be searched or evaluated; absence of a contrary result is not proof of absence.",
       "importance": 0.95,
       "confidence": 1.0
+    },
+    {
+      "id": "development-source-evidence-v2",
+      "summary": "source identity and verification evidence",
+      "content": "Before a code change, capture the current repository revision and bounded workspace snapshot with repository.snapshot when available. Use repository.read SHA-256 values as freshness guards and pass source_snapshot_ref to workspace.patch so the host verifies the changed file against that baseline. After applying the complete change, capture a new complete repository.snapshot and pass that post-change source_snapshot_ref to development.build or development.test; retain the pre-change snapshot for baseline comparison; incomplete snapshots cannot be staged. After changes, inspect repository.diff and retain the patch receipt, configured execution receipt and output resources. A successful build is evidence only for its source snapshot and target; test outcomes and acceptance criteria remain separate. Keep compiler-resolved relations, text matches, model proposals and runtime observations distinct. Preserve these guards through every plan slice and research escalation. Reuse actual host tool receipts and source identities rather than reconstructing IDs. Optional external evidence does not replace local freshness or verification requirements.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-regression-guard-v1",
+      "summary": "regression evidence and focused guard",
+      "content": "Before correcting a regression, identify a focused check that distinguishes the observed failure from expected behavior. Preserve the failing output when available. Add a guard when appropriate and authorized; test execution requires its own authority. After correction, verify the guard and adjacent affected behavior against the changed source state, or disclose exactly which checks remain unrun.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-phase-progress-v1",
+      "summary": "bounded development phase continuation",
+      "content": "Follow the host-retained method phases in dependency order. Tool selection remains model-owned through the normal family, tool and argument stages. A phase may need no tool: explain why, rather than inventing an operation. Use existing research escalation for a material knowledge gap, then continue the same method using its retained observations. Keep findings linked to sources and applicable versions. Distinguish phase satisfaction, remaining feasible work and a real authority or input limitation. Do not accept the whole task just because one bounded inspection slice finished. Compiler and runtime failures call for the shared diagnosis procedures; reconsider the correction before another authorized verification attempt. Never turn an unavailable build into a passed check. Optional durable graph proposals belong after useful knowledge has been established.",
+      "importance": 0.95,
+      "confidence": 1.0
     }
   ],
   "workflows": [
@@ -337,22 +358,6 @@
       ]
     },
     {
-      "id": "repository-inspection-path-v1",
-      "source_revision": "agent-workflows-starter@v1",
-      "workflow_ref": "workflow://repository/inspection",
-      "workflow_revision": "v1",
-      "family": "repository",
-      "graph_revision": "repository-inspection-graph@v1",
-      "required_capabilities": [
-        "repository.list",
-        "repository.search",
-        "repository.read"
-      ],
-      "required_context": [
-        "context.repository.available"
-      ]
-    },
-    {
       "id": "code-overview-path-v1",
       "source_revision": "agent-workflows-starter@v31",
       "workflow_ref": "workflow://code/overview",
@@ -396,25 +401,6 @@
         "investigate.case.items",
         "investigate.report.compose",
         "artifact.export"
-      ],
-      "required_context": [
-        "context.repository.available"
-      ]
-    },
-    {
-      "id": "repository-change-path-v1",
-      "source_revision": "agent-workflows-starter@v1",
-      "workflow_ref": "workflow://repository/change",
-      "workflow_revision": "v1",
-      "family": "repository",
-      "graph_revision": "repository-change-graph@v1",
-      "required_capabilities": [
-        "repository.search",
-        "repository.read",
-        "workspace.read",
-        "workspace.modify",
-        "development.build",
-        "development.test"
       ],
       "required_context": [
         "context.repository.available"
@@ -1227,26 +1213,6 @@
       ]
     },
     {
-      "id": "repository-regression-repair-path-v1",
-      "source_revision": "agent-workflows-starter@v1",
-      "workflow_ref": "workflow://development/regression-repair",
-      "workflow_revision": "v1",
-      "family": "development",
-      "graph_revision": "development-regression-repair-graph@v1",
-      "required_capabilities": [
-        "repository.search",
-        "repository.read",
-        "workspace.modify",
-        "development.build",
-        "development.test",
-        "diagnostics.compile",
-        "diagnostics.test_failures"
-      ],
-      "required_context": [
-        "context.repository.available"
-      ]
-    },
-    {
       "id": "research-report-composition-v1",
       "source_revision": "agent-workflows-starter@v26",
       "workflow_ref": "workflow://artifact/research-report",
@@ -1816,77 +1782,6 @@
   ],
   "blueprints": [
     {
-      "id": "repository-investigation-v2",
-      "source_revision": "agent-workflows-starter@v35",
-      "selection_description": "Investigate a repository question without modifying the workspace.",
-      "purpose": "Establish repository evidence before proposing a change.",
-      "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
-      "success_criteria": "Relevant implementation, dependencies and evidence are identified without modifying the workspace.",
-      "required_capabilities": [
-        "tool.repository"
-      ],
-      "workflow_policy": "preferred",
-      "procedure_refs": [
-        "code-orientation-v1",
-        "small-coherent-change-v1",
-        "development-source-evidence-v1",
-        "verification-ladder-v1",
-        "code-phase-handoff-v1"
-      ],
-      "workflow_bindings": [
-        {
-          "workflow_ref": "workflow://repository/inspection",
-          "workflow_revision": "v1"
-        }
-      ],
-      "next_action": "orient",
-      "constraints": [
-        {
-          "id": "read-only",
-          "description": "Do not modify the workspace during investigation.",
-          "hard": true
-        }
-      ],
-      "assumptions": [
-        {
-          "id": "workspace",
-          "statement": "A controlled repository workspace is available.",
-          "confidence": 0.9
-        }
-      ],
-      "steps": [
-        {
-          "id": "orient",
-          "title": "Orient",
-          "objective": "Identify the bounded question and relevant repository area. Result: inspected paths and source revision when available."
-        },
-        {
-          "id": "trace",
-          "title": "Trace contract",
-          "objective": "Follow contract, implementation, direct callers and relevant tests using available tools. Result: exact code locations and evidence references; distinguish semantic results from text matches.",
-          "depends_on": [
-            "orient"
-          ]
-        },
-        {
-          "id": "establish-evidence",
-          "title": "Establish evidence",
-          "objective": "Check whether the inspected evidence answers the question. Result: supported findings and explicit unknowns; request a missing selection or report unavailable support instead of guessing.",
-          "depends_on": [
-            "trace"
-          ]
-        },
-        {
-          "id": "answer",
-          "title": "Answer",
-          "objective": "Answer the question with Findings, Evidence and Limitations; offer a Next step only when needed. Keep proposed changes separate from this read-only investigation.",
-          "depends_on": [
-            "establish-evidence"
-          ]
-        }
-      ]
-    },
-    {
       "id": "code-overview-v2",
       "source_revision": "agent-workflows-starter@v35",
       "selection_description": "Build a bounded, evidence-linked overview of an authorized source repository.",
@@ -2050,493 +1945,6 @@
       "procedure_refs": [
         "code-analysis-evidence-v1",
         "code-phase-handoff-v1"
-      ]
-    },
-    {
-      "id": "repository-change-v4",
-      "source_revision": "agent-workflows-starter@v48",
-      "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed.",
-      "purpose": "Implement the requested repository change.",
-      "goal": "Implement the requested repository change.",
-      "success_criteria": "Affected behavior and constraints are understood, the scoped change is reviewed, and verification or its limitations are reported.",
-      "required_capabilities": [
-        "tool.repository"
-      ],
-      "workflow_policy": "preferred",
-      "procedure_refs": [
-        "code-orientation-v1",
-        "development-source-evidence-v1",
-        "development-knowledge-gap-v1",
-        "development-verification-authority-v1",
-        "verification-ladder-v1",
-        "code-phase-handoff-v1"
-      ],
-      "next_action": "orient",
-      "constraints": [
-        {
-          "id": "authority",
-          "description": "Stay within the user request and the current host tool and execution policy.",
-          "hard": true
-        },
-        {
-          "id": "evidence",
-          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
-          "hard": true
-        }
-      ],
-      "steps": [
-        {
-          "id": "orient",
-          "title": "Orient",
-          "objective": "Inspect the task, affected contracts, callers, local patterns and relevant tests; preserve source identity and unresolved questions."
-        },
-        {
-          "id": "knowledge",
-          "title": "Resolve knowledge gaps",
-          "objective": "Identify material uncertainties. Use available local evidence first; inspect external primary sources only when useful and authorized. Carry applicable findings and source references forward.",
-          "depends_on": [
-            "orient"
-          ]
-        },
-        {
-          "id": "design",
-          "title": "Design",
-          "objective": "Choose a coherent change and acceptance criteria using inspected evidence; retain unresolved assumptions.",
-          "depends_on": [
-            "knowledge"
-          ]
-        },
-        {
-          "id": "implement",
-          "title": "Implement",
-          "objective": "Apply the authorized change using available host freshness guards; preserve unrelated work and retain change evidence.",
-          "depends_on": [
-            "design"
-          ]
-        },
-        {
-          "id": "verify",
-          "title": "Verify",
-          "objective": "When permitted and available, verify against the post-change source state with relevant configured targets; otherwise record the limitation. Distinguish build, tests and behavioral evidence.",
-          "depends_on": [
-            "implement"
-          ]
-        },
-        {
-          "id": "review",
-          "title": "Review and answer",
-          "objective": "Inspect the diff where available, report the result and evidence and optionally propose durable graph knowledge when supported.",
-          "depends_on": [
-            "verify"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "regression-repair-v4",
-      "source_revision": "agent-workflows-starter@v48",
-      "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses.",
-      "purpose": "Diagnose the reported regression and repair it when warranted.",
-      "goal": "Diagnose the reported regression and repair it when warranted.",
-      "success_criteria": "The observed failure, supporting evidence, uncertainty, authorized correction and verification or limitations are explicit.",
-      "required_capabilities": [
-        "tool.repository"
-      ],
-      "workflow_policy": "preferred",
-      "procedure_refs": [
-        "code-orientation-v1",
-        "development-source-evidence-v1",
-        "development-knowledge-gap-v1",
-        "development-verification-authority-v1",
-        "verification-ladder-v1",
-        "code-phase-handoff-v1",
-        "development-diagnosis-v1"
-      ],
-      "next_action": "reproduce",
-      "constraints": [
-        {
-          "id": "authority",
-          "description": "Stay within the user request and the current host tool and execution policy.",
-          "hard": true
-        },
-        {
-          "id": "evidence",
-          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
-          "hard": true
-        }
-      ],
-      "steps": [
-        {
-          "id": "reproduce",
-          "title": "Establish failure",
-          "objective": "Preserve the reported symptom, relevant source identity, environment and available outputs; reproduce only when authorized and useful."
-        },
-        {
-          "id": "diagnose",
-          "title": "Investigate cause",
-          "objective": "Compare expected and observed behavior, trace the relevant seams, and discriminate competing hypotheses before selecting a correction.",
-          "depends_on": [
-            "reproduce"
-          ]
-        },
-        {
-          "id": "knowledge",
-          "title": "Resolve knowledge gaps",
-          "objective": "Use local source and documentation first; consult authorized primary sources if a material version-specific question remains unresolved.",
-          "depends_on": [
-            "diagnose"
-          ]
-        },
-        {
-          "id": "repair",
-          "title": "Repair or report diagnosis",
-          "objective": "Make a scoped correction only when requested and supported; otherwise explain the evidence and unresolved cause.",
-          "depends_on": [
-            "knowledge"
-          ]
-        },
-        {
-          "id": "verify",
-          "title": "Verify and report",
-          "objective": "Use appropriate authorized checks on the relevant source state and report passed, failed and unrun work.",
-          "depends_on": [
-            "repair"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "development-compile-diagnosis-v1",
-      "source_revision": "agent-workflows-starter@v48",
-      "selection_description": "Investigate a compiler or linker failure and repair it when requested.",
-      "purpose": "Diagnose the reported build failure.",
-      "goal": "Diagnose the reported build failure.",
-      "success_criteria": "The diagnostic, source and configuration are associated with a supported cause or explicitly unresolved; any authorized correction and verification are reported.",
-      "required_capabilities": [
-        "tool.repository"
-      ],
-      "workflow_policy": "preferred",
-      "procedure_refs": [
-        "code-orientation-v1",
-        "development-source-evidence-v1",
-        "development-knowledge-gap-v1",
-        "development-verification-authority-v1",
-        "verification-ladder-v1",
-        "code-phase-handoff-v1",
-        "development-diagnosis-v1"
-      ],
-      "next_action": "evidence",
-      "constraints": [
-        {
-          "id": "authority",
-          "description": "Stay within the user request and the current host tool and execution policy.",
-          "hard": true
-        },
-        {
-          "id": "evidence",
-          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
-          "hard": true
-        }
-      ],
-      "steps": [
-        {
-          "id": "evidence",
-          "title": "Collect build evidence",
-          "objective": "Preserve the failing diagnostic, build target, configuration and source identity; use available compiler diagnostic tools when useful."
-        },
-        {
-          "id": "local",
-          "title": "Inspect local cause",
-          "objective": "Inspect relevant declarations, call sites, includes, configuration and project history; distinguish competing explanations.",
-          "depends_on": [
-            "evidence"
-          ]
-        },
-        {
-          "id": "knowledge",
-          "title": "Resolve external uncertainty",
-          "objective": "Only when necessary, consult authorized documentation or upstream source for the actual dependency version and compare its applicability.",
-          "depends_on": [
-            "local"
-          ]
-        },
-        {
-          "id": "repair",
-          "title": "Repair or report",
-          "objective": "Correct the established cause only within the requested authority, or explain the remaining uncertainty.",
-          "depends_on": [
-            "knowledge"
-          ]
-        },
-        {
-          "id": "verify",
-          "title": "Verify and report",
-          "objective": "If authorized, rerun the relevant configured build and checks against the changed source state; report outputs and any unrun checks.",
-          "depends_on": [
-            "repair"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "development-runtime-diagnosis-v1",
-      "source_revision": "agent-workflows-starter@v48",
-      "selection_description": "Investigate a runtime failure or unexpected behavior and repair it when requested.",
-      "purpose": "Diagnose the reported runtime behavior.",
-      "goal": "Diagnose the reported runtime behavior.",
-      "success_criteria": "Observed symptoms, competing explanations, discriminating evidence, and any authorized correction and verification are explicit.",
-      "required_capabilities": [
-        "tool.repository"
-      ],
-      "workflow_policy": "preferred",
-      "procedure_refs": [
-        "code-orientation-v1",
-        "development-source-evidence-v1",
-        "development-knowledge-gap-v1",
-        "development-verification-authority-v1",
-        "verification-ladder-v1",
-        "code-phase-handoff-v1",
-        "development-diagnosis-v1"
-      ],
-      "next_action": "evidence",
-      "constraints": [
-        {
-          "id": "authority",
-          "description": "Stay within the user request and the current host tool and execution policy.",
-          "hard": true
-        },
-        {
-          "id": "evidence",
-          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
-          "hard": true
-        }
-      ],
-      "steps": [
-        {
-          "id": "evidence",
-          "title": "Collect observations",
-          "objective": "Preserve symptom, logs, trace, test output, runtime state and source identity where available; reproduce only when appropriate and authorized."
-        },
-        {
-          "id": "hypotheses",
-          "title": "Investigate hypotheses",
-          "objective": "Trace the execution and data flow, propose plausible explanations, and use bounded observations to distinguish evidence for and against them.",
-          "depends_on": [
-            "evidence"
-          ]
-        },
-        {
-          "id": "knowledge",
-          "title": "Resolve external uncertainty",
-          "objective": "Consult local usage and version-specific documentation; use external sources only for a material unresolved question and check applicability.",
-          "depends_on": [
-            "hypotheses"
-          ]
-        },
-        {
-          "id": "repair",
-          "title": "Repair or report",
-          "objective": "Correct the responsible seam when requested and supported, or report the strongest evidence and uncertainty.",
-          "depends_on": [
-            "knowledge"
-          ]
-        },
-        {
-          "id": "verify",
-          "title": "Verify and report",
-          "objective": "If authorized, rerun the relevant scenario and checks on the changed source state; distinguish observed behavior from untested claims.",
-          "depends_on": [
-            "repair"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "repository-change-v3",
-      "source_revision": "agent-workflows-starter@v35",
-      "selection_description": "Implement a scoped repository change and verify the result.",
-      "purpose": "Change repository behavior through a bounded, evidence-led workflow.",
-      "goal": "Implement the requested repository change safely.",
-      "success_criteria": "The contract and execution seam are identified, the smallest coherent change is verified against a retained immutable source snapshot, and the resulting diff and execution receipt are inspected.",
-      "required_capabilities": [
-        "tool.repository",
-        "tool.workspace"
-      ],
-      "workflow_policy": "preferred",
-      "procedure_refs": [
-        "code-orientation-v1",
-        "small-coherent-change-v1",
-        "development-source-evidence-v1",
-        "verification-ladder-v1",
-        "code-phase-handoff-v1"
-      ],
-      "workflow_bindings": [
-        {
-          "workflow_ref": "workflow://repository/change",
-          "workflow_revision": "v1"
-        }
-      ],
-      "next_action": "orient",
-      "constraints": [
-        {
-          "id": "minimal-scope",
-          "description": "Keep the change within the requested scope.",
-          "hard": true
-        },
-        {
-          "id": "evidence",
-          "description": "Do not claim verification without test or inspection evidence.",
-          "hard": true
-        }
-      ],
-      "assumptions": [
-        {
-          "id": "workspace",
-          "statement": "A controlled repository workspace is available.",
-          "confidence": 0.9
-        }
-      ],
-      "steps": [
-        {
-          "id": "orient",
-          "title": "Orient",
-          "objective": "Identify requested behavior, affected contracts, callers and tests. Capture a complete repository.snapshot where supported. Result: bounded change locations, baseline reference and semantic coverage limits."
-        },
-        {
-          "id": "design",
-          "title": "Design",
-          "objective": "Choose the smallest coherent change. Result: acceptance criteria mapped to inspected contracts and planned checks, reusable components and explicit unresolved assumptions.",
-          "depends_on": [
-            "orient"
-          ]
-        },
-        {
-          "id": "implement",
-          "title": "Implement",
-          "objective": "Apply the scoped patch with current byte hashes and source_snapshot_ref freshness guards where supported. Result: immutable change receipt and changed paths; preserve unrelated work.",
-          "depends_on": [
-            "design"
-          ]
-        },
-        {
-          "id": "verify",
-          "title": "Verify",
-          "objective": "Capture a complete post-change repository.snapshot after the last patch and bind configured build/test targets to it. Result: execution receipts and outputs mapped to acceptance criteria; distinguish passed, failed and unrun checks. A baseline build does not verify the patch.",
-          "depends_on": [
-            "implement"
-          ]
-        },
-        {
-          "id": "inspect-diff",
-          "title": "Inspect diff",
-          "objective": "Inspect repository.diff for intended scope and unintended effects. Result: reviewed changed paths and any remaining corrections; corrected code requires justified re-verification.",
-          "depends_on": [
-            "verify"
-          ]
-        },
-        {
-          "id": "answer",
-          "title": "Answer",
-          "objective": "Report Findings, Evidence, Limitations and any remaining Next step. Retain baseline, patch and post-change verification references; separate build success from behavioral proof.",
-          "depends_on": [
-            "inspect-diff"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "regression-repair-v3",
-      "source_revision": "agent-workflows-starter@v35",
-      "selection_description": "Reproduce, isolate and repair a regression with a focused guard.",
-      "purpose": "Repair a regression while preserving the responsible trust boundary.",
-      "goal": "Diagnose and correct the reported regression.",
-      "success_criteria": "The failure is reproduced or bounded by evidence, the responsible boundary is isolated, a focused guard exists, and adjacent verification passes.",
-      "required_capabilities": [
-        "tool.repository",
-        "tool.workspace"
-      ],
-      "workflow_policy": "preferred",
-      "procedure_refs": [
-        "code-orientation-v1",
-        "development-source-evidence-v1",
-        "verification-ladder-v1",
-        "code-phase-handoff-v1"
-      ],
-      "workflow_bindings": [
-        {
-          "workflow_ref": "workflow://development/regression-repair",
-          "workflow_revision": "v1"
-        }
-      ],
-      "next_action": "reproduce",
-      "constraints": [
-        {
-          "id": "trust-boundary",
-          "description": "Do not broaden model authority while correcting the regression.",
-          "hard": true
-        }
-      ],
-      "assumptions": [
-        {
-          "id": "reproducible",
-          "statement": "A bounded failing scenario can be reproduced or inspected.",
-          "confidence": 0.8
-        }
-      ],
-      "steps": [
-        {
-          "id": "reproduce",
-          "title": "Reproduce",
-          "objective": "Inspect or reproduce a bounded failing scenario. Result: failure evidence and source state; preserve diagnostics before restarting or changing code."
-        },
-        {
-          "id": "classify",
-          "title": "Classify",
-          "objective": "Establish expected behavior from the contract and observations. Result: confirmed facts separated from hypotheses and missing evidence.",
-          "depends_on": [
-            "reproduce"
-          ]
-        },
-        {
-          "id": "isolate",
-          "title": "Isolate boundary",
-          "objective": "Trace contract, implementation, callers and execution boundary. Result: the responsible seam and evidence for the diagnosis; investigate uncertain causes before patching.",
-          "depends_on": [
-            "classify"
-          ]
-        },
-        {
-          "id": "guard",
-          "title": "Establish guard",
-          "objective": "Identify or add a focused regression guard. Result: a check tied to the observed failure, with unrun coverage stated explicitly.",
-          "depends_on": [
-            "isolate"
-          ]
-        },
-        {
-          "id": "repair",
-          "title": "Repair",
-          "objective": "Correct the responsible boundary without broadening authority. Result: scoped patch receipt and preserved invariants; retain baseline and freshness guards where supported.",
-          "depends_on": [
-            "guard"
-          ]
-        },
-        {
-          "id": "verify",
-          "title": "Verify",
-          "objective": "Verify the guard and adjacent affected behavior against a complete post-change snapshot where supported. Result: retained execution receipts, outcomes and remaining failures; continue diagnosing related failures within scope.",
-          "depends_on": [
-            "repair"
-          ]
-        },
-        {
-          "id": "answer",
-          "title": "Answer",
-          "objective": "Report Findings, Evidence, Limitations and any needed Next step, distinguishing confirmed cause, correction and verification.",
-          "depends_on": [
-            "verify"
-          ]
-        }
       ]
     },
     {
@@ -3765,6 +3173,400 @@
         }
       ],
       "next_action": "frame"
+    },
+    {
+      "id": "repository-change-v5",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed.",
+      "purpose": "Implement the requested repository change.",
+      "goal": "Implement the requested repository change.",
+      "success_criteria": "The requested change is implemented and reviewed, or explicitly blocked; verification is tied to the post-change source state and unrun checks are disclosed. An inspection alone does not establish implementation.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-phase-progress-v1",
+        "development-diagnosis-v1"
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Inspect the task, affected contracts, callers, local patterns and relevant tests; preserve source identity and unresolved questions."
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve knowledge gaps",
+          "objective": "Identify material uncertainties. Use available local evidence first; inspect external primary sources only when useful and authorized. Carry applicable findings and source references forward.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "design",
+          "title": "Design",
+          "objective": "Choose a coherent change and acceptance criteria using inspected evidence; retain unresolved assumptions.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "implement",
+          "title": "Implement",
+          "objective": "Apply the authorized change using available host freshness guards; preserve unrelated work and retain change evidence.",
+          "depends_on": [
+            "design"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify",
+          "objective": "When permitted and available, verify against the post-change source state with relevant configured targets; otherwise record the limitation. Distinguish build, tests and behavioral evidence.",
+          "depends_on": [
+            "implement"
+          ]
+        },
+        {
+          "id": "review",
+          "title": "Review and answer",
+          "objective": "Inspect the diff where available, report the result and evidence and optionally propose durable graph knowledge when supported.",
+          "depends_on": [
+            "verify"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "regression-repair-v5",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses.",
+      "purpose": "Diagnose the reported regression and repair it when warranted.",
+      "goal": "Diagnose the reported regression and repair it when warranted.",
+      "success_criteria": "The observed failure, supporting evidence, uncertainty, authorized correction and verification or limitations are explicit.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-diagnosis-v1",
+        "development-regression-guard-v1",
+        "development-phase-progress-v1"
+      ],
+      "next_action": "reproduce",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "reproduce",
+          "title": "Establish failure",
+          "objective": "Preserve the reported symptom, relevant source identity, environment and available outputs; reproduce only when authorized and useful."
+        },
+        {
+          "id": "diagnose",
+          "title": "Investigate cause",
+          "objective": "Compare expected and observed behavior, trace the relevant seams, and discriminate competing hypotheses before selecting a correction.",
+          "depends_on": [
+            "reproduce"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve knowledge gaps",
+          "objective": "Use local source and documentation first; consult authorized primary sources if a material version-specific question remains unresolved.",
+          "depends_on": [
+            "diagnose"
+          ]
+        },
+        {
+          "id": "guard",
+          "title": "Establish regression guard",
+          "objective": "Identify or add a focused check tied to the observed failure. Preserve baseline evidence and distinguish an unrun guard from a reproduced failure.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair or report diagnosis",
+          "objective": "Make a scoped correction only when requested and supported; otherwise explain the evidence and unresolved cause.",
+          "depends_on": [
+            "guard"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify and report",
+          "objective": "Use appropriate authorized checks on the relevant source state and report passed, failed and unrun work.",
+          "depends_on": [
+            "repair"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "development-compile-diagnosis-v2",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate a compiler or linker failure and repair it when requested.",
+      "purpose": "Diagnose the reported build failure.",
+      "goal": "Diagnose the reported build failure.",
+      "success_criteria": "The diagnostic, source and configuration are associated with a supported cause or explicitly unresolved; any authorized correction and verification are reported.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-diagnosis-v1",
+        "development-phase-progress-v1"
+      ],
+      "next_action": "evidence",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "evidence",
+          "title": "Collect build evidence",
+          "objective": "Preserve the failing diagnostic, build target, configuration and source identity; use available compiler diagnostic tools when useful."
+        },
+        {
+          "id": "local",
+          "title": "Inspect local cause",
+          "objective": "Inspect relevant declarations, call sites, includes, configuration and project history; distinguish competing explanations.",
+          "depends_on": [
+            "evidence"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve external uncertainty",
+          "objective": "Only when necessary, consult authorized documentation or upstream source for the actual dependency version and compare its applicability.",
+          "depends_on": [
+            "local"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair or report",
+          "objective": "Correct the established cause only within the requested authority, or explain the remaining uncertainty.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify and report",
+          "objective": "If authorized, rerun the relevant configured build and checks against the changed source state; report outputs and any unrun checks.",
+          "depends_on": [
+            "repair"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "development-runtime-diagnosis-v2",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate a runtime failure or unexpected behavior and repair it when requested.",
+      "purpose": "Diagnose the reported runtime behavior.",
+      "goal": "Diagnose the reported runtime behavior.",
+      "success_criteria": "Observed symptoms, competing explanations, discriminating evidence, and any authorized correction and verification are explicit.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-diagnosis-v1",
+        "development-phase-progress-v1"
+      ],
+      "next_action": "evidence",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "evidence",
+          "title": "Collect observations",
+          "objective": "Preserve symptom, logs, trace, test output, runtime state and source identity where available; reproduce only when appropriate and authorized."
+        },
+        {
+          "id": "hypotheses",
+          "title": "Investigate hypotheses",
+          "objective": "Trace the execution and data flow, propose plausible explanations, and use bounded observations to distinguish evidence for and against them.",
+          "depends_on": [
+            "evidence"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve external uncertainty",
+          "objective": "Consult local usage and version-specific documentation; use external sources only for a material unresolved question and check applicability.",
+          "depends_on": [
+            "hypotheses"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair or report",
+          "objective": "Correct the responsible seam when requested and supported, or report the strongest evidence and uncertainty.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify and report",
+          "objective": "If authorized, rerun the relevant scenario and checks on the changed source state; distinguish observed behavior from untested claims.",
+          "depends_on": [
+            "repair"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "repository-investigation-v3",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate a code or architecture question without changing files; inspect local evidence and authorized primary documentation when needed.",
+      "purpose": "Establish repository evidence before proposing a change.",
+      "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
+      "success_criteria": "Relevant implementation, dependencies and evidence are identified without modifying the workspace.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "small-coherent-change-v1",
+        "development-source-evidence-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "development-phase-progress-v1"
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {
+          "id": "read-only",
+          "description": "Do not modify the workspace during investigation.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "workspace",
+          "statement": "A controlled repository workspace is available.",
+          "confidence": 0.9
+        }
+      ],
+      "steps": [
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Identify the bounded question and relevant repository area. Result: inspected paths and source revision when available."
+        },
+        {
+          "id": "trace",
+          "title": "Trace contract",
+          "objective": "Follow contract, implementation, direct callers and relevant tests using available tools. Result: exact code locations and evidence references; distinguish semantic results from text matches.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve material knowledge gaps",
+          "objective": "Use local evidence first. If a material external contract remains unresolved, inspect authorized primary sources; otherwise record why no lookup is needed.",
+          "depends_on": [
+            "trace"
+          ]
+        },
+        {
+          "id": "establish-evidence",
+          "title": "Establish evidence",
+          "objective": "Check whether the inspected evidence answers the question. Result: supported findings and explicit unknowns; request a missing selection or report unavailable support instead of guessing.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Answer the question with Findings, Evidence and Limitations; offer a Next step only when needed. Keep proposed changes separate from this read-only investigation.",
+          "depends_on": [
+            "establish-evidence"
+          ]
+        }
+      ],
+      "phase_review_required": true
     }
   ]
 }

@@ -98,6 +98,8 @@ bool export_agent_package(
         blueprint.id = plan.id.substr(blueprint_prefix.size());
         blueprint.source_revision = plan.source_revision;
         blueprint.selection_description = plan.selection_description;
+        blueprint.phase_review_required = plan.phase_review_required;
+        blueprint.supersedes_blueprints = plan.supersedes_blueprints;
         blueprint.purpose = plan.purpose;
         blueprint.goal = plan.goal;
         blueprint.success_criteria = plan.success_criteria;

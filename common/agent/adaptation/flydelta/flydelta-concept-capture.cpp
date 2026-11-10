@@ -15,9 +15,11 @@ bool common_flydelta_concept_capture_plan_validate(
         const common_flydelta_concept_capture_plan & plan,
         std::string & error) {
     error.clear();
-    if (plan.schema_version != 1 || !bounded(plan.id) || !bounded(plan.group_ref) ||
-            !bounded(plan.relation_ref) || !bounded(plan.baseline_ref) ||
-            !bounded(plan.conditioned_ref) || !bounded(plan.control_ref) ||
+    if ((plan.positive_only ? plan.schema_version != 2 : plan.schema_version != 1) || !bounded(plan.id) || !bounded(plan.group_ref) ||
+            !bounded(plan.relation_ref) ||
+            (plan.positive_only ? (!plan.baseline_ref.empty() || !plan.control_ref.empty())
+                : (!bounded(plan.baseline_ref) || !bounded(plan.control_ref))) ||
+            !bounded(plan.conditioned_ref) ||
             !bounded(plan.semantic_anchor) || plan.layer_index < 0 ||
             !common_flydelta_teaching_material_identity_validate(plan.identity, error)) {
         if (error.empty()) error = "FlyDelta concept capture plan is incomplete";
@@ -30,6 +32,7 @@ std::string common_flydelta_concept_capture_plan_to_json(
         const common_flydelta_concept_capture_plan & plan) {
     return json{
         {"schema_version", plan.schema_version},
+        {"positive_only", plan.positive_only},
         {"id", plan.id},
         {"group_ref", plan.group_ref},
         {"relation_ref", plan.relation_ref},
@@ -60,6 +63,7 @@ bool common_flydelta_concept_capture_plan_from_json(
         const auto value = json::parse(text);
         plan = {};
         plan.schema_version = value.value("schema_version", 0);
+        plan.positive_only = value.value("positive_only", false);
         plan.id = value.value("id", "");
         plan.group_ref = value.value("group_ref", "");
         plan.relation_ref = value.value("relation_ref", "");

@@ -14,9 +14,11 @@ int main() {
     common_plan_sqlite_store store;
     assert(store.open(path.string(), error));
     write_atomic_route_entry(store);
+    write_method_progress(store);
     store.close();
     assert(store.open(path.string(), error));
     verify_atomic_route_entry(store);
+    verify_method_progress(store);
 
     common_plan_state plan;
     plan.id = "continuation-roundtrip";
@@ -25,6 +27,7 @@ int main() {
     source.id = "source-tool";
     source.status = common_plan_step_status::completed;
     source.tool_call = common_plan_tool_call{"dataset.inspect", "{}"};
+    source.semantic_alias="dataset";source.method_phase_id="method:inspect";source.method_turn_id="turn-1";
     source.artifact_binding = common_plan_artifact_binding{
         "compose-findings", "research-report", "v2", "findings", "snapshot-7"};
     plan.steps.push_back(source);
@@ -150,6 +153,8 @@ int main() {
         "Use the verified dataset code.");
     assert(restored->workflow_definition->transitions.back().failure_terminal_state == "unavailable");
     assert((restored->workflow_definition->transitions.back().handled_http_statuses == std::vector<int>{403, 404}));
+    assert(restored->steps.front().semantic_alias=="dataset" && restored->steps.front().method_phase_id=="method:inspect" &&
+        restored->steps.front().method_turn_id=="turn-1");
     assert(restored->steps.size() == 2 && restored->steps.front().artifact_binding &&
         restored->steps.front().artifact_binding->transition_id == "compose-findings" &&
         restored->steps.front().artifact_binding->profile_ref == "research-report" &&

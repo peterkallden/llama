@@ -1,4 +1,5 @@
 #pragma once
+#include "utf8-bounds.h"
 
 #include "plan/plan-types.h"
 
@@ -42,7 +43,7 @@ struct common_agent_working_state_limits {
 inline std::string common_agent_working_state_bounded(
         const std::string & value,
         size_t max_chars) {
-    return value.size() <= max_chars ? value : value.substr(0, max_chars);
+    return value.size() <= max_chars ? value : value.substr(0, common_utf8_prefix_bytes(value, max_chars));
 }
 
 inline void common_agent_working_state_add(
@@ -191,6 +192,6 @@ inline std::string render_common_agent_working_state(
     for (const auto & value : state.tool_results) append("tool_result", value);
     for (const auto & value : state.resource_refs) append("resource_ref", value.uri);
     for (const auto & value : state.dataset_refs) append("dataset_ref", value.uri);
-    if (rendered.size() > max_chars) rendered.resize(max_chars);
+    if (rendered.size() > max_chars) rendered.resize(common_utf8_prefix_bytes(rendered, max_chars));
     return rendered;
 }

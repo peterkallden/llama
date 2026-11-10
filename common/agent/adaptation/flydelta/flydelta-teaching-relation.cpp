@@ -29,6 +29,7 @@ const char * common_flydelta_teaching_relation_status_name(
         case common_flydelta_teaching_relation_status::no_contrast: return "no_contrast";
         case common_flydelta_teaching_relation_status::not_reusable: return "not_reusable";
         case common_flydelta_teaching_relation_status::unsupported_behavior: return "unsupported_behavior";
+        case common_flydelta_teaching_relation_status::rejected: return "rejected";
     }
     return "unknown";
 }
@@ -66,18 +67,25 @@ bool common_flydelta_teaching_relation_validate(
         std::string & error) {
     error.clear();
     const bool complete = relation.status == common_flydelta_teaching_relation_status::resolved;
-    if (relation.schema_version != 1 || !bounded(relation.id) ||
+    const bool positive_only = relation.schema_version == 2 && relation.positive_only;
+    if ((!positive_only && (relation.schema_version != 1 || relation.positive_only)) ||
+            (positive_only && (!complete || !relation.host_approved ||
+                relation.source != common_adaptation_evidence_source::user_taught_concept ||
+                !relation.baseline_ref.empty() || !relation.control_ref.empty() ||
+                !relation.contrast_ref.empty() ||
+                relation.baseline_origin != common_flydelta_teaching_origin::none ||
+                relation.control_origin != common_flydelta_teaching_origin::none)) || !bounded(relation.id) ||
             !bounded(relation.teaching_key) ||
             !source_supported(relation.source) || !bounded(relation.behavior_key) ||
             relation.scope.namespace_id.empty() || relation.scope.session_id.empty() ||
-            !bounded(relation.task_fingerprint) || !bounded(relation.baseline_ref) ||
+            !bounded(relation.task_fingerprint) || (!positive_only && !bounded(relation.baseline_ref)) ||
             !bounded(relation.conditioned_ref) || relation.baseline_ref == relation.conditioned_ref ||
             (!relation.control_ref.empty() && !bounded(relation.control_ref)) ||
             !bounded(relation.verifier_ref) || !bounded(relation.evidence_ref) ||
             (!relation.contrast_ref.empty() && !bounded(relation.contrast_ref)) ||
             !std::isfinite(relation.confidence) || relation.confidence < 0.0f ||
             relation.confidence > 1.0f || (complete && !relation.host_approved) ||
-            (complete && relation.baseline_origin == common_flydelta_teaching_origin::none) ||
+            (complete && !positive_only && relation.baseline_origin == common_flydelta_teaching_origin::none) ||
             (complete && relation.conditioned_origin == common_flydelta_teaching_origin::none) ||
             (!relation.control_ref.empty() && relation.control_origin == common_flydelta_teaching_origin::none)) {
         error = "FlyDelta teaching relation identity, provenance or bounds are invalid";
@@ -321,6 +329,10 @@ bool common_agent_teaching_relation_to_evidence_relation(
         return false;
     }
     if (!common_flydelta_teaching_relation_validate(teaching_relation, error)) return false;
+    if (teaching_relation.positive_only) {
+        error = "positive-only representations cannot become behavioral evidence relations";
+        return false;
+    }
     relation = {};
     relation.id = teaching_relation.id;
     relation.source = teaching_relation.source;
@@ -427,7 +439,7 @@ bool common_flydelta_teaching_relation_to_transition(
         std::string & error) {
     error.clear();
     if (!common_flydelta_teaching_relation_validate(relation, error) ||
-            relation.status != common_flydelta_teaching_relation_status::resolved ||
+            relation.positive_only || relation.status != common_flydelta_teaching_relation_status::resolved ||
             !relation.host_approved || relation.id != evidence.id + "/teaching" ||
             relation.source != evidence.source || relation.behavior_key != evidence.behavior_key ||
             relation.baseline_ref != evidence.baseline_ref ||

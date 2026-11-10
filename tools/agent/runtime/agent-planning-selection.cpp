@@ -12,6 +12,7 @@
 #include "agent/tooling/schema/tool-output-codec.h"
 #include "agent/tooling/schema/tool-dsl-grammar.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/tooling/routing/tool-navigation.h"
 
 #include "plan/plan-json.h"
 #include "plan/plan-workflow-state.h"
@@ -409,61 +410,60 @@ bool select_agent_research_no_action(common_agent_inference & inference,
 
 bool select_agent_research_source(common_agent_inference & inference, const common_agent_generation_config & config,
         const common_agent_request & request, const std::string & task,
-        const std::vector<std::string> & available_sources, std::vector<std::string> & sources, std::string & error) {
+        const std::vector<std::string> & available_sources, std::vector<std::string> & sources, std::string & error,
+        const std::map<std::string, std::string> & source_descriptions) {
     sources.clear(); error.clear();
-    const json schema = {{"type", "object"}, {"additionalProperties", false},
-        {"required", json::array({"sources"})}, {"properties", {
-            {"sources", {{"type", "array"}, {"maxItems", 8}, {"items", {{"type", "string"}, {"maxLength", 128}}}}}}}};
-    common_agent_generation_request generation;
-    if (!prepare_selection_request(request, config, common_agent_generation_purpose::route_selection,
-            {{"system", "Identify information sources or providers explicitly named by the user. "
-                "Topics and ordinary attached documents are not source names. If the current question explicitly "
-                "changes the source, prefer it to the original objective. Return every explicitly named source "
-                "exactly as written by the user, including unavailable sources. Return an empty sources list "
-                "when none was named. Do not invent or substitute names. Registered source identifiers: " + json(available_sources).dump()},
-             {"user", task}}, 192, "selection.research_source", schema, generation, error)) return false;
-    generation.options.should_stop = request.research_should_stop;
-    const auto result = inference.generate_result(generation);
-    if (!common_agent_generation_succeeded(result)) {
-        error = describe_agent_runtime_generation_failure("research source selection", result);
-        return false;
+    json ids = json::array({""});
+    json descriptors = json::array();
+    for (const auto & id : available_sources) {
+        ids.push_back(id);
+        const auto description = source_descriptions.find(id);
+        descriptors.push_back({{"source_id", id}, {"description", description == source_descriptions.end() ? "" : description->second}});
     }
-    json decision;
-    if (!parse_selection_response(request, "selection.research_source", schema, result.content, decision, error)) return false;
-    auto fold = [](std::string value) {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        return value;
-    };
-    const auto names = decision.value("sources", std::vector<std::string>{});
-    // The host derives automatic versus named selection from the list. A
-    // second model-generated mode added no information and could contradict
-    // the actual names, aborting an otherwise valid research continuation.
-    if (names.empty()) return true;
-    for (const auto & name : names) {
-        const auto folded_task = fold(task);
-        const auto folded_name = fold(name);
-        bool grounded = false;
-        if (!folded_name.empty()) {
-            for (auto pos = folded_task.find(folded_name); pos != std::string::npos;
-                    pos = folded_task.find(folded_name, pos + 1)) {
-                const auto end = pos + folded_name.size();
-                if ((pos == 0 || !std::isalnum(static_cast<unsigned char>(folded_task[pos - 1]))) &&
-                        (end == folded_task.size() || !std::isalnum(static_cast<unsigned char>(folded_task[end])))) {
-                    grounded = true; break;
-                }
+    json schema = json::parse(R"({"type":"object","additionalProperties":false,"required":["sources"],"properties":{"sources":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["quote","source_id"],"properties":{"quote":{"type":"string","minLength":1,"maxLength":512},"source_id":{"type":"string"}}}}}})");
+    schema["properties"]["sources"]["items"]["properties"]["source_id"]["enum"] = ids;
+    const std::string instruction = "Identify source requirements explicitly expressed by the user. "
+        "For each, quote the exact relevant words from the user request and separately choose the registered source_id "
+        "that provides that source. Internal IDs do not have to appear literally in the request. "
+        "A request for official documentation on the public internet can use a general web transport while retaining "
+        "the named publisher/site as a search constraint. A specifically requested provider must not be replaced by "
+        "an unrelated provider or by general web search. If no registered source can supply a specifically requested "
+        "provider, return its user quote with an empty source_id. Topics alone are not source requirements. "
+        "Return an empty sources array when no source was requested. If the current user request changes the source, "
+        "prefer it to the original request. Registered sources: " + descriptors.dump();
+    std::string repair;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        common_agent_generation_request generation;
+        if (!prepare_selection_request(request, config, common_agent_generation_purpose::route_selection,
+                {{"system", instruction + repair}, {"user", task}}, 384,
+                "selection.research_source", schema, generation, error)) return false;
+        generation.options.should_stop = request.research_should_stop;
+        const auto result = inference.generate_result(generation);
+        if (!common_agent_generation_succeeded(result)) {
+            error = describe_agent_runtime_generation_failure("research source selection", result); return false;
+        }
+        json decision;
+        if (!parse_selection_response(request, "selection.research_source", schema, result.content, decision, error)) return false;
+        std::vector<std::string> selected;
+        bool ungrounded = false;
+        for (const auto & requirement : decision.at("sources")) {
+            const auto quote = requirement.at("quote").get<std::string>();
+            const auto id = requirement.at("source_id").get<std::string>();
+            // Validate provenance, not natural-language intent: interpretation
+            // and mapping remain model-owned, with no alias/keyword dictionary.
+            if (quote.empty() || task.find(quote) == std::string::npos) { ungrounded = true; break; }
+            if (id.empty()) { error = "explicitly requested research source is unavailable: " + quote; return false; }
+            if (std::find(available_sources.begin(), available_sources.end(), id) == available_sources.end()) {
+                error = "research source selection is outside the registered source view"; return false;
             }
+            if (std::find(selected.begin(), selected.end(), id) == selected.end()) selected.push_back(id);
         }
-        if (!grounded) {
-            error = "named research source is not grounded in the user request"; return false;
-        }
-        const auto found = std::find_if(available_sources.begin(), available_sources.end(),
-            [&](const auto & id) { return fold(id) == fold(name); });
-        if (found == available_sources.end()) {
-            error = "explicitly requested research source is unavailable: " + name; return false;
-        }
-        if (std::find(sources.begin(), sources.end(), *found) == sources.end()) sources.push_back(*found);
+        if (!ungrounded) { sources = std::move(selected); return true; }
+        repair = "\nThe previous quote did not occur verbatim in the user request. Quote only the actual request, "
+            "not an internal identifier or your paraphrase; map that quote to a registered source_id separately.";
     }
-    return true;
+    error = "named research source has no grounded user quote after repair";
+    return false;
 }
 
 bool common_agent_workflow_tool_eligible(const common_agent_request & request,
@@ -1291,6 +1291,9 @@ common_agent_route_selection_result select_agent_planning_route(
                 available += " Entry objective: " + bounded_model_text(candidate.blueprint_definition->steps.front().objective, 256);
             }
         }
+        std::set<std::string> operation_families;
+        for (const auto & name : candidate.resolved_tools) operation_families.insert(common_agent_tool_family_name(name));
+        available += " Authorized operation families: " + bounded_model_text(json(operation_families).dump(), 384) + ".";
         if (candidate.workflow_definition) {
             available += " Terminal outcomes: " + bounded_model_text(json(candidate.workflow_definition->terminal_states).dump(), 256);
             available += " Declared continuation workflows: " + bounded_model_text(

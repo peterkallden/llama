@@ -1,9 +1,23 @@
 #include "review-checklist.h"
+#include "method-phases.h"
 #include "agent/runtime/agent-reflection-engine.h"
+#include "plan/plan-context.h"
 #include "hash/hash.h"
 #include <algorithm>
 #include <set>
 #include <limits>
+
+bool common_agent_review_step_allows_retry(const common_plan_state & plan, const std::string & step_id) {
+    for (auto it = plan.observations.rbegin(); it != plan.observations.rend(); ++it) {
+        const auto * observed = common_plan_find_tool_observation_step(plan, *it);
+        if (!observed || observed->id != step_id) continue;
+        const auto value = nlohmann::ordered_json::parse(it->summary, nullptr, false);
+        if (!value.is_object() || !value.contains("failure") || !value["failure"].is_object()) continue;
+        const auto retryable = value["failure"].find("retryable");
+        return retryable == value["failure"].end() || (retryable->is_boolean() && retryable->get<bool>());
+    }
+    return true;
+}
 
 bool common_agent_advance_review_checklist(const common_agent_review_checklist & previous,
         const common_reflection_result & review,const common_plan_state & plan,const std::string & draft,
@@ -20,6 +34,30 @@ bool common_agent_advance_review_checklist(const common_agent_review_checklist &
         return std::any_of(previous.blocking.begin(),previous.blocking.end(),[&](const auto & item){return item.id==id;});
     };
     const auto deny=[&](const std::string & reason){error=reason;return false;};
+    nlohmann::ordered_json phase_progress;
+    if (!common_agent_method_review(plan,review.phase_reviews,phase_progress,error)) return false;
+    if (plan.phase_review_required && review.decision==common_reflection_decision::accept) {
+        auto projected=plan;
+        projected.observations.push_back({"projected-phase-review","method_phase_review",
+            nlohmann::ordered_json{{"schema","method-phase-review.v1"},{"phases",phase_progress}}.dump(),0.0f});
+        if (common_agent_method_has_remaining(projected)) return deny("method phases remain unresolved; continue the existing plan or record a bounded limitation for each phase");
+        const bool blocked=std::any_of(phase_progress.begin(),phase_progress.end(),[](const auto & phase){return phase.value("status",std::string{})=="blocked";});
+        if (blocked && review.task_outcome!="blocked") return deny("blocked method phases cannot establish a satisfied user outcome");
+    }
+    if (review.task_outcome == "remaining" &&
+            (review.decision == common_reflection_decision::accept ||
+             review.next_action == common_agent_reflection_next_action::revise_response))
+        return deny("unfinished task work requires plan repair or an authorized evidence phase, not answer acceptance or wording repair");
+    for (const auto & operation : review.proposed_plan_operations) {
+        if (operation.kind != common_plan_operation_kind::reset_step &&
+                operation.kind != common_plan_operation_kind::activate_step &&
+                operation.kind != common_plan_operation_kind::unblock_step) continue;
+        const auto step_id = operation.step_id.value_or(operation.step ? operation.step->id : std::string{});
+        const auto step = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const auto & item) { return item.id == step_id; });
+        if (step == plan.steps.end() || step->status != common_plan_step_status::failed) continue;
+        if (!common_agent_review_step_allows_retry(plan, step_id))
+            return deny("non-retryable failed tool call cannot be reset unchanged; use a supported corrected call or stop bounded");
+    }
     for(const auto & id:review.resolved_issue_ids)
         if(!known(id) || !accounted.insert(id).second) return deny("unknown or duplicate resolved issue ID");
     for(const auto & issue:review.issues) {

@@ -1028,6 +1028,12 @@ target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
 target_link_libraries(${TARGET} PRIVATE llama-agent-core)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 
+set(TARGET llama-agent-development-method-smoke)
+add_executable(${TARGET} smoke/runtime/agent-development-method-smoke.cpp)
+target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+target_link_libraries(${TARGET} PRIVATE llama-agent-core)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)
+
 set(TARGET llama-agent-hypothesis-workflow-smoke)
 add_executable(${TARGET} smoke/runtime/agent-hypothesis-workflow-smoke.cpp)
 target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
@@ -1478,6 +1484,7 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-research-runtime-smoke
     llama-agent-research-csv-smoke
     llama-agent-synthesis-review-smoke
+    llama-agent-development-method-smoke
 )
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_TEST_BUILD_TARGETS
@@ -1519,6 +1526,7 @@ set(AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
     llama-agent-deliberate-runtime-smoke
     llama-agent-research-runtime-smoke
     llama-agent-synthesis-review-smoke
+    llama-agent-development-method-smoke
 )
 if (LLAMA_MEMORY_COZO)
     list(APPEND AGENT_RUNTIME_SMOKE_RUNTIME_TARGETS
@@ -1645,6 +1653,12 @@ if (BUILD_TESTING)
         TIMEOUT 1200
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+    add_test(NAME llama-agent-flydelta-positive-only-model-ctest
+        COMMAND $<TARGET_FILE:llama-agent-flydelta-concept-synthesis-model-smoke> --positive-only)
+    set_property(TEST llama-agent-flydelta-positive-only-model-ctest PROPERTY LABELS agent-adaptation)
+    set_tests_properties(llama-agent-flydelta-positive-only-model-ctest PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 1200 WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
     add_test(NAME llama-agent-flydelta-model-ab-ctest
         COMMAND $<TARGET_FILE:llama-agent-flydelta-model-ab-smoke>)
     set_property(TEST llama-agent-flydelta-model-ab-ctest PROPERTY LABELS agent-adaptation)
@@ -1730,6 +1744,9 @@ if (BUILD_TESTING)
     add_test(NAME llama-agent-research-runtime-ctest
         COMMAND $<TARGET_FILE:llama-agent-research-runtime-smoke>)
     set_property(TEST llama-agent-research-runtime-ctest PROPERTY LABELS agent)
+    add_test(NAME llama-agent-development-method-smoke-model-free
+        COMMAND $<TARGET_FILE:llama-agent-development-method-smoke>)
+    set_property(TEST llama-agent-development-method-smoke-model-free PROPERTY LABELS "agent;smoke;model-free")
     add_test(NAME llama-agent-synthesis-review-smoke-model-free
         COMMAND $<TARGET_FILE:llama-agent-synthesis-review-smoke>)
     set_property(TEST llama-agent-synthesis-review-smoke-model-free PROPERTY LABELS "agent;smoke;model-free")

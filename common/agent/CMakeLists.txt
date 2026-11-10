@@ -154,6 +154,7 @@ add_library(${TARGET}
     runtime-json-contracts.cpp runtime-json-contracts.h
     synthesis-state.cpp synthesis-state.h
     review-checklist.cpp review-checklist.h
+    method-phases.cpp method-phases.h
     learning/memory-learning.cpp learning/memory-learning.h
     adaptation/learning-observation.cpp adaptation/learning-observation.h
     adaptation/learning-case.cpp adaptation/learning-case.h
@@ -266,6 +267,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/concept-input-routing.cpp adaptation/concept-input-routing.h
     adaptation/concept-candidate-index.cpp adaptation/concept-candidate-index.h
     thinking/reflection-json.cpp thinking/reflection-json.h
+    thinking/reflection-references.cpp thinking/reflection-references.h
     tooling/contracts/schema-contract.cpp tooling/contracts/schema-contract.h
     tooling/adapters/tool-adapters.cpp tooling/adapters/tool-adapters.h
     tooling/adapters/families/memory-adapters.cpp tooling/adapters/families/memory-adapters.h

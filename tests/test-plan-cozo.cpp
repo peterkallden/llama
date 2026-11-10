@@ -18,6 +18,7 @@ int main() {
         common_plan_cozo_store store;
         assert(store.open((dir / "plan.db").string(), error));
         write_atomic_route_entry(store);
+        write_method_progress(store);
         common_plan_state plan;
         plan.id = "p";
         plan.scope = common_plan_scope::global;
@@ -132,6 +133,7 @@ int main() {
         op.step->intended_contribution = "preserve the persisted evidence";
         op.step->selected_tool = "web.search";
         op.step->tool_call = common_plan_tool_call{"web.search", R"({"query":"cozo"})"};
+        op.step->semantic_alias="query";op.step->method_phase_id="method:inspect";op.step->method_turn_id="turn-1";
         op.step->artifact_binding = common_plan_artifact_binding{
             "compose-findings", "research-report", "v2", "findings", "snapshot-7"};
         assert(store.apply(op, plan, error));
@@ -147,6 +149,7 @@ int main() {
         common_plan_cozo_store store;
         assert(store.open((dir / "plan.db").string(), error));
         verify_atomic_route_entry(store);
+        verify_method_progress(store);
         auto plan = store.get("p", error);
         assert(plan);
         assert(plan->observations.size()==1);
@@ -166,6 +169,8 @@ int main() {
         assert(plan->steps.size() == 2 &&
             plan->steps[0].intended_contribution == "preserve the persisted evidence" &&
             plan->steps[0].tool_call && plan->steps[0].tool_call->name == "web.search");
+        assert(plan->steps[0].semantic_alias=="query" && plan->steps[0].method_phase_id=="method:inspect" &&
+            plan->steps[0].method_turn_id=="turn-1");
         assert(plan->steps[0].artifact_binding &&
             plan->steps[0].artifact_binding->transition_id == "compose-findings" &&
             plan->steps[0].artifact_binding->profile_ref == "research-report" &&

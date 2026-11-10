@@ -63,6 +63,17 @@ int main() {
         !plan.run_rank_two_controls_first && plan.tfo_lite_permitted_by_evidence &&
         plan.tfo_lite_requires_utility_gate && !plan.run_tfo_lite);
 
+    // An explicitly admitted experiment may begin at rank zero without
+    // manufacturing behavioral evidence; ordinary callers remain strict.
+    common_flydelta_evidence_depth_result uncredited;
+    CHECK(!common_flydelta_plan_search_continuation(continuation, uncredited, plan, error));
+    CHECK(common_flydelta_plan_search_continuation(continuation, uncredited, plan, error, true));
+    CHECK(plan.phase == common_flydelta_experiment_phase::bootstrap &&
+        !plan.tfo_lite_permitted_by_evidence && !plan.run_rank_two_controls_first);
+    uncredited.depth = common_flydelta_search_depth::deep;
+    CHECK(!common_flydelta_plan_search_continuation(continuation, uncredited, plan, error, true));
+    CHECK(common_flydelta_plan_search_continuation(continuation, depth, plan, error));
+
     common_flydelta_utility_gate_config utility_config;
     common_flydelta_subspace_utility_observation utility;
     utility.safe_to_continue = true;

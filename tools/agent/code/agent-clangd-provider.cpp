@@ -512,7 +512,7 @@ bool agent_clangd_code_provider::resolve_location(const json & arguments, source
         const auto symbol = arguments.value("symbol", std::string{});
         auto symbol_offset = source_line.find(symbol);
         if (symbol.empty() || symbol_offset == std::string::npos) {
-            error = "symbol does not occur on the requested source line; choose a matching path and line";
+            error = "Symbol does not occur on the requested source line; the location may be stale. Find the symbol again and use its current path and line.";
             return false;
         }
         const bool explicit_column = arguments.contains("definition_path") && arguments.contains("definition_line")
@@ -520,7 +520,7 @@ bool agent_clangd_code_provider::resolve_location(const json & arguments, source
         if (explicit_column) {
             while (symbol_offset != std::string::npos && utf16_units(source_line, symbol_offset) != static_cast<size_t>(column - 1))
                 symbol_offset = source_line.find(symbol, symbol_offset + symbol.size());
-            if (symbol_offset == std::string::npos) { error = "symbol does not match the explicit UTF-16 source column"; return false; }
+            if (symbol_offset == std::string::npos) { error = "Symbol does not match the explicit UTF-16 column; find its current location or omit the column when it is unambiguous."; return false; }
         } else if (source_line.find(symbol, symbol_offset + symbol.size()) != std::string::npos) {
             error = "symbol occurs more than once on the source line; provide an explicit column"; return false;
         }
@@ -541,7 +541,9 @@ bool agent_clangd_code_provider::open_location(const source_location & location,
 common_tool_execution_result agent_clangd_code_provider::location_query(const json & arguments, const std::string & method) {
     source_location location;
     std::string error;
-    if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.semantic.invalid_arguments", common_tool_failure_class::validation, false, "A source location is required for this semantic query.", error);
+    // resolve_location and repository-path validation return fixed diagnostics;
+    // they never include source contents or caller-supplied paths.
+    if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.semantic.invalid_arguments", common_tool_failure_class::validation, false, error, error);
     if (!open_location(location, error)) return provider_error("tool.diagnostics.semantic.provider_unavailable", error);
     json response;
     auto params = json{{"textDocument", {{"uri", location.uri}}}, {"position", {{"line", location.line}, {"character", location.column}}}};
@@ -585,7 +587,7 @@ common_tool_execution_result agent_clangd_code_provider::call_hierarchy(const st
     if (!synchronize_compile_commands(watch_error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", watch_error);
     source_location location;
     std::string error;
-    if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.call_hierarchy.invalid_arguments", common_tool_failure_class::validation, false, "A source location is required for call hierarchy.", error);
+    if (!resolve_location(arguments, location, error)) return common_tool_execution_result::failure("tool.diagnostics.call_hierarchy.invalid_arguments", common_tool_failure_class::validation, false, error, error);
     if (!open_location(location, error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
     json prepared;
     if (!session_->request("textDocument/prepareCallHierarchy", {{"textDocument", {{"uri", location.uri}}}, {"position", {{"line", location.line}, {"character", location.column}}}}, prepared, error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);

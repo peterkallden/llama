@@ -293,8 +293,38 @@ bool common_reflection_parse_json(
         else { error = "unsupported reflection decision"; return false; }
         if (j.contains("ready_to_answer") && !j["ready_to_answer"].is_boolean()) { error = "ready_to_answer must be a boolean"; return false; }
         result.ready_to_answer = j.value("ready_to_answer", false);
+        if (j.contains("task_outcome")) {
+            if (!j["task_outcome"].is_string()) { error = "task_outcome must be a string"; return false; }
+            result.task_outcome = j["task_outcome"].get<std::string>();
+            if (result.task_outcome != "satisfied" && result.task_outcome != "remaining" && result.task_outcome != "blocked") {
+                error = "task_outcome must be satisfied, remaining or blocked"; return false;
+            }
+        }
         if (!common_json_contract_optional_unit_number(j, "confidence", 0.5f, result.confidence, error) ||
                 !common_json_contract_optional_string_array(j, "revision_guidance", 4, 512, result.revision_guidance, error)) return false;
+        if (j.contains("phase_reviews")) {
+            if (!j["phase_reviews"].is_array() || j["phase_reviews"].size()>16) {error="phase_reviews must be a bounded array";return false;}
+            for (const auto & item:j["phase_reviews"]) {
+                common_agent_method_phase_review phase;
+                if (!common_json_contract_required_string(item,"phase_id",1024,phase.phase_id,error) ||
+                    !common_json_contract_required_string(item,"status",32,phase.status,error) ||
+                    !common_json_contract_required_string(item,"reason",512,phase.reason,error) ||
+                    !common_json_contract_optional_string_array(item,"evidence_ids",8,1024,phase.evidence_ids,error)) return false;
+                if (item.contains("next_work_kind") && !item["next_work_kind"].is_null()) {
+                    if (!item["next_work_kind"].is_string() || item["next_work_kind"].get<std::string>().size()>32) {
+                        error="next_work_kind must be a bounded string";return false;
+                    }
+                    phase.next_work_kind=item["next_work_kind"].get<std::string>();
+                }
+                if (item.contains("next_work_goal") && !item["next_work_goal"].is_null()) {
+                    if (!item["next_work_goal"].is_string() || item["next_work_goal"].get<std::string>().size()>512) {
+                        error="next_work_goal must be a bounded string";return false;
+                    }
+                    phase.next_work_goal=item["next_work_goal"].get<std::string>();
+                }
+                result.phase_reviews.push_back(std::move(phase));
+            }
+        }
         if (j.contains("assurance_action")) {
             if (!j["assurance_action"].is_string()) { error = "assurance_action must be a string"; return false; }
             const auto action = j["assurance_action"].get<std::string>();
@@ -667,6 +697,11 @@ bool common_reflection_parse_compact_dsl(
                 return false;
             }
             ++operation_count;
+        } else if (verb == "phase") {
+            json fields;
+            if (!parse_reflection_dsl_fields(argument,fields,error)) return false;
+            if (!normalized.contains("phase_reviews")) normalized["phase_reviews"]=json::array();
+            normalized["phase_reviews"].push_back(std::move(fields));
         } else if (verb == "issue") {
             json fields;
             if(!parse_reflection_dsl_fields(argument,fields,error)) return false;
@@ -716,6 +751,11 @@ bool common_reflection_parse_compact_dsl(
             }
             operations.push_back({{"kind", verb}, {"target_id", argument}});
             ++operation_count;
+        } else if (verb == "task_outcome") {
+            if (argument != "satisfied" && argument != "remaining" && argument != "blocked") {
+                error = "reflection DSL task_outcome must be satisfied, remaining or blocked"; return false;
+            }
+            normalized[verb] = argument;
         } else if (verb == "ready_to_answer") {
             if (argument != "true" && argument != "false") {
                 error = "reflection DSL ready_to_answer must be true or false";
@@ -803,9 +843,11 @@ bool common_reflection_parse_compact_dsl(
 }
 
 std::string common_reflection_review_grammar() {
-    return R"gbnf(root ::= ("reflect accept" | "reflect abort" | revision) followup{0,8}
+    return R"gbnf(root ::= ("reflect accept" | "reflect abort" | revision) followup{0,24}
 revision ::= "reflect revise" "\nassurance_action " action ("\nguidance " text | issue)
-followup ::= "\nresolved " text | "\nadvisory " text | issue
+followup ::= "\nresolved " text | "\nadvisory " text | "\ntask_outcome " ("satisfied" | "remaining" | "blocked") | issue | phase
+phase ::= "\nphase phase_id=" text " status=" text " reason=" text (" evidence_ids=[" text (", " text){0,7} "]")? (" next_work_kind=" work_kind " next_work_goal=" text)?
+work_kind ::= "\"inspect_source\"" | "\"external_lookup\"" | "\"reason\""
 issue ::= "\nissue description=" text " correction=" text (" previous_issue_id=" text)? (" evidence_ids=[" text (", " text){0,7} "]")?
 action ::= "revise_response" | "revise_plan" | "fail_bounded" | "escalate_deliberate" | "escalate_research"
 text ::= "\"" character{1,512} "\""

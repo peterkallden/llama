@@ -538,6 +538,68 @@ the existing diagnostics, bounded frontier and host-Oracle path. This is a
 representation extension only: neither source grants learning credit,
 promotion eligibility or activation authority.
 
+### Positive-only experimental concepts
+
+An explicit host-supplied user concept can use a schema-version-2 teaching
+relation with `positive_only: true`. It carries a real `conditioned_ref`, task,
+grounding/evidence and future verifier references, `host_approved: true`, a
+resolved status and a nonempty conditioned origin. Baseline, control and
+contrast references and their origins must be absent. Version-1 contrast
+relations retain their existing requirements; there is no missing-control
+fallback from the ordinary builders.
+
+The existing material store keeps positive-only and contrast material in
+separate groups. Positive-only groups require at least three relations and
+three captures. The daemon captures the authorized positive inputs without
+an overlay, behavioral verification or an invented negative arm. These are
+teacher-forced generation-boundary representations, not proof that a sampled
+answer succeeded. Repeated logical message inputs have the same host-computed
+fingerprint even if their resource or sample IDs change. Synthesis rejects
+repeated source fingerprints, capture IDs and task identities, and checks the
+model, tokenizer, template, execution context, scope, layout and layer.
+
+The CPU builder normalizes each sample, trims by alignment using the existing
+prototype estimator, and normalizes the retained mean. It records sample and
+retained counts, the untrimmed mean's resultant norm, all-sample median cosine
+and median absolute deviation, retained-sample median cosine, and the minimum
+cosine over full leave-one-out reconstructions. Source ordering is canonical
+for repeatability. Default admission requires resultant norm at least 0.25,
+median alignment at least 0.5 and leave-one-out stability at least 0.8. These
+are configurable builder thresholds for geometric experiment admission, not
+empirically calibrated probabilities of concept correctness or utility.
+
+Candidates are marked `synthesis_semantics: positive_only`,
+`experimental_only: true`, and `learning_eligible: false`. They use the existing
+bounded frontier and experimental direction persistence callback. Layer-local
+material can use the existing localization path, followed by ordinary
+WHERE/dose/Deep/Oracle execution subject to its existing admission rules.
+Normal behavioral experiments still require their actual baseline and verifier;
+the absence of a concept-extraction control does not remove those requirements.
+The host submits the existing capture/search jobs with the material-group
+reference; observing positive material does not automatically launch or activate
+an intervention. Automatic selection is contrast-first: ready, admissible contrast
+wins, while absent or incomplete contrast can select ready positive-only material.
+An explicit contrast rejection is not incomplete material and blocks automatic
+fallback. Explicit `positive_only` selection remains available for controlled
+experiments. Selection is checked again when queued phases execute.
+
+The immutable direction artifact carries versioned `synthesis` diagnostics,
+including on layer-bound directions. No new database or guidance history is
+created. Positive representations bypass behavioral evidence/transition and
+training admission. They are not even `UNKNOWN` intervention observations:
+no posterior is updated by capture or synthesis. A later real intervention can
+produce ordinary outcome evidence under the existing contracts. Geometry does
+not change priors, posterior features, selection policy or promotion gates.
+
+This is a positive-prototype hypothesis generator inspired by CorrSteer's
+separation between observation-based proposal and intervention testing. It
+does not implement SAE feature/outcome correlation, and a stable direction may
+reflect shared background activity rather than the intended concept. Its
+diagnostics are retained for later replay/holdout evaluation; improved model
+behavior has not been established. Contract coverage is added to
+`test-agent-flydelta-concept`, `test-agent-flydelta-teaching-material`, and
+`test-agent-flydelta-daemon-seams`; these additions have not yet been built or run.
+
 An explicitly host-labelled undesired capture can additionally produce the
 `negative_repulsion` semantic source. Its vector is `control - negative`, so
 it describes a bounded direction away from a known bad behavior. The negative
@@ -6146,3 +6208,60 @@ for calibration, direction/dose search, contracts and traced model comparisons.
 The host default is `direction_dose`; the lower-level coefficient-search contract
 defaults to `raw_coefficients`. The [verification record](agent-flydelta-verification-2026-10-28.md)
 describes what was tested and what remains unproven.
+
+### Positive-only admission, execution identity and recovery
+
+The authoritative execution profile belongs to the resident daemon model. New
+teaching resources, admission records and jobs share the same canonical identity:
+all GGUF shards determine the model artifact and conservative tokenizer
+fingerprints; the actual default/tool chat templates determine the template
+fingerprint; context capacity and generation-boundary capture determine execution
+context identity. Capture layout remains explicit host configuration. The
+conservative tokenizer identity can reject equivalent tokenizers in different
+model artifacts. Computing the artifact hashes also adds startup I/O. Historical
+captures retain their original fingerprints; a mismatch is rejected with the
+incompatible field identified, never repaired by relabeling a capture.
+
+The existing daemon JSONL administration interface accepts `flydelta.admit_concept`.
+For example, using references already authorized in the supplied scope:
+
+```json
+{"command":"flydelta.admit_concept","namespace_id":"default","project_id":"llama-agent","session_id":"experiment-session","teaching_key":"concept-key","behavior_key":"behavior-key","task_fingerprint":"task-revision","baseline_ref":"resource://baseline","verifier_ref":"resource://verifier","where_origin_ref":"resource://existing-where","synthesis_mode":"auto"}
+```
+
+This is a host administration operation, not a model-callable tool. It resolves
+real baseline, verifier and WHERE resources, persists a reference-based admission
+and submits the existing capture/synthesis/search queue. A version-2 experimental
+seed refers to that admission instead of fabricating verified behavioral evidence
+or transaction IDs. Positive-only capture has no negative/control arm; subsequent
+intervention experiments still use their real baseline and Oracle. Submission is
+not activation or learning authorization.
+
+Contrast assessments use the existing lifecycle journal. Versioned decisions bind
+the scoped material group and its source-reference revision to the verifier,
+verifier revision and evidence references. Rejection survives reopening the store.
+Changing material does not silently clear a rejection: the host must explicitly
+reassess the new material revision. Incomplete sources lacking extraction control
+remain pending, outside capture-ready material, and survive material snapshots.
+
+The job carries an immutable synthesis resource reference through execution and
+continuation. Outcome guidance validates the artifact's scope, model, layout,
+concept and direction fingerprint before exposing diagnostic metadata. Layer
+families retain per-layer diagnostics rather than averaging away their identity.
+These descriptive fields do not change posterior features, priors or search
+policy, and never count as HELPED observations.
+
+The model-free integration contract is
+`test-agent-flydelta-positive-integration` (requires the Cozo build). It uses real
+daemon command parsing/service admission, resource codecs, queue workers,
+persistence and reopen, with a deterministic replacement only for bounded model
+transport. It checks actual experimental-arm dispatch and diagnostics provenance;
+it does not establish GPU execution or model improvement. The accompanying
+contracts cover material selection/rejection, seeds, continuation and unchanged
+outcome-guidance predictions. Prepared verification commands, to run only after
+explicit build/test approval:
+
+```sh
+CCACHE_DIR="$HOME/ccache" cmake --build build-agent-vulkan-cozo --target test-agent-flydelta-positive-integration test-agent-flydelta-teaching-material test-agent-flydelta-job test-agent-flydelta-collection test-agent-flydelta-outcome-guidance test-agent-flydelta-daemon-seams
+ctest --test-dir build-agent-vulkan-cozo --output-on-failure -R '^test-agent-flydelta-(positive-integration|teaching-material|job|collection|outcome-guidance|daemon-seams)$'
+```

@@ -18,6 +18,7 @@
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
 #include "agent/adaptation/flydelta/flydelta-coefficient-search.h"
 #include "agent/adaptation/flydelta/flydelta-concept.h"
+#include "agent/adaptation/flydelta/flydelta-collection.h"
 #include "agent/adaptation/flydelta/flydelta-concept-capture.h"
 #include "agent/adaptation/flydelta/flydelta-deep-search.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
@@ -107,6 +108,12 @@ struct daemon_flydelta_resource_provider {
     // existing resource store when a later resume/materialization step needs
     // them; they are never embedded in queue state.
     std::shared_ptr<common_learning_lifecycle_store> lifecycle_store;
+    // Alternate host transport uses the same prepared arm and finalization
+    // contracts. A deterministic host can exercise daemon orchestration
+    // without a local model; production leaves this unset.
+    std::function<bool(const common_agent_server_flydelta_binding &,
+        const common_flydelta_arm_batch_request &, common_flydelta_arm_batch_result &, std::string &)>
+        run_prepared_batch;
     std::mutex capture_mutex;
     std::unordered_map<std::string, std::shared_ptr<const common_flydelta_hidden_state_capture>> captures;
     mutable std::mutex composed_direction_mutex;
@@ -201,6 +208,13 @@ daemon_flydelta_provider_for_scope(
         const std::shared_ptr<daemon_flydelta_resource_provider> & source,
         const common_agent_scope & scope);
 
+// Canonical identity of the actual resident execution surface. New resources
+// use this producer; historical captures are never relabelled.
+bool daemon_flydelta_execution_identity(
+        const daemon_options & options,
+        const std::shared_ptr<common_agent_server_context_host> & host,
+        common_flydelta_teaching_material_identity & identity, std::string & error);
+
 bool daemon_flydelta_lifecycle_record_matches_scope(
         const common_learning_lifecycle_record & record,
         const common_agent_scope & scope);
@@ -239,7 +253,7 @@ bool daemon_flydelta_parse_teaching_relation(
         const daemon_flydelta_resource_provider & provider,
         const std::string & reference,
         daemon_flydelta_concept_relation_material & material,
-        std::string & error);
+        std::string & error, bool * source_invalid = nullptr);
 
 
 
@@ -318,6 +332,14 @@ bool daemon_flydelta_persist_capture(
         std::string & reference,
         std::string & error);
 
+bool daemon_flydelta_persist_positive_capture(
+        const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
+        const common_flydelta_teaching_material_group & group,
+        const daemon_flydelta_concept_relation_material & material,
+        const common_flydelta_arm_result & result,
+        const common_flydelta_hidden_state_capture & capture,
+        std::string & reference, std::string & error);
+
 bool daemon_flydelta_persist_concept_trajectory(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,
         const daemon_flydelta_concept_relation_material & material,
@@ -374,6 +396,19 @@ bool daemon_flydelta_execute_batch(
         const common_flydelta_arm_batch_request & request,
         common_flydelta_arm_batch_result & result,
         std::string & error);
+
+// Host-only admission producer. The evaluation context supplies actual
+// baseline/Oracle/WHERE references; no behavioral outcome is constructed.
+bool daemon_flydelta_admit_concept_experiment(
+        std::shared_ptr<daemon_flydelta_resource_provider> provider,
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & limits,
+        common_flydelta_experiment_job evaluation_context,
+        common_flydelta_teaching_material_mode mode,
+        common_flydelta_experiment_collection_result & result, std::string & error);
+bool daemon_flydelta_validate_concept_admission(
+        const daemon_flydelta_resource_provider & provider,
+        const common_flydelta_experiment_job & job, std::string & error);
 
 bool daemon_flydelta_run_concept_capture(
         std::shared_ptr<daemon_flydelta_resource_provider> provider,
@@ -446,7 +481,8 @@ bool daemon_flydelta_register_composed_directions(
         std::vector<common_flydelta_basis_direction> directions,
         const std::string & derivation,
         std::string & reference,
-        std::string & error, const json & localization = json::object());
+        std::string & error, const json & localization = json::object(),
+        const json & synthesis = json::object());
 
 bool daemon_flydelta_resolve_concept_layer_family(
         const std::shared_ptr<daemon_flydelta_resource_provider> & provider,

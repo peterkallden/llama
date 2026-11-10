@@ -43,6 +43,27 @@ bool common_flydelta_teaching_material_identity_validate(
     return true;
 }
 
+bool common_flydelta_teaching_material_execution_matches(
+        const common_flydelta_teaching_material_identity & identity,
+        const std::string & model, const std::string & tokenizer,
+        const std::string & chat_template, const std::string & execution_context,
+        const std::string & capture_layout, std::string & error) {
+    error.clear();
+    if (!common_flydelta_teaching_material_identity_validate(identity, error)) return false;
+    const auto compare = [&](const char * field, const std::string & expected, const std::string & actual) {
+        if (actual.empty() || expected != actual) {
+            error = std::string("FlyDelta teaching material ") + field + " does not match the execution profile";
+            return false;
+        }
+        return true;
+    };
+    return compare("model fingerprint", identity.model_profile_fingerprint, model) &&
+        compare("tokenizer fingerprint", identity.tokenizer_fingerprint, tokenizer) &&
+        compare("template fingerprint", identity.template_fingerprint, chat_template) &&
+        compare("execution context fingerprint", identity.execution_context_fingerprint, execution_context) &&
+        (capture_layout.empty() || compare("capture layout revision", identity.capture_layout_revision, capture_layout));
+}
+
 std::string common_flydelta_teaching_material_compatibility_key(
         const common_flydelta_teaching_material_identity & identity) {
     std::string key;
@@ -58,6 +79,15 @@ std::string common_flydelta_teaching_material_compatibility_key(
     return key;
 }
 
+namespace {
+std::string material_family_ref(const common_flydelta_teaching_material_group & group) {
+    const auto key = group.compatibility_key + "\n" + group.teaching_key + "\n" + group.behavior_key +
+        (group.positive_only ? "\npositive_only" : "") + "\nscope-v2\n" + group.scope.namespace_id +
+        "\n" + group.scope.project_id + "\n" + group.scope.session_id;
+    return "flydelta://teaching-material/" + hash_sha256_hex(key.data(), key.size());
+}
+}
+
 bool common_flydelta_teaching_material_store::observe(
         const common_flydelta_teaching_relation & relation,
         const common_flydelta_teaching_material_identity & identity,
@@ -70,6 +100,17 @@ bool common_flydelta_teaching_material_store::observe(
         if (error.empty()) error = "FlyDelta teaching material relation is not admissible";
         return false;
     }
+    const auto recorded_matches = [&](const char * field, const std::string & recorded, const std::string & current) {
+        if (!recorded.empty() && recorded != current) {
+            error = std::string("FlyDelta source relation ") + field + " differs from the host execution profile";
+            return false;
+        }
+        return true;
+    };
+    if (!recorded_matches("model fingerprint", relation.model_profile_fingerprint, identity.model_profile_fingerprint) ||
+            !recorded_matches("tokenizer fingerprint", relation.tokenizer_fingerprint, identity.tokenizer_fingerprint) ||
+            !recorded_matches("template fingerprint", relation.template_fingerprint, identity.template_fingerprint) ||
+            !recorded_matches("capture layout", relation.capture_layout_revision, identity.capture_layout_revision)) return false;
     const std::string compatibility_key =
         common_flydelta_teaching_material_compatibility_key(identity);
     if (compatibility_key.empty()) {
@@ -77,27 +118,37 @@ bool common_flydelta_teaching_material_store::observe(
         return false;
     }
     const auto same_group = [&](const common_flydelta_teaching_material_group & group) {
-        return group.teaching_key == relation.teaching_key &&
+        return group.scope.namespace_id == relation.scope.namespace_id &&
+            group.scope.project_id == relation.scope.project_id && group.scope.session_id == relation.scope.session_id &&
+            group.positive_only == relation.positive_only &&
+            group.teaching_key == relation.teaching_key &&
             group.behavior_key == relation.behavior_key &&
             group.compatibility_key == compatibility_key;
     };
     auto it = std::find_if(groups_.begin(), groups_.end(), same_group);
     if (it == groups_.end()) {
         common_flydelta_teaching_material_group group;
+        group.scope = relation.scope;
+        group.scope.turn_id.clear(); // Independent turns may contribute within the authorized session.
+        group.positive_only = relation.positive_only;
+        if (group.positive_only) group.minimum_relations = group.minimum_trajectories = 3;
         group.teaching_key = relation.teaching_key;
         group.behavior_key = relation.behavior_key;
         group.compatibility_key = compatibility_key;
         group.identity = identity;
-        const std::string group_identity = compatibility_key + "\n" +
-            relation.teaching_key + "\n" + relation.behavior_key;
-        group.group_ref = "flydelta://teaching-material/" +
-            hash_sha256_hex(group_identity.data(), group_identity.size());
+        group.group_ref = material_family_ref(group);
         it = groups_.insert(groups_.end(), std::move(group));
     }
-    if (std::find(it->relation_refs.begin(), it->relation_refs.end(), relation.id) ==
-            it->relation_refs.end()) {
-        it->relation_refs.push_back(relation.id);
+    // A completed source supersedes its pending entry under the same identity.
+    // Never leave the same reference in both collections after reassessment.
+    if (!relation.positive_only && !relation.control_ref.empty()) {
+        auto & pending = it->pending_relation_refs;
+        pending.erase(std::remove(pending.begin(), pending.end(), relation.id), pending.end());
     }
+    auto & source_refs = !relation.positive_only && relation.control_ref.empty()
+        ? it->pending_relation_refs : it->relation_refs;
+    if (std::find(source_refs.begin(), source_refs.end(), relation.id) == source_refs.end())
+        source_refs.push_back(relation.id);
     it->relation_set_ready = it->relation_refs.size() >= it->minimum_relations;
     it->trajectory_material_ready =
         it->trajectory_refs.size() >= it->minimum_trajectories;
@@ -119,12 +170,18 @@ bool common_flydelta_teaching_material_store::group_ready(
         return false;
     }
     const std::string key = common_flydelta_teaching_material_compatibility_key(identity);
-    const auto it = std::find_if(groups_.begin(), groups_.end(), [&](const auto & candidate) {
-        return candidate.teaching_key == teaching_key &&
-            candidate.behavior_key == behavior_key && candidate.compatibility_key == key;
-    });
-    if (it == groups_.end() || it->relation_refs.size() < minimum_relations) return true;
-    group = *it;
+    // Preserve the established contrast-based route when both kinds exist.
+    // An incomplete group must not hide a ready group of the other kind.
+    const common_flydelta_teaching_material_group * match = nullptr;
+    for (const auto & candidate : groups_) {
+        if (candidate.teaching_key != teaching_key || candidate.behavior_key != behavior_key ||
+                candidate.compatibility_key != key ||
+                candidate.relation_refs.size() < std::max(minimum_relations, candidate.minimum_relations)) continue;
+        if (!match || (match->positive_only && !candidate.positive_only)) match = &candidate;
+    }
+    if (!match) return true;
+    minimum_relations = std::max(minimum_relations, match->minimum_relations);
+    group = *match;
     group.minimum_relations = minimum_relations;
     group.relation_set_ready = true;
     return true;
@@ -238,10 +295,191 @@ bool common_flydelta_teaching_material_runtime::observe_layer_trajectory(
     return true;
 }
 
+std::string common_flydelta_teaching_material_revision(const common_flydelta_teaching_material_group & group) {
+    auto refs = group.relation_refs;
+    auto pending = group.pending_relation_refs;
+    std::sort(refs.begin(), refs.end());
+    std::sort(pending.begin(), pending.end());
+    const auto bytes = nlohmann::ordered_json{{"schema_version", 1},
+        {"group_ref", group.group_ref}, {"identity", group.compatibility_key},
+        {"verifier_revision", group.identity.verifier_revision}, {"relation_refs", refs}, {"pending_relation_refs", pending}}.dump();
+    return "sha256:" + hash_sha256_hex(bytes.data(), bytes.size());
+}
+
+void common_flydelta_teaching_material_runtime::bind_assessment_journal(
+        std::shared_ptr<common_learning_lifecycle_store> journal) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    assessment_journal_ = std::move(journal);
+}
+
+bool common_flydelta_teaching_material_runtime::assess_contrast(
+        const std::string & group_ref, const std::string & verifier_ref,
+        const std::vector<std::string> & evidence_refs, bool rejected, std::string & error,
+        const std::string & expected_material_revision, const std::string & verifier_revision) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    error.clear();
+    const auto selected = std::find_if(store_.groups().begin(), store_.groups().end(),
+        [&](const auto & candidate) { return candidate.group_ref == group_ref; });
+    if (selected == store_.groups().end()) {
+        error = "FlyDelta contrast assessment source group was not found";
+        return false;
+    }
+    return append_contrast_assessment_locked(*selected, verifier_ref, evidence_refs,
+        rejected, error, expected_material_revision, verifier_revision);
+}
+
+bool common_flydelta_teaching_material_runtime::append_contrast_assessment_locked(
+        const common_flydelta_teaching_material_group & group, const std::string & verifier_ref,
+        const std::vector<std::string> & evidence_refs, bool rejected, std::string & error,
+        const std::string & expected_material_revision, const std::string & verifier_revision) {
+    const auto & group_ref = group.group_ref;
+    if (!assessment_journal_ || group.group_ref.empty() || group.positive_only ||
+            !bounded(verifier_ref) || evidence_refs.empty() || evidence_refs.size() > 128 ||
+            std::any_of(evidence_refs.begin(), evidence_refs.end(), [](const auto & ref) { return !bounded(ref); })) {
+        error = "FlyDelta contrast assessment requires a journal, source group, verifier and evidence";
+        return false;
+    }
+    const auto revision = common_flydelta_teaching_material_revision(group);
+    if (expected_material_revision != revision || !bounded(verifier_revision)) {
+        error = "FlyDelta contrast assessment material revision is stale or its verifier revision is missing";
+        return false;
+    }
+    const auto payload = nlohmann::ordered_json{{"record_type", "flydelta_contrast_assessment"},
+        {"schema_version", 1}, {"group_ref", group_ref}, {"material_revision", revision},
+        {"material_refs", group.relation_refs}, {"pending_material_refs", group.pending_relation_refs},
+        {"verifier_ref", verifier_ref}, {"verifier_revision", verifier_revision},
+        {"material_verifier_revision", group.identity.verifier_revision},
+        {"evidence_refs", evidence_refs}, {"rejected", rejected}}.dump();
+    common_learning_lifecycle_record record;
+    record.subject_id = group_ref;
+    record.namespace_id = group.scope.namespace_id;
+    record.project_id = group.scope.project_id;
+    record.session_id = group.scope.session_id;
+    record.kind = common_learning_lifecycle_kind::flydelta_result;
+    record.status = rejected ? common_learning_lifecycle_status::rejected : common_learning_lifecycle_status::approved;
+    record.content_hash = hash_sha256_hex(payload.data(), payload.size());
+    auto records = assessment_journal_->list(error);
+    if (!error.empty()) return false;
+    const common_learning_lifecycle_record * previous = nullptr;
+    for (const auto & prior : records) {
+        if (prior.subject_id == group_ref && prior.kind == common_learning_lifecycle_kind::flydelta_result &&
+                (!previous || prior.registration_order > previous->registration_order)) previous = &prior;
+    }
+    if (previous && previous->payload_json == payload) return true;
+    const auto event_identity = (previous ? previous->event_id : group_ref) + "\n" + payload;
+    record.event_id = "flydelta://contrast-assessment/" + hash_sha256_hex(event_identity.data(), event_identity.size());
+    record.idempotency_key = record.event_id;
+    record.source_id = verifier_ref;
+    record.created_at = "contrast-assessment-v1";
+    record.payload_json = payload;
+    return assessment_journal_->append(record, error);
+}
+
+bool common_flydelta_teaching_material_runtime::contrast_admissible_locked(
+        const common_flydelta_teaching_material_group & group, std::string & error,
+        const std::string & verifier_revision) const {
+    if (group.positive_only || !assessment_journal_) return true;
+    auto records = assessment_journal_->list(error);
+    if (!error.empty()) return false;
+    try {
+        const common_learning_lifecycle_record * latest = nullptr;
+        for (const auto & record : records) {
+            if (record.kind != common_learning_lifecycle_kind::flydelta_result || record.subject_id != group.group_ref) continue;
+            const auto value = nlohmann::ordered_json::parse(record.payload_json, nullptr, false);
+            if (!value.is_object() || value.value("record_type", "") != "flydelta_contrast_assessment") continue;
+            if (record.namespace_id != group.scope.namespace_id || record.project_id != group.scope.project_id ||
+                    record.session_id != group.scope.session_id || record.registration_order == 0 ||
+                    record.content_hash != hash_sha256_hex(record.payload_json.data(), record.payload_json.size()) ||
+                    value.value("group_ref", "") != group.group_ref || value.value("verifier_ref", "") != record.source_id ||
+                    !value.contains("evidence_refs") || !value["evidence_refs"].is_array() || value["evidence_refs"].empty() ||
+                    !value.contains("rejected") || !value["rejected"].is_boolean() ||
+                    (record.status != common_learning_lifecycle_status::rejected && record.status != common_learning_lifecycle_status::approved) ||
+                    ((record.status == common_learning_lifecycle_status::rejected) != value["rejected"].get<bool>())) {
+                error = "FlyDelta contrast assessment provenance is invalid";
+                return false;
+            }
+            const auto references_valid = [](const json & refs, bool allow_empty = false) {
+                return refs.is_array() && (allow_empty || !refs.empty()) && refs.size() <= 128 &&
+                    std::all_of(refs.begin(), refs.end(), [](const auto & ref) {
+                        return ref.is_string() && bounded(ref.template get<std::string>());
+                    });
+            };
+            auto snapshot = group;
+            if (!value.contains("material_refs") || !references_valid(value.at("material_refs"), true) ||
+                    !value.contains("pending_material_refs") || !references_valid(value.at("pending_material_refs"), true) ||
+                    (value.at("material_refs").empty() && value.at("pending_material_refs").empty()) ||
+                    !references_valid(value.at("evidence_refs"))) {
+                error = "FlyDelta contrast assessment source/evidence references are invalid";
+                return false;
+            }
+            snapshot.relation_refs = value.at("material_refs").get<std::vector<std::string>>();
+            snapshot.pending_relation_refs = value.at("pending_material_refs").get<std::vector<std::string>>();
+            if (common_flydelta_teaching_material_revision(snapshot) != value.value("material_revision", "")) {
+                error = "FlyDelta contrast assessment material revision does not match its immutable source references";
+                return false;
+            }
+            if (value.value("schema_version", 0) != 1 || value.value("material_verifier_revision", "") != group.identity.verifier_revision ||
+                    value.value("verifier_revision", "").empty()) {
+                error = "FlyDelta contrast assessment has an incompatible contract or verifier revision";
+                return false;
+            }
+            if (!latest || record.registration_order > latest->registration_order) latest = &record;
+        }
+        if (!latest) return true;
+        const auto value = nlohmann::ordered_json::parse(latest->payload_json, nullptr, false);
+        // A revision change alone never clears a rejection. The host must append
+        // an explicit assessment of the new material with its verifier/evidence.
+        if (value.value("rejected", true) || (!verifier_revision.empty() && value.value("verifier_revision", "") != verifier_revision) ||
+                ((!group.relation_refs.empty() || !group.pending_relation_refs.empty()) &&
+                    value.value("material_revision", "") != common_flydelta_teaching_material_revision(group))) {
+            error = "FlyDelta contrast was rejected or changed after assessment; explicit reassessment is required";
+            return false;
+        }
+        return true;
+    } catch (const std::exception & e) {
+        error = std::string("FlyDelta contrast assessment is malformed: ") + e.what();
+        return false;
+    }
+}
+
+bool common_flydelta_teaching_material_runtime::contrast_admissible(
+        const common_flydelta_teaching_material_group & group, std::string & error,
+        const std::string & verifier_revision) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    error.clear();
+    return contrast_admissible_locked(group, error, verifier_revision);
+}
+
 bool common_flydelta_teaching_material_runtime::observe_relation(
         const common_flydelta_teaching_relation & relation,
         std::string & error) {
     std::lock_guard<std::mutex> lock(mutex_);
+    error.clear();
+    if (relation.status == common_flydelta_teaching_relation_status::rejected) {
+        if (relation.schema_version != 1 || relation.positive_only || !relation.host_approved ||
+                !bounded(relation.id) || !bounded(relation.teaching_key) || !bounded(relation.behavior_key) ||
+                !bounded(relation.scope.namespace_id) || !bounded(relation.scope.session_id) ||
+                !bounded(relation.verifier_ref) || !bounded(relation.evidence_ref) ||
+                (!relation.model_profile_fingerprint.empty() && relation.model_profile_fingerprint != identity_.model_profile_fingerprint) ||
+                (!relation.tokenizer_fingerprint.empty() && relation.tokenizer_fingerprint != identity_.tokenizer_fingerprint) ||
+                (!relation.template_fingerprint.empty() && relation.template_fingerprint != identity_.template_fingerprint) ||
+                (!relation.capture_layout_revision.empty() && relation.capture_layout_revision != identity_.capture_layout_revision)) {
+            error = "FlyDelta contrast rejection requires a bounded host-authorized source assessment";
+            return false;
+        }
+        common_flydelta_teaching_material_group rejected;
+        rejected.scope = relation.scope;
+        rejected.scope.turn_id.clear();
+        rejected.teaching_key = relation.teaching_key;
+        rejected.behavior_key = relation.behavior_key;
+        rejected.identity = identity_;
+        rejected.compatibility_key = common_flydelta_teaching_material_compatibility_key(identity_);
+        rejected.group_ref = material_family_ref(rejected);
+        rejected.relation_refs = {relation.id};
+        return append_contrast_assessment_locked(rejected, relation.verifier_ref,
+            {relation.id, relation.evidence_ref}, true, error, common_flydelta_teaching_material_revision(rejected),
+            relation.oracle_revision.empty() ? identity_.verifier_revision : relation.oracle_revision);
+    }
     common_flydelta_teaching_material_store next = store_;
     if (!next.observe(relation, identity_, error)) return false;
     if (!persist(next, error)) return false;
@@ -290,7 +528,8 @@ bool common_flydelta_teaching_material_runtime::resolve_group_for_behavior(
         const std::string & behavior_key,
         common_flydelta_teaching_material_group & group,
         bool & available,
-        std::string & error) const {
+        std::string & error,
+        common_flydelta_teaching_material_mode mode, const common_agent_scope * scope) const {
     std::lock_guard<std::mutex> lock(mutex_);
     error.clear();
     group = {};
@@ -307,10 +546,33 @@ bool common_flydelta_teaching_material_runtime::resolve_group_for_behavior(
     }
     const common_flydelta_teaching_material_group * match = nullptr;
     for (const auto & candidate : store_.groups()) {
+        if (scope && (candidate.scope.namespace_id != scope->namespace_id ||
+                candidate.scope.project_id != scope->project_id || candidate.scope.session_id != scope->session_id)) continue;
+        if (mode == common_flydelta_teaching_material_mode::automatic && candidate.positive_only &&
+                candidate.behavior_key == behavior_key && candidate.compatibility_key == compatibility_key) {
+            auto contrast = candidate;
+            contrast.positive_only = false;
+            contrast.group_ref = material_family_ref(contrast);
+            contrast.relation_refs.clear();
+            contrast.pending_relation_refs.clear();
+            if (!contrast_admissible_locked(contrast, error)) return false;
+        }
+        if (mode != common_flydelta_teaching_material_mode::positive_only && !candidate.positive_only &&
+                candidate.behavior_key == behavior_key && candidate.compatibility_key == compatibility_key &&
+                !contrast_admissible_locked(candidate, error)) return false;
         if (!candidate.relation_set_ready ||
+                (mode == common_flydelta_teaching_material_mode::contrast && candidate.positive_only) ||
+                (mode == common_flydelta_teaching_material_mode::positive_only && !candidate.positive_only) ||
                 candidate.behavior_key != behavior_key ||
                 candidate.compatibility_key != compatibility_key) continue;
         if (match != nullptr) {
+            // The two synthesis modes for the same family are alternatives,
+            // not an ambiguous family. Prefer the established contrast mode.
+            if (match->teaching_key == candidate.teaching_key &&
+                    match->positive_only != candidate.positive_only) {
+                if (match->positive_only) match = &candidate;
+                continue;
+            }
             error = "FlyDelta teaching-material family is ambiguous for behavior key";
             return false;
         }
@@ -327,7 +589,8 @@ bool common_flydelta_teaching_material_runtime::resolve_group_for_family(
         const std::string & behavior_key,
         common_flydelta_teaching_material_group & group,
         bool & available,
-        std::string & error) const {
+        std::string & error,
+        common_flydelta_teaching_material_mode mode, const common_agent_scope * scope) const {
     std::lock_guard<std::mutex> lock(mutex_);
     error.clear();
     group = {};
@@ -342,12 +605,31 @@ bool common_flydelta_teaching_material_runtime::resolve_group_for_family(
         error = "FlyDelta teaching-material compatibility identity is invalid";
         return false;
     }
-    const auto it = std::find_if(store_.groups().begin(), store_.groups().end(), [&](const auto & candidate) {
-        return candidate.relation_set_ready && candidate.teaching_key == teaching_key &&
-            candidate.behavior_key == behavior_key && candidate.compatibility_key == compatibility_key;
-    });
-    if (it == store_.groups().end()) return true;
-    group = *it;
+    const common_flydelta_teaching_material_group * match = nullptr;
+    for (const auto & candidate : store_.groups()) {
+        if (scope && (candidate.scope.namespace_id != scope->namespace_id ||
+                candidate.scope.project_id != scope->project_id || candidate.scope.session_id != scope->session_id)) continue;
+        if (mode == common_flydelta_teaching_material_mode::automatic && candidate.positive_only &&
+                candidate.teaching_key == teaching_key && candidate.behavior_key == behavior_key && candidate.compatibility_key == compatibility_key) {
+            auto contrast = candidate;
+            contrast.positive_only = false;
+            contrast.group_ref = material_family_ref(contrast);
+            contrast.relation_refs.clear();
+            contrast.pending_relation_refs.clear();
+            if (!contrast_admissible_locked(contrast, error)) return false;
+        }
+        if (mode != common_flydelta_teaching_material_mode::positive_only && !candidate.positive_only &&
+                candidate.teaching_key == teaching_key && candidate.behavior_key == behavior_key &&
+                candidate.compatibility_key == compatibility_key &&
+                !contrast_admissible_locked(candidate, error)) return false;
+        if (!candidate.relation_set_ready || candidate.teaching_key != teaching_key ||
+                (mode == common_flydelta_teaching_material_mode::contrast && candidate.positive_only) ||
+                (mode == common_flydelta_teaching_material_mode::positive_only && !candidate.positive_only) ||
+                candidate.behavior_key != behavior_key || candidate.compatibility_key != compatibility_key) continue;
+        if (!match || (match->positive_only && !candidate.positive_only)) match = &candidate;
+    }
+    if (!match) return true;
+    group = *match;
     available = true;
     return true;
 }
@@ -432,6 +714,8 @@ std::string common_flydelta_teaching_material_store_to_json(
         }
         groups.push_back({
             {"group_ref", group.group_ref},
+            {"scope", {{"namespace_id", group.scope.namespace_id}, {"project_id", group.scope.project_id},
+                {"session_id", group.scope.session_id}}},
             {"teaching_key", group.teaching_key},
             {"behavior_key", group.behavior_key},
             {"compatibility_key", group.compatibility_key},
@@ -446,8 +730,10 @@ std::string common_flydelta_teaching_material_store_to_json(
                 {"verifier_revision", group.identity.verifier_revision},
             }},
             {"relation_refs", group.relation_refs},
+            {"pending_relation_refs", group.pending_relation_refs},
             {"trajectory_refs", group.trajectory_refs},
             {"layer_trajectories", std::move(layer_trajectories)},
+            {"positive_only", group.positive_only},
             {"minimum_relations", group.minimum_relations},
             {"minimum_trajectories", group.minimum_trajectories},
             {"relation_set_ready", group.relation_set_ready},
@@ -475,6 +761,10 @@ bool common_flydelta_teaching_material_store_from_json(
         for (const auto & item : value.at("groups")) {
             common_flydelta_teaching_material_group group;
             group.group_ref = item.value("group_ref", "");
+            const auto scope = item.value("scope", json::object());
+            group.scope.namespace_id = scope.value("namespace_id", "");
+            group.scope.project_id = scope.value("project_id", "");
+            group.scope.session_id = scope.value("session_id", "");
             group.teaching_key = item.value("teaching_key", "");
             group.behavior_key = item.value("behavior_key", "");
             group.compatibility_key = item.value("compatibility_key", "");
@@ -488,7 +778,9 @@ bool common_flydelta_teaching_material_store_from_json(
             group.identity.scope_fingerprint = identity.value("scope_fingerprint", "");
             group.identity.verifier_revision = identity.value("verifier_revision", "");
             group.relation_refs = item.value("relation_refs", std::vector<std::string>{});
+            group.pending_relation_refs = item.value("pending_relation_refs", std::vector<std::string>{});
             group.trajectory_refs = item.value("trajectory_refs", std::vector<std::string>{});
+            group.positive_only = item.value("positive_only", false);
             group.minimum_relations = item.value("minimum_relations", 2U);
             // Snapshots written before the relation/trajectory split used the
             // single `ready` bit for relation-set readiness. Preserve that
@@ -508,9 +800,11 @@ bool common_flydelta_teaching_material_store_from_json(
             }
             if (!bounded(group.group_ref) || !bounded(group.teaching_key) ||
                     !bounded(group.behavior_key) || group.compatibility_key.empty() ||
-                    group.relation_refs.empty() || group.relation_refs.size() > 128 ||
+                    (group.relation_refs.empty() && group.pending_relation_refs.empty()) || group.relation_refs.size() > 128 ||
+                    group.pending_relation_refs.size() > 128 || (group.positive_only && !group.pending_relation_refs.empty()) ||
                     group.trajectory_refs.size() > 128 || group.minimum_relations < 2 ||
                     group.minimum_trajectories < 2 ||
+                    (group.positive_only && (group.minimum_relations < 3 || group.minimum_trajectories < 3)) ||
                     !common_flydelta_teaching_material_identity_validate(group.identity, error)) {
                 if (error.empty()) error = "FlyDelta teaching material store group is invalid";
                 return false;
@@ -518,6 +812,12 @@ bool common_flydelta_teaching_material_store_from_json(
             if (group.compatibility_key != common_flydelta_teaching_material_compatibility_key(group.identity)) {
                 error = "FlyDelta teaching material store compatibility key differs from its identity";
                 return false;
+            }
+            for (const auto & ref : group.pending_relation_refs) {
+                if (!bounded(ref) || std::find(group.relation_refs.begin(), group.relation_refs.end(), ref) != group.relation_refs.end()) {
+                    error = "FlyDelta pending material reference is invalid or already capture-ready";
+                    return false;
+                }
             }
             for (const auto & ref : group.relation_refs) {
                 if (!bounded(ref)) {

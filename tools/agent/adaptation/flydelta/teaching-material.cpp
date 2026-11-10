@@ -50,6 +50,7 @@ json daemon_flydelta_teaching_relation_json(
         {"control_origin", common_flydelta_teaching_origin_name(relation.control_origin)},
         {"confidence", relation.confidence},
         {"host_approved", relation.host_approved},
+        {"positive_only", relation.positive_only},
         // The relation describes WHAT should be taught. WHERE is supplied by
         // the persisted FlyDelta search surface when a capture plan is made.
         {"semantic_anchor", relation.task_fingerprint},
@@ -78,6 +79,8 @@ bool daemon_flydelta_persist_teaching_relation(
     request.scope = common_runtime_resource_scope::session;
     request.namespace_id = authority.namespace_id;
     request.session_id = authority.session_id;
+    request.project_id = authority.project_id;
+    request.turn_id = authority.turn_id;
     request.source_provider = "flydelta";
     request.source_tool = "teaching-relation";
     request.created_at = std::time(nullptr);
@@ -101,10 +104,12 @@ bool daemon_flydelta_parse_teaching_relation(
         const daemon_flydelta_resource_provider & provider,
         const std::string & reference,
         daemon_flydelta_concept_relation_material & material,
-        std::string & error) {
+        std::string & error, bool * source_invalid) {
+    if (source_invalid) *source_invalid = false;
     json parsed;
     if (!daemon_flydelta_read_json_bounded(
             provider, reference, 4U * 1024U * 1024U, parsed, error)) return false;
+    if (source_invalid) *source_invalid = true;
     const json value = parsed.contains("relation") && parsed["relation"].is_object()
         ? parsed["relation"] : parsed;
     try {
@@ -131,6 +136,11 @@ bool daemon_flydelta_parse_teaching_relation(
         relation.blueprint_ref = value.value("blueprint_ref", "");
         relation.confidence = value.value("confidence", 0.0f);
         relation.host_approved = value.value("host_approved", false);
+        relation.positive_only = value.value("positive_only", false);
+        if (value.value("status", "") != "resolved") {
+            error = "FlyDelta teaching relation is not resolved by the host";
+            return false;
+        }
         relation.status = common_flydelta_teaching_relation_status::resolved;
         const auto source = common_adaptation_evidence_source_from_name(
             value.value("source", ""));
@@ -166,6 +176,7 @@ bool daemon_flydelta_parse_teaching_relation(
         if (error.empty()) error = "FlyDelta teaching relation material has no semantic anchor";
         return false;
     }
+    if (source_invalid) *source_invalid = false;
     return true;
 }
 

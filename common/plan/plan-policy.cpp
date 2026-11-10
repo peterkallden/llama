@@ -49,6 +49,7 @@ static bool has_cycle(const common_plan_state & plan, const common_plan_operatio
     std::map<std::string, std::vector<std::string>> graph;
     for (const auto & step : plan.steps) graph[step.id] = step.depends_on;
     if (op.kind == common_plan_operation_kind::add_dependency && op.step_id && op.target_id) graph[*op.step_id].push_back(*op.target_id);
+    if (op.kind == common_plan_operation_kind::replace_step && op.step_id && op.step) graph[*op.step_id] = op.step->depends_on;
     std::set<std::string> visiting, visited;
     std::function<bool(const std::string &)> visit = [&](const std::string & id) { if (visiting.count(id)) return true; if (visited.count(id)) return false; visiting.insert(id); for (const auto & d : graph[id]) if (visit(d)) return true; visiting.erase(id); visited.insert(id); return false; };
     for (const auto & item : graph) if (visit(item.first)) return true;
@@ -113,7 +114,8 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         if (prior->title != op.step->title || prior->objective != op.step->objective || prior->intended_contribution != op.step->intended_contribution || prior->depends_on != op.step->depends_on ||
                 prior->required_evidence != op.step->required_evidence || prior->source_memory_ids != op.step->source_memory_ids ||
                 prior->status != op.step->status || prior->optional != op.step->optional || prior->generated_from_memory != op.step->generated_from_memory ||
-                prior->blocked_by != op.step->blocked_by || prior->result_summary != op.step->result_summary) return deny("revise_step may only bind a tool to an unchanged step");
+                prior->blocked_by != op.step->blocked_by || prior->result_summary != op.step->result_summary ||
+                prior->method_phase_id != op.step->method_phase_id || prior->method_turn_id != op.step->method_turn_id) return deny("revise_step may only bind a tool to an unchanged step");
         if (!op.step->tool_call || !op.step->selected_tool || *op.step->selected_tool != op.step->tool_call->name || common_plan_step_effective_mode(*op.step) != common_plan_step_mode::tool) return deny("revise_step requires a consistent tool binding");
     }
     if (op.kind == common_plan_operation_kind::replace_step) {
@@ -137,6 +139,7 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
             if (dep == *op.step_id) return deny("step dependency cycle rejected");
             if (!find_step(plan, dep)) return deny("step dependency does not exist");
         }
+        if (has_cycle(plan,op)) return deny("step dependency cycle rejected");
         (void) prior;
     }
     if (op.kind == common_plan_operation_kind::add_dependency) {

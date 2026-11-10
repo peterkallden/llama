@@ -568,6 +568,34 @@ int main() {
     result = repository_registry.execute({"repository.read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"});
     assert(result.ok && result.output.find("needle in a haystack") != std::string::npos &&
            result.output.find("sha256:") != std::string::npos);
+    {
+        const auto page = nlohmann::ordered_json::parse(result.output);
+        assert(page["total_lines"] >= 2 && page["requested_start_line"] == 2);
+        assert(page["has_more"].get<bool>() == (page["total_lines"].get<size_t>() > 2));
+        const auto first_page = repository_registry.execute({"repository.read", R"({"path":"src/sample.txt","start_line":1,"end_line":1})"});
+        assert(first_page.ok);
+        const auto first = nlohmann::ordered_json::parse(first_page.output);
+        assert(first["has_more"].get<bool>() && first["next_start_line"] == 2);
+        const auto limited = repository_registry.execute({"repository.search", R"({"query":"needle","max_results":1})"});
+        assert(limited.ok);
+        const auto search = nlohmann::ordered_json::parse(limited.output);
+        assert(!search["complete"].get<bool>() && search["stop_reason"] == "result_limit" &&
+            search["coverage"] == "bounded_text_search" && search["scanned_files"].get<size_t>() > 0);
+    }
+    {
+        { std::ofstream ignore(repository / ".gitignore"); ignore << "ignored-search.txt\n"; }
+        { std::ofstream ignored(repository / "ignored-search.txt"); ignored << "ignored-only-marker\n"; }
+        { std::ofstream metadata(repository / ".git" / "search-marker"); metadata << "metadata-only-marker\n"; }
+        const auto ignored = repository_registry.execute({"repository.search", R"({"query":"ignored-only-marker"})"});
+        assert(ignored.ok);
+        const auto ignored_search = nlohmann::ordered_json::parse(ignored.output);
+        assert(ignored_search["enumeration_method"] == "git_worktree" && ignored_search["matches"].empty());
+        const auto metadata = repository_registry.execute({"repository.search", R"({"query":"metadata-only-marker"})"});
+        assert(metadata.ok && nlohmann::ordered_json::parse(metadata.output)["matches"].empty());
+        std::filesystem::remove(repository / "ignored-search.txt");
+        std::filesystem::remove(repository / ".gitignore");
+        std::filesystem::remove(repository / ".git" / "search-marker");
+    }
     result = repository_registry.execute({"web.search", R"({"query":"llama","limit":1})"});
     assert(result.ok && result.output.find("https://example.com/llama") != std::string::npos);
     result = repository_registry.execute({"web.fetch", R"({"url":"https://example.com/llama","max_bytes":4096})"});

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
+#include "agent/adaptation/lifecycle-store.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -29,6 +30,14 @@ bool common_flydelta_teaching_material_identity_validate(
         const common_flydelta_teaching_material_identity & identity,
         std::string & error);
 
+// Compare recorded identities without changing old captures or treating
+// placeholders from different producers as equivalent.
+bool common_flydelta_teaching_material_execution_matches(
+        const common_flydelta_teaching_material_identity & identity,
+        const std::string & model, const std::string & tokenizer,
+        const std::string & chat_template, const std::string & execution_context,
+        const std::string & capture_layout, std::string & error);
+
 std::string common_flydelta_teaching_material_compatibility_key(
         const common_flydelta_teaching_material_identity & identity);
 
@@ -53,7 +62,19 @@ struct common_flydelta_teaching_material_group {
     size_t minimum_trajectories = 2;
     bool relation_set_ready = false;
     bool trajectory_material_ready = false;
+    bool positive_only = false;
+    common_agent_scope scope;
+    // Authorized source references whose extraction contrast still lacks a
+    // control. They are not capture-ready and never count as trajectories.
+    std::vector<std::string> pending_relation_refs;
 };
+
+// Fingerprint of the immutable source reference set, independent of whether
+// hidden-state captures have already completed.
+std::string common_flydelta_teaching_material_revision(const common_flydelta_teaching_material_group & group);
+
+// Selection is host-owned; automatic preserves the established contrast route.
+enum class common_flydelta_teaching_material_mode { automatic, contrast, positive_only };
 
 // A small idempotent host-side accumulator.  It is deliberately independent
 // of inference and can later be backed by the existing artifact store.
@@ -131,6 +152,16 @@ public:
         : identity_(std::move(identity)), persistence_(std::move(persistence)) {}
 
     bool load(std::string & error);
+    // Append-only assessment of immutable source material, independent of
+    // representation readiness. A changed material revision needs a new,
+    // explicit assessment before an earlier rejection can be superseded.
+    void bind_assessment_journal(std::shared_ptr<common_learning_lifecycle_store> journal);
+    bool assess_contrast(const std::string & group_ref, const std::string & verifier_ref,
+            const std::vector<std::string> & evidence_refs, bool rejected, std::string & error,
+            const std::string & expected_material_revision, const std::string & verifier_revision);
+    bool contrast_admissible(const common_flydelta_teaching_material_group & group,
+            std::string & error, const std::string & verifier_revision = {}) const;
+
 
     bool observe_relation(
             const common_flydelta_teaching_relation & relation,
@@ -147,13 +178,17 @@ public:
         const std::string & behavior_key,
         common_flydelta_teaching_material_group & group,
         bool & available,
-        std::string & error) const;
+        std::string & error,
+        common_flydelta_teaching_material_mode mode = common_flydelta_teaching_material_mode::automatic,
+        const common_agent_scope * scope = nullptr) const;
     bool resolve_group_for_family(
             const std::string & teaching_key,
             const std::string & behavior_key,
             common_flydelta_teaching_material_group & group,
             bool & available,
-            std::string & error) const;
+            std::string & error,
+            common_flydelta_teaching_material_mode mode = common_flydelta_teaching_material_mode::automatic,
+        const common_agent_scope * scope = nullptr) const;
     bool observe_trajectory(
             const std::string & group_ref,
             const std::string & trajectory_ref,
@@ -187,6 +222,13 @@ private:
     bool persist(const common_flydelta_teaching_material_store & store,
             std::string & error) const;
 
+    bool append_contrast_assessment_locked(const common_flydelta_teaching_material_group & group,
+            const std::string & verifier_ref, const std::vector<std::string> & evidence_refs,
+            bool rejected, std::string & error, const std::string & expected_material_revision,
+            const std::string & verifier_revision);
+    bool contrast_admissible_locked(const common_flydelta_teaching_material_group & group,
+            std::string & error, const std::string & verifier_revision = {}) const;
+    std::shared_ptr<common_learning_lifecycle_store> assessment_journal_;
     common_flydelta_teaching_material_identity identity_;
     common_flydelta_teaching_material_persistence persistence_;
     common_flydelta_teaching_material_store store_;

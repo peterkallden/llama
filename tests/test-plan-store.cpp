@@ -112,5 +112,14 @@ int main() {
     completed.steps = {done_step}; assert(store.create(completed, error));
     auto reset_completed = op(common_plan_operation_kind::reset_step, completed, "done"); assert(!store.apply(reset_completed, completed, error));
     auto replace_completed = op(common_plan_operation_kind::replace_step, completed, "done"); replace_completed.step = done_step; assert(!store.apply(replace_completed, completed, error));
+    // A replacement can introduce a cycle through an existing descendant,
+    // even when the replacement does not directly depend on itself.
+    common_plan_state cycle_plan; cycle_plan.id="replacement-cycle";cycle_plan.status=common_plan_status::active;
+    common_plan_step cycle_a{"a","A","First"},cycle_b{"b","B","Second"};
+    cycle_b.depends_on={"a"};cycle_plan.steps={cycle_a,cycle_b};
+    assert(store.create(cycle_plan,error));
+    auto cyclic_replace=op(common_plan_operation_kind::replace_step,cycle_plan,"a");
+    cycle_a.depends_on={"b"};cyclic_replace.step=cycle_a;
+    assert(!store.apply(cyclic_replace,cycle_plan,error) && error.find("cycle")!=std::string::npos);
     store.close(); return 0;
 }

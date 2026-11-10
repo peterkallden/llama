@@ -10,7 +10,7 @@
 
 // Host-taught concept extraction is deliberately a builder, not a new
 // runtime intervention path. The host supplies a bounded, redacted concept
-// specification and verified baseline/conditioned/control trajectories; this
+// specification and verified trajectories or authorized positive-only captures; this
 // module produces ordinary direction material for the existing FlyDelta
 // WHERE/dose/search pipeline.
 struct common_flydelta_concept_spec {
@@ -121,6 +121,7 @@ enum class common_flydelta_concept_synthesis_semantics {
     control_residualized,
     positive_prototype,
     negative_repulsion,
+    positive_only,
 };
 
 const char * common_flydelta_concept_synthesis_semantics_name(
@@ -153,6 +154,7 @@ struct common_flydelta_concept_candidate {
     bool control_residualized = false;
     bool experimental_only = true;
     bool learning_eligible = false;
+    common_flydelta_concept_synthesis_diagnostics representation_diagnostics;
 };
 
 // A synthesis component keeps its semantic role until the paired basis has
@@ -273,6 +275,9 @@ struct common_flydelta_concept_prototype_sample {
     std::vector<float> values;
     bool host_verified = false;
     bool independent = false;
+    // Host-derived immutable source identity, not a model supplied sample ID.
+    // Required by positive-only; repeated captures of one source count once.
+    std::string observation_fingerprint;
 };
 
 struct common_flydelta_concept_prototype_build_config {
@@ -305,6 +310,28 @@ bool common_flydelta_build_positive_prototype_candidates(
         const std::vector<common_flydelta_concept_prototype_sample> & controls,
         std::vector<common_flydelta_concept_candidate> & candidates,
         std::string & error);
+
+enum class common_flydelta_positive_only_build_status { invalid, unstable, ready };
+
+struct common_flydelta_positive_only_build_config {
+    size_t dimension = 0;
+    size_t min_samples = 3;
+    size_t max_samples = 32;
+    float trim_fraction = 0.20f;
+    float minimum_resultant_norm = 0.25f;
+    float minimum_median_alignment = 0.5f;
+    float minimum_direction_stability = 0.8f;
+};
+
+// No controls, synthetic negatives or behavior labels. The thresholds concern
+// representation reproducibility only and do not qualify an intervention.
+bool common_flydelta_build_positive_only_candidate(
+        const common_flydelta_concept_spec & spec,
+        const common_flydelta_positive_only_build_config & config,
+        const std::vector<common_flydelta_concept_prototype_sample> & positive,
+        common_flydelta_concept_candidate & candidate,
+        std::string & error,
+        common_flydelta_positive_only_build_status * status = nullptr);
 
 // Builds negative-repulsion candidates from explicitly host-verified
 // undesired captures and neutral controls.  The vector is control - negative,

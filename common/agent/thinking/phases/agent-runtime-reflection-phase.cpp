@@ -1,7 +1,9 @@
 #include "agent/agent-runtime-context.h"
+#include "agent/method-phases.h"
 #include "plan/plan-context.h"
 #include "plan/plan-workflow-state.h"
 #include "plan/plan-in-memory.h"
+#include "plan/plan-policy.h"
 #include <algorithm>
 #include <map>
 
@@ -165,21 +167,27 @@ common_agent_reflection_escalation_result handle_common_agent_reflection_escalat
     return outcome;
 }
 
-bool prepare_common_agent_reflection_plan_repair(
+static bool prepare_reflection_plan_repair_attempt(
         common_agent_runtime_turn_context & context,
         const common_plan_state & plan,
         common_planner & planner,
-        common_reflection_result & reflection) {
-    if (plan.status == common_plan_status::completed) {
+        common_reflection_result & reflection,
+        const std::string & previous_error,
+        bool & validation_rejected) {
+    validation_rejected=false;
+    const bool method = plan.phase_review_required && !plan.workflow_definition;
+    if (plan.status == common_plan_status::completed && !method) {
         context.error = "accepted completed plan requires an explicit continuation";
         return false;
     }
-    if (!context.tools || reflection.revision_guidance.empty()) {
+    if (!context.tools || (!method && reflection.revision_guidance.empty())) {
         context.error = "plan repair requires authorized tools and specific revision guidance";
         return false;
     }
     const bool declared_graph = plan.workflow_definition && !plan.workflow_definition->transitions.empty();
     common_agent_workflow_continuation steps;
+    std::map<std::string,std::string> repair_targets;
+    std::string selected_phase;
     if (declared_graph) {
         // Only the existing host continuation provider can select graph edges.
         const auto * observed = common_plan_workflow_observation(plan, {});
@@ -200,12 +208,61 @@ bool prepare_common_agent_reflection_plan_repair(
         request.workflow_definition = plan.workflow_definition;
         request.blueprint_definition.reset();
         request.blueprint_plan_id.reset();
-        request.require_tool_execution = true;
-        request.prompt += "\n[Host repair request]\nPropose only the additional read operations needed to correct the evidence. "
+        request.plan_repair_targets.clear();
+        request.require_tool_execution = !method;
+        request.method_phase_choices.clear();
+        if (method) {
+            auto failed=nlohmann::ordered_json::array();
+            size_t omitted=0;
+            for (const auto & step:plan.steps) {
+                if (step.status!=common_plan_step_status::failed || !step.tool_call) continue;
+                if (request.plan_repair_targets.size()==8) {++omitted;continue;}
+                const auto handle="r"+std::to_string(request.plan_repair_targets.size()+1);
+                request.plan_repair_targets.emplace_back(handle,step.id);
+                nlohmann::ordered_json target={{"repair",handle},{"tool",step.tool_call->name},
+                    {"objective_excerpt",step.objective.substr(0,256)},
+                    {"result_excerpt",step.result_summary.value_or("").substr(0,512)}};
+                if (step.tool_call->arguments_json.size()<=1024) target["previous_arguments"]=step.tool_call->arguments_json;
+                else target["previous_arguments_omitted"]=true;
+                failed.push_back(std::move(target));
+            }
+            request.prompt += "\n[Host-bound failed operations; repair selects one of these handles]\n"+
+                nlohmann::ordered_json{{"targets",failed},{"omitted_targets",omitted}}.dump();
+            const size_t plan_limit=common_plan_policy_config{}.max_steps;
+            request.method_remaining_new_steps=plan.steps.size()<plan_limit ? plan_limit-plan.steps.size() : 0;
+            if (*request.method_remaining_new_steps==0 && request.plan_repair_targets.empty()) {
+                context.error="method plan step capacity exhausted; unresolved phases remain in the saved plan";
+                return false;
+            }
+        }
+        if (!method) request.prompt += "\n[Host repair request]\nPropose only the additional read operations needed to correct the evidence. "
             "Keep the selected route, source permissions and host argument bindings. "
             "Do not repeat writes or declare the previous response accepted.\n";
+        if (method) request.prompt += common_agent_render_method_progress(plan)+
+            "\nThis is a method continuation, not a read-only answer repair. "
+            "Plan only a bounded slice for one model-selected dependency-ready unresolved phase. "
+            "Use normal family/tool selection within existing authority; a phase may use reasoning without tools. "
+            "Retain local/external evidence and do not repeat completed writes. "
+            "A failed verification remains failed until corrected and rerun with fresh source arguments. "
+            "Never skip mandatory failed operations or invent a passed verification.\n"+
+            common_plan_render_context(plan,{8192,true});
+        if (method) {
+            const auto ready=common_agent_method_ready_phases(plan);
+            if (ready.empty()) { context.error="method has no dependency-ready unresolved phase";return false; }
+            for (const auto & phase:ready)
+                request.method_phase_choices.emplace_back(phase["handle"].get<std::string>(),phase["phase_id"].get<std::string>());
+            request.prompt += "\n[Host-issued ready method phases]\n"+ready.dump()+
+                "\nSelect exactly one phase using its handle, and plan the concrete work that resolves its remaining need. "
+                "Use tool operations when new source evidence or execution is needed; reasoning is appropriate for existing sufficient evidence. "
+                "Searching locates sources; read the relevant results before claiming their contents are inspected. "
+                "Honor pagination and incomplete-coverage markers. Do not replay completed operations against unchanged inputs.\n";
+        }
         for (const auto & guidance : reflection.revision_guidance) request.prompt += "Correction: " + guidance + "\n";
         request.prompt += common_plan_render_tool_observations(plan, {2048});
+        if (!previous_error.empty()) request.prompt +=
+            "\n[Host rejected the previous continuation; it was not executed]\n"+previous_error.substr(0,1024)+
+            "\nGenerate one complete corrected slice. Do not replay the rejected proposal. "
+            "Use new steps for new work and an issued repair handle only for an explicit replacement.\n";
         auto proposal = planner.create_plan_result(request, context.error);
         if (proposal.generation) {
             context.result.generation_records.push_back(
@@ -216,14 +273,61 @@ bool prepare_common_agent_reflection_plan_repair(
             }
         }
         if (!context.error.empty()) return false;
+        if (method && std::none_of(request.method_phase_choices.begin(),request.method_phase_choices.end(),
+                [&](const auto & choice){return choice.second==proposal.selected_method_phase;})) {
+            validation_rejected=true;
+            context.error="planner must select one of the supplied ready method phases";return false;
+        }
+        selected_phase=proposal.selected_method_phase;
+        validation_rejected=method;
         steps = proposal.plan.steps;
         if (!proposal.operations.empty()) {
             steps.clear();
             for (const auto & operation : proposal.operations) {
                 if (operation.kind == common_plan_operation_kind::add_step && operation.step) steps.push_back(*operation.step);
+                else if (method && operation.kind==common_plan_operation_kind::replace_step && operation.step && operation.step_id) {
+                    if (!repair_targets.emplace(operation.step->id,*operation.step_id).second) {
+                        validation_rejected=true;context.error="duplicate repair slice step";return false;
+                    }
+                    steps.push_back(*operation.step);
+                }
                 else { context.error = "repair planner may only propose additional steps"; return false; }
             }
         }
+    }
+    if (method) {
+        validation_rejected=true;
+        common_plan_state slice;slice.steps=steps;
+        std::vector<common_plan_operation> operations;
+        if (!common_agent_method_append_slice(plan,slice,operations,context.error,repair_targets)) return false;
+        for (auto & operation:operations) {
+            operation.reason_summary+="; method_phase="+selected_phase;
+            operation.step->method_phase_id=selected_phase;
+            operation.step->method_turn_id=context.request.turn_id;
+        }
+        if (!common_agent_method_validate_progress(plan,operations,selected_phase,context.request.turn_id,
+                [&](const std::string & name) {return context.tools->is_read_only(name);},context.error)) return false;
+        auto candidate=plan;
+        for (const auto & operation:operations) {
+            if (operation.step->tool_call && !context.tools->is_available(operation.step->tool_call->name)) {
+                context.error="method continuation selected an unavailable tool";return false;
+            }
+            if (operation.kind==common_plan_operation_kind::add_step) candidate.steps.push_back(*operation.step);
+            else for (auto & step:candidate.steps) if (step.id==operation.step->id) step=*operation.step;
+        }
+        if (!context.tools->validate_plan(candidate,context.error)) return false;
+        common_plan_in_memory_store preview;
+        if (!preview.open("",context.error) || !preview.create(plan,context.error)) {
+            validation_rejected=false;return false;
+        }
+        auto projected=plan;
+        for (auto operation:operations) {
+            operation.plan_id=projected.id;operation.expected_version=projected.version;
+            if (!preview.apply(operation,projected,context.error)) return false;
+        }
+        reflection.proposed_plan_operations=std::move(operations);
+        validation_rejected=false;
+        return true;
     }
     std::map<std::string, std::string> identities;
     for (const auto & step : steps) {
@@ -286,4 +390,28 @@ bool prepare_common_agent_reflection_plan_repair(
     }
     reflection.proposed_plan_operations = std::move(additions);
     return true;
+}
+
+// Reuse the ordinary planner, tool view and preview store. A rejected slice
+// never changes the live plan and gets at most one validation-feedback retry.
+bool prepare_common_agent_reflection_plan_repair(
+        common_agent_runtime_turn_context & context,
+        const common_plan_state & plan,
+        common_planner & planner,
+        common_reflection_result & reflection) {
+    const bool method=plan.phase_review_required && !plan.workflow_definition;
+    if (!common_agent_runtime_transition_cognitive_mode(context,common_agent_cognitive_mode::frame,
+            "prepare reflection plan repair","reflection",common_runtime_trace_stage::reflection)) return false;
+    std::string previous_error;
+    for (size_t attempt=0;attempt<(method?2u:1u);++attempt) {
+        bool rejected=false;
+        context.error.clear();
+        if (prepare_reflection_plan_repair_attempt(context,plan,planner,reflection,previous_error,rejected)) return true;
+        if (!rejected || !method) return false;
+        previous_error=context.error;
+        context.emit_trace(common_runtime_trace_stage::plan,common_runtime_trace_kind::failed,
+            "method continuation validation rejected attempt="+std::to_string(attempt+1)+": "+previous_error,
+            plan.id,{});
+    }
+    return false;
 }

@@ -6,6 +6,7 @@
 #include "tools/agent/runtime/agent-route-compiler.h"
 
 #include <memory>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -30,7 +31,8 @@ struct common_agent_workflow_action_selection_result {
 // An empty result means that the user did not name a specific source.
 bool select_agent_research_source(common_agent_inference &, const common_agent_generation_config &,
     const common_agent_request &, const std::string & task,
-    const std::vector<std::string> & available_sources, std::vector<std::string> & sources, std::string & error);
+    const std::vector<std::string> & available_sources, std::vector<std::string> & sources, std::string & error,
+    const std::map<std::string, std::string> & source_descriptions = {});
 
 bool select_agent_research_assessment(common_agent_inference &, const common_agent_generation_config &,
     const common_agent_request &, const common_agent_research_gap &, const common_agent_research_evidence &,

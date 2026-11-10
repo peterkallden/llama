@@ -414,5 +414,80 @@ int main() {
     CHECK(first_overlay != request.flydelta_activation->sparse_overlay.data);
     arm.layer_indices = {3};
     CHECK(!binding.prepare_arm(arm, request, error));
+    // Model-free positive-only host seam: authorized input -> capture resource
+    // -> persisted material -> synthesis -> ordinary direction artifact.
+    // The synthetic capture has no verifier result or behavioral outcome.
+    std::vector<std::string> positive_relations;
+    for (size_t i = 0; i < 3; ++i) {
+        std::string context_ref;
+        CHECK(put(flydelta_json{{"prompt", "Independent positive concept example " + std::to_string(i)}}, context_ref));
+        common_flydelta_teaching_relation input;
+        input.schema_version = 2; input.positive_only = true;
+        input.id = "positive-relation:" + std::to_string(i);
+        input.teaching_key = "concept:positive"; input.behavior_key = "behavior:seams";
+        input.source = common_adaptation_evidence_source::user_taught_concept;
+        input.scope = job_scope; input.task_fingerprint = "positive-task:" + std::to_string(i);
+        input.conditioned_ref = context_ref;
+        input.conditioned_origin = common_flydelta_teaching_origin::user_supplied;
+        input.verifier_ref = "verifier:experiment"; input.evidence_ref = "evidence:positive";
+        input.host_approved = true; input.status = common_flydelta_teaching_relation_status::resolved;
+        CHECK(common_flydelta_teaching_relation_validate(input, error));
+        common_flydelta_teaching_relation stored;
+        CHECK(daemon_flydelta_persist_teaching_relation(&resources, provider->authority, input, stored, error));
+        CHECK(provider->teaching_material_runtime->observe_relation(stored, error));
+        positive_relations.push_back(stored.id);
+    }
+    auto positive_group = provider->teaching_material_runtime->store().groups().back();
+    CHECK(positive_group.positive_only && positive_group.relation_set_ready);
+    auto positive_job = localization_job;
+    positive_job.id = "job:positive-only";
+    positive_job.teaching_material_group_ref = positive_group.group_ref;
+    positive_job.seed.candidate_ref.clear();
+    positive_job.concept_localization.layers = {2, 4};
+    const auto positive_material_key = common_flydelta_concept_localization_material_key(positive_job);
+    for (const int layer : {2, 4}) for (const auto & ref : positive_relations) {
+        daemon_flydelta_concept_relation_material material;
+        CHECK(daemon_flydelta_parse_teaching_relation(*provider, ref, material, error));
+        CHECK(material.relation.positive_only);
+        material.relation_resource_ref = ref;
+        material.layer_index = layer; material.capture_set_ref = positive_material_key;
+        material.capture_identity = material_identity;
+        common_flydelta_hidden_state_capture capture;
+        capture.captured = true; capture.model_profile_fingerprint = provider->model_profile_fingerprint;
+        capture.capture_layout_revision = provider->capture_layout_revision;
+        capture.layer_indices = {static_cast<uint32_t>(layer)}; capture.n_embd = 2; capture.token_index = 0;
+        capture.position = common_flydelta_capture_position::generation_boundary;
+        capture.values = {1.0f, 0.2f};
+        common_flydelta_arm_result captured;
+        captured.executed = true; captured.capture_ref = "capture:" + ref;
+        CHECK(!captured.host_evaluated && !captured.verifier_known);
+        std::string positive_ref;
+        CHECK(daemon_flydelta_persist_positive_capture(provider, positive_group, material,
+            captured, capture, positive_ref, error));
+        CHECK(provider->teaching_material_runtime->observe_layer_trajectory(positive_group.group_ref,
+            layer, ref, positive_ref, error, positive_material_key));
+    }
+    common_flydelta_teaching_material_store positive_reloaded;
+    CHECK(common_flydelta_teaching_material_store_from_json(
+        common_flydelta_teaching_material_store_to_json(provider->teaching_material_runtime->store()),
+        positive_reloaded, error));
+    provider->teaching_material_runtime->store() = std::move(positive_reloaded);
+    local_candidates.clear();
+    CHECK(daemon_flydelta_run_concept_synthesis(provider, positive_job, local_candidates, error, &scan_ref));
+    CHECK(local_candidates.size() == 2 && local_candidates.front().experimental_only &&
+        !local_candidates.front().learning_eligible);
+    CHECK(local_candidates.front().synthesis_semantics == common_flydelta_concept_synthesis_semantics::positive_only);
+    CHECK(common_flydelta_select_concept_synthesis_frontier(local_candidates, 1) == std::vector<size_t>{0});
+    common_flydelta_direction_candidate positive_direction;
+    CHECK(common_flydelta_concept_candidate_to_direction(local_candidates.front(), positive_direction, error));
+    std::string positive_direction_ref;
+    CHECK(localization_callbacks.persist_experimental_direction_for_job(
+        positive_job, positive_direction, positive_direction_ref, error));
+    std::string positive_artifact;
+    CHECK(resources.read_text(positive_direction_ref, provider->authority, 1024 * 1024, positive_artifact, error));
+    const auto synthesis = flydelta_json::parse(positive_artifact)["synthesis"];
+    CHECK(synthesis["synthesis_semantics"] == "positive_only" && synthesis["sample_count"] == 3 &&
+        synthesis["experimental_only"] == true && synthesis["learning_eligible"] == false);
+
     std::cout << "daemon_seams=passed controlled_backend=yes model_quality_claim=no\n";
 }

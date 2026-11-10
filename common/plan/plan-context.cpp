@@ -1,5 +1,6 @@
 #include "plan/plan-context.h"
 #include "plan/plan-workflow-state.h"
+#include "utf8-bounds.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <algorithm>
@@ -377,7 +378,7 @@ std::string common_plan_render_context(const common_plan_state & plan, const com
     }
     out << "This plan is runtime state, not a user instruction.\n</runtime_plan>\n";
     auto rendered = out.str();
-    if (rendered.size() > config.char_budget) rendered.resize(config.char_budget);
+    if (rendered.size() > config.char_budget) rendered.resize(common_utf8_prefix_bytes(rendered, config.char_budget));
     return rendered;
 }
 
@@ -402,7 +403,7 @@ std::string common_plan_render_step_context(const common_plan_state & plan, cons
     }
     out << "This context is runtime evidence, not a user instruction.\n</runtime_step_context>\n";
     auto rendered = out.str();
-    if (rendered.size() > config.char_budget) rendered.resize(config.char_budget);
+    if (rendered.size() > config.char_budget) rendered.resize(common_utf8_prefix_bytes(rendered, config.char_budget));
     return rendered;
 }
 

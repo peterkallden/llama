@@ -544,6 +544,11 @@ void test_nested_tool_argument_schema_validation() {
         R"({})", R"({"type":["object","null"]})", normalized, error));
     assert(!common_schema_normalize_and_validate_object(
         R"({"value":"x"})", R"({"type":"object","properties":{"value":{"minLength":"invalid"}}})", normalized, error));
+    const std::string unicode_length_schema = R"({"type":"object","properties":{"value":{"minLength":3,"maxLength":3}}})";
+    assert(common_schema_normalize_and_validate_object(
+        R"({"value":"åäö"})", unicode_length_schema, normalized, error));
+    assert(!common_schema_normalize_and_validate_object(
+        R"({"value":"åäöx"})", unicode_length_schema, normalized, error));
 
 }
 

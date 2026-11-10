@@ -638,7 +638,8 @@ int main(int argc, char ** argv) {
     };
     runtime.flydelta_capture_job_enqueue = [queue_root = flydelta_worker_config.queue_root,
             queue_limits = flydelta_worker_config.queue_limits,
-            resource_store = runtime.resource_store.get()](
+            resource_store = runtime.resource_store.get(),
+            execution_identity = runtime.flydelta_execution_identity](
             const common_flydelta_capture_candidate & candidate,
             std::string & enqueue_error) {
         enqueue_error.clear();
@@ -700,9 +701,13 @@ int main(int argc, char ** argv) {
         job.seed.task_fingerprint = candidate.task_fingerprint.empty()
             ? candidate.transaction_id : candidate.task_fingerprint;
         job.seed.model_profile_fingerprint = candidate.model_profile_fingerprint;
-        job.seed.tokenizer_fingerprint = "flydelta-capture-tokenizer-v1";
-        job.seed.template_fingerprint = "flydelta-capture-template-v1";
-        job.seed.execution_context_fingerprint = "flydelta-server-context-v1";
+        if (!execution_identity || candidate.model_profile_fingerprint != execution_identity->model_profile_fingerprint) {
+            enqueue_error = "FlyDelta donor candidate model fingerprint does not match the resident execution profile";
+            return false;
+        }
+        job.seed.tokenizer_fingerprint = execution_identity->tokenizer_fingerprint;
+        job.seed.template_fingerprint = execution_identity->template_fingerprint;
+        job.seed.execution_context_fingerprint = execution_identity->execution_context_fingerprint;
         job.seed.baseline_ref = candidate.baseline_ref;
         job.seed.candidate_ref = candidate.candidate_ref;
         job.seed.verifier_ref = candidate.verifier_ref;
@@ -765,7 +770,7 @@ int main(int argc, char ** argv) {
             bool family_available = false;
             if (!material_runtime->resolve_group_for_family(
                     relation.teaching_key, relation.behavior_key,
-                    group, family_available, reuse_error)) return false;
+                    group, family_available, reuse_error, common_flydelta_teaching_material_mode::automatic, &relation.scope)) return false;
             if (!family_available) return true;
             common_flydelta_teaching_material_group ready_group;
             if (!material_runtime->resolve_ready_group(
@@ -795,7 +800,11 @@ int main(int argc, char ** argv) {
             job.seed.model_profile_fingerprint = relation.model_profile_fingerprint;
             job.seed.tokenizer_fingerprint = relation.tokenizer_fingerprint;
             job.seed.template_fingerprint = relation.template_fingerprint;
-            job.seed.execution_context_fingerprint = "flydelta-server-context-v1";
+            if (!common_flydelta_teaching_material_execution_matches(material_runtime->identity(),
+                    relation.model_profile_fingerprint, relation.tokenizer_fingerprint,
+                    relation.template_fingerprint, material_runtime->identity().execution_context_fingerprint,
+                    relation.capture_layout_revision, reuse_error)) return false;
+            job.seed.execution_context_fingerprint = material_runtime->identity().execution_context_fingerprint;
             job.seed.baseline_ref = relation.baseline_ref;
             job.seed.candidate_ref = relation.conditioned_ref;
             job.seed.verifier_ref = relation.verifier_ref;
@@ -1044,10 +1053,11 @@ int main(int argc, char ** argv) {
             bool available = false;
             const bool resolved = parent_job.seed.teaching_key.empty()
                 ? material_runtime->resolve_group_for_behavior(
-                    parent_job.seed.behavior_key, group, available, binding_error)
+                    parent_job.seed.behavior_key, group, available, binding_error,
+                    common_flydelta_teaching_material_mode::automatic, &parent_job.seed.scope)
                 : material_runtime->resolve_group_for_family(
                     parent_job.seed.teaching_key, parent_job.seed.behavior_key,
-                    group, available, binding_error);
+                    group, available, binding_error, common_flydelta_teaching_material_mode::automatic, &parent_job.seed.scope);
             if (!resolved) return false;
             if (available) parent_job.teaching_material_group_ref = group.group_ref;
             return true;

@@ -225,6 +225,18 @@ struct common_flydelta_direction_search_config {
     std::string capture_layout_revision;
 };
 
+// Representation geometry only; never a behavioral outcome or posterior input.
+struct common_flydelta_concept_synthesis_diagnostics {
+    int schema_version = 1;
+    size_t sample_count = 0;
+    size_t retained_count = 0;
+    float resultant_norm = 0.0f;
+    float median_alignment = 0.0f;
+    float alignment_mad = 0.0f;
+    float retained_median_alignment = 0.0f;
+    float direction_stability = 0.0f; // minimum leave-one-out cosine
+};
+
 struct common_flydelta_direction_candidate {
     int schema_version = 1;
     common_flydelta_direction_kind kind = common_flydelta_direction_kind::raw_repair;
@@ -243,6 +255,9 @@ struct common_flydelta_direction_candidate {
     // Experimental candidates can guide search but must not be treated as
     // learned or promotion-eligible basis directions.
     bool experimental_only = false;
+    // Optional, versioned synthesis provenance. No guidance policy consumes it.
+    common_flydelta_concept_synthesis_diagnostics representation_diagnostics;
+    std::string synthesis_semantics;
 };
 
 bool common_flydelta_direction_search_config_validate(

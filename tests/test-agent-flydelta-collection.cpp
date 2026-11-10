@@ -375,6 +375,52 @@ int main() {
     CHECK(pipeline_refined.job.search_state_ref ==
         "flydelta://state/search/resume");
 
+    // A host can admit a concept experiment only on a valid search lineage.
+    // Positive observations are material references, never synthetic outcomes.
+    common_flydelta_teaching_material_identity material_identity;
+    material_identity.model_profile_fingerprint = pipeline_claimed.job.seed.model_profile_fingerprint;
+    material_identity.tokenizer_fingerprint = pipeline_claimed.job.seed.tokenizer_fingerprint;
+    material_identity.template_fingerprint = pipeline_claimed.job.seed.template_fingerprint;
+    material_identity.execution_context_fingerprint = pipeline_claimed.job.seed.execution_context_fingerprint;
+    material_identity.capture_layout_revision = "capture:v1";
+    material_identity.scope_fingerprint = "scope:host";
+    material_identity.verifier_revision = "verifier:v1";
+    common_flydelta_teaching_material_runtime material(material_identity);
+    for (int i = 0; i < 3; ++i) {
+        common_flydelta_teaching_relation relation;
+        relation.schema_version = 2;
+        relation.positive_only = true;
+        relation.id = "positive:" + std::to_string(i);
+        relation.teaching_key = "concept:test";
+        relation.behavior_key = pipeline_claimed.job.seed.behavior_key;
+        relation.source = common_adaptation_evidence_source::user_taught_concept;
+        relation.scope = pipeline_claimed.job.seed.scope;
+        relation.task_fingerprint = "task:" + std::to_string(i);
+        relation.conditioned_ref = "resource:positive:" + std::to_string(i);
+        relation.conditioned_origin = common_flydelta_teaching_origin::user_supplied;
+        relation.verifier_ref = pipeline_claimed.job.seed.verifier_ref;
+        relation.evidence_ref = "resource:authorization:" + std::to_string(i);
+        relation.status = common_flydelta_teaching_relation_status::resolved;
+        relation.host_approved = true;
+        CHECK(material.observe_relation(relation, error));
+    }
+    auto admission_parent = pipeline_claimed.job;
+    admission_parent.seed.teaching_key = "concept:test";
+    const auto admission_root = root / "concept-admission";
+    CHECK(common_flydelta_collect_concept_experiment_job(admission_root, {}, admission_parent, material,
+        common_flydelta_teaching_material_mode::positive_only, result, error));
+    CHECK(result == common_flydelta_experiment_collection_result::enqueued);
+    common_flydelta_claimed_experiment_job admitted;
+    CHECK(common_flydelta_experiment_queue_claim_next(admission_root, {}, admitted, error));
+    CHECK(admitted.job.kind == common_flydelta_experiment_job_kind::concept_capture);
+    CHECK(admitted.job.seed.baseline_ref == admission_parent.seed.baseline_ref);
+    CHECK(admitted.job.seed.verifier_ref == admission_parent.seed.verifier_ref);
+    CHECK(admitted.job.teaching_material_group_ref == material.store().groups().front().group_ref);
+    auto invalid_parent = admission_parent;
+    invalid_parent.seed.verifier_ref.clear();
+    CHECK(!common_flydelta_collect_concept_experiment_job(admission_root, {}, invalid_parent, material,
+        common_flydelta_teaching_material_mode::positive_only, result, error));
+
     auto localization_parent = pipeline_claimed.job;
     localization_parent.teaching_material_group_ref = "material:localization";
     common_flydelta_concept_localization_request localization;
@@ -409,6 +455,7 @@ int main() {
     CHECK(localization_search.job.bootstrap_zoom_state_ref.empty() && localization_search.job.search_state_ref.empty());
     CHECK(localization_search.job.seed.baseline_ref == localization_parent.seed.baseline_ref);
     CHECK(localization_search.job.seed.candidate_ref == "direction:layer-family");
+    CHECK(localization_search.job.concept_synthesis_ref == "direction:layer-family");
     CHECK(localization_search.job.concept_localization.layers == localization.layers);
     CHECK(common_flydelta_concept_localization_material_key(localization_capture.job) ==
         common_flydelta_concept_localization_material_key(localization_search.job));
@@ -418,6 +465,7 @@ int main() {
     common_flydelta_claimed_experiment_job localized_resume;
     CHECK(common_flydelta_experiment_queue_claim_next(localization_root, {}, localized_resume, error));
     CHECK(localized_resume.job.bootstrap_zoom_state_ref == "state:relocalized");
+    CHECK(localized_resume.job.concept_synthesis_ref == "direction:layer-family");
 
     std::filesystem::remove_all(root, ignored);
     return 0;

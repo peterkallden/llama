@@ -113,6 +113,9 @@ struct common_agent_runtime_driver_execution {
     // Model-facing tools after host-owned family selection. The resolved
     // tool_view remains authoritative for execution and policy enforcement.
     std::vector<common_chat_tool> model_tools;
+    // An empty selected catalog is meaningful for a phased method whose
+    // current slice needs no operation; do not restore every authorized tool.
+    bool model_tools_selected = false;
     common_agent_result family_chat_result;
     bool family_chat_routed = false;
     std::vector<common_agent_input_resource> input_resources;

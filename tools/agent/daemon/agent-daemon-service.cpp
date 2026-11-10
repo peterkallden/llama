@@ -279,6 +279,7 @@ bool common_agent_daemon_register_flydelta_server_binding(
         return false;
     }
 
+    auto concept_admit = binding.admit_concept_experiment;
     auto model_host = common_agent_server_context_host_make_flydelta_model_host(
         std::move(host), std::move(binding), error);
     if (!model_host) return false;
@@ -286,6 +287,7 @@ bool common_agent_daemon_register_flydelta_server_binding(
     auto adapter = common_flydelta_model_adapter_from_host(*model_host, error);
     if (!adapter) return false;
 
+    runtime.flydelta_concept_admit = std::move(concept_admit);
     runtime.flydelta_model_host = std::move(model_host);
     runtime.flydelta_model_adapter = std::move(adapter);
     runtime.flydelta_model_capabilities = runtime.flydelta_model_adapter->capabilities;
@@ -1073,6 +1075,21 @@ bool common_agent_daemon_service::execute_flydelta_admin(
         outcome.event = "flydelta.admin.failed";
         return false;
     };
+    if (request.operation == "flydelta.admit_concept") {
+        if (!runtime.flydelta_concept_admit || !request.concept_context)
+            return fail("FlyDelta host concept admission is not configured");
+        common_flydelta_experiment_collection_result collected;
+        if (!runtime.flydelta_concept_admit(*request.concept_context, request.concept_mode, collected, error)) return fail(error);
+        if (collected == common_flydelta_experiment_collection_result::disabled)
+            return fail("No compatible complete concept material is available for this host evaluation");
+        outcome.ok = true;
+        outcome.event = "flydelta.concept_experiment.queued";
+        outcome.payload_json = json{{"operation", request.operation},
+            {"teaching_key", request.concept_context->seed.teaching_key},
+            {"already_present", collected == common_flydelta_experiment_collection_result::already_present},
+            {"experimental_only", true}, {"activation_authorized", false}}.dump();
+        return true;
+    }
     if (request.operation == "flydelta.get_binding") {
         if (request.binding_key.empty()) return fail("FlyDelta binding_key is required");
         common_flydelta_activation_binding binding;

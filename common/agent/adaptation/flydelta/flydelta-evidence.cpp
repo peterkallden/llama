@@ -230,6 +230,29 @@ bool common_flydelta_experiment_seed_validate(
         const common_flydelta_experiment_seed & seed,
         std::string & error) {
     error.clear();
+    if (seed.schema_version == 2) {
+        if (seed.source != common_adaptation_evidence_source::user_taught_concept ||
+                !nonempty_bounded(seed.id) || !nonempty_bounded(seed.admission_ref) ||
+                seed.evidence_ref != seed.admission_ref || !seed.transaction_ids.empty() ||
+                !nonempty_bounded(seed.teaching_key) || !nonempty_bounded(seed.behavior_key) ||
+                !nonempty_bounded(seed.scope.namespace_id) || !nonempty_bounded(seed.scope.session_id) ||
+                !nonempty_bounded(seed.task_fingerprint) || !nonempty_bounded(seed.baseline_ref) ||
+                !nonempty_bounded(seed.verifier_ref) || !nonempty_bounded(seed.verifier_contract_revision) ||
+                !nonempty_bounded(seed.model_profile_fingerprint) ||
+                !nonempty_bounded(seed.tokenizer_fingerprint) || !nonempty_bounded(seed.template_fingerprint) ||
+                !nonempty_bounded(seed.execution_context_fingerprint) || seed.candidate_ref.size() > 512 ||
+                seed.scope.project_id.size() > 512 || seed.scope.turn_id.size() > 512 ||
+                seed.verifier_contract_revision.size() > 512 || seed.fixture_group_id.size() > 512 ||
+                seed.ruleset_revision.size() > 512 || seed.action_contract_fingerprint.size() > 512) {
+            error = "FlyDelta experimental concept seed requires host admission and an evaluation context";
+            return false;
+        }
+        return true;
+    }
+    if (!seed.admission_ref.empty()) {
+        error = "FlyDelta behavioral seed cannot carry a concept-only admission";
+        return false;
+    }
     common_adaptation_evidence evidence;
     evidence.id = seed.evidence_ref;
     evidence.teaching_key = seed.teaching_key;

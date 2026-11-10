@@ -140,6 +140,45 @@ bool common_flydelta_collect_concept_localization_job(
     return true;
 }
 
+bool common_flydelta_collect_concept_experiment_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_job & authorized_parent,
+        const common_flydelta_teaching_material_runtime & material,
+        common_flydelta_teaching_material_mode mode,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error) {
+    result = common_flydelta_experiment_collection_result::disabled;
+    error.clear();
+    if (authorized_parent.kind != common_flydelta_experiment_job_kind::search_pipeline ||
+            !common_flydelta_experiment_job_validate(authorized_parent, 128, error)) {
+        if (error.empty()) error = "FlyDelta concept experiment requires an authorized search parent";
+        return false;
+    }
+    common_flydelta_teaching_material_group group;
+    bool available = false;
+    const bool resolved = authorized_parent.seed.teaching_key.empty()
+        ? material.resolve_group_for_behavior(authorized_parent.seed.behavior_key, group, available, error, mode, &authorized_parent.seed.scope)
+        : material.resolve_group_for_family(authorized_parent.seed.teaching_key,
+            authorized_parent.seed.behavior_key, group, available, error, mode, &authorized_parent.seed.scope);
+    if (!resolved) return false;
+    if (!available) return true;
+    if (!authorized_parent.teaching_material_group_ref.empty() && authorized_parent.teaching_material_group_ref != group.group_ref) {
+        error = "FlyDelta concept admission cannot replace an already bound material group";
+        return false;
+    }
+    if (!material.contrast_admissible(group, error, authorized_parent.seed.verifier_contract_revision)) return false;
+    if (!common_flydelta_teaching_material_execution_matches(group.identity,
+            authorized_parent.seed.model_profile_fingerprint, authorized_parent.seed.tokenizer_fingerprint,
+            authorized_parent.seed.template_fingerprint, authorized_parent.seed.execution_context_fingerprint,
+            {}, error)) return false;
+    auto bound = authorized_parent;
+    bound.teaching_material_group_ref = group.group_ref;
+    return common_flydelta_collect_next_action_job(queue_root, queue_limits, bound,
+        common_flydelta_next_action::prepare_concept_material, bound.bootstrap_zoom_state_ref,
+        bound.search_state_ref, bound.representation_augmentation_state_ref, {}, result, error);
+}
+
 bool common_flydelta_collect_refinement_job(
         const std::filesystem::path & queue_root,
         const common_flydelta_experiment_queue_limits & queue_limits,
@@ -249,6 +288,8 @@ bool common_flydelta_collect_next_action_job(
             return false;
         }
         follow_up.seed.candidate_ref = graft_direction_ref;
+        if (parent_job.kind == common_flydelta_experiment_job_kind::concept_synthesis)
+            follow_up.concept_synthesis_ref = graft_direction_ref;
     }
     if (next_action == common_flydelta_next_action::prepare_concept_material ||
             next_action == common_flydelta_next_action::run_concept_synthesis) {
@@ -281,6 +322,11 @@ bool common_flydelta_collect_next_action_job(
         // candidate_ref, but resumes HOW MUCH at the existing WHERE anchor.
         follow_up.search_state_ref.clear();
         follow_up.representation_augmentation_state_ref.clear();
+        if (follow_up.seed.schema_version == 2) {
+            // A newly admitted concept starts its own ordinary bounded WHERE
+            // pass. The capture origin remains in the immutable admission.
+            follow_up.bootstrap_zoom_state_ref.clear();
+        }
         if (!follow_up.concept_localization.layers.empty()) {
             // Layer-specific material permits a fresh WHERE challenge. The
             // old origin remains immutable provenance, not a resume handle.

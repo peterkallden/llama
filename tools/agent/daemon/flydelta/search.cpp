@@ -17,6 +17,96 @@
 
 namespace agent_daemon_flydelta_internal {
 
+// Resolve descriptive metadata through the same scoped resource authority as
+// the intervention. No posterior or proposal policy consumes these features.
+static bool resolve_synthesis_features(
+        const daemon_flydelta_resource_provider & provider,
+        const common_flydelta_experiment_job & job,
+        std::vector<common_flydelta_guidance_synthesis_features> & features,
+        std::string & error, int32_t selected_layer = -1, size_t nesting = 0) {
+    features.clear();
+    if (job.concept_synthesis_ref.empty()) return true;
+    json artifact;
+    if (!daemon_flydelta_read_json_bounded(provider, job.concept_synthesis_ref,
+            16U * 1024U * 1024U, artifact, error)) return false;
+    const std::string source_ref = job.concept_synthesis_ref;
+    if (!artifact.contains("synthesis") && artifact.contains("localization") &&
+            artifact["localization"].contains("layer_directions")) {
+        try {
+            const auto & bindings = artifact.at("localization").at("layer_directions");
+            if (nesting != 0 || !bindings.is_array() || bindings.empty() || bindings.size() > 8) {
+                error = "FlyDelta layer-family diagnostics binding is invalid";
+                return false;
+            }
+            std::set<int32_t> layers;
+            for (const auto & binding : bindings) {
+                const auto layer = binding.at("layer_index").get<int32_t>();
+                if (!layers.insert(layer).second) { error = "FlyDelta layer-family diagnostics contain duplicate layers"; return false; }
+                auto child = job;
+                child.concept_synthesis_ref = binding.at("direction_ref").get<std::string>();
+                std::vector<common_flydelta_guidance_synthesis_features> local;
+                if (!resolve_synthesis_features(provider, child, local, error, layer, nesting + 1)) return false;
+                features.insert(features.end(), local.begin(), local.end());
+            }
+        } catch (const std::exception & e) {
+            error = std::string("FlyDelta layer-family diagnostics are malformed: ") + e.what();
+            return false;
+        }
+        return true;
+    }
+    if (!artifact.contains("synthesis")) return true; // Other grafts have no such diagnostics.
+    try {
+        const auto & value = artifact.at("synthesis");
+        const auto direction_bytes = artifact.at("directions").dump();
+        const auto direction_fingerprint = "sha256:" + hash_sha256_hex(direction_bytes.data(), direction_bytes.size());
+        const auto & scope = value.at("scope");
+        if (value.at("model_profile_fingerprint").get<std::string>() != job.seed.model_profile_fingerprint ||
+                value.at("capture_layout_revision").get<std::string>() != provider.capture_layout_revision ||
+                value.at("concept_ref").get<std::string>() != job.teaching_material_group_ref ||
+                value.at("direction_fingerprint").get<std::string>() != direction_fingerprint ||
+                scope.at("namespace_id").get<std::string>() != job.seed.scope.namespace_id ||
+                scope.at("project_id").get<std::string>() != job.seed.scope.project_id ||
+                scope.at("session_id").get<std::string>() != job.seed.scope.session_id ||
+                scope.at("turn_id").get<std::string>() != job.seed.scope.turn_id) {
+            error = "FlyDelta synthesis diagnostics do not match the executed concept, scope or direction";
+            return false;
+        }
+        common_flydelta_guidance_synthesis_features result;
+        result.source_ref = source_ref;
+        result.direction_fingerprint = direction_fingerprint;
+        result.concept_ref = job.teaching_material_group_ref;
+        if (!artifact.at("directions").is_array() || artifact.at("directions").size() != 1) {
+            error = "FlyDelta synthesis diagnostics require one layer-bound direction";
+            return false;
+        }
+        result.layer_index = artifact.at("directions").front().at("layer_index").get<int32_t>();
+        if (nesting > 0 && selected_layer >= 0 && result.layer_index != selected_layer) {
+            error = "FlyDelta synthesis diagnostics refer to a different layer";
+            return false;
+        }
+        result.schema_version = value.at("schema_version").get<int>();
+        result.synthesis_semantics = value.at("synthesis_semantics").get<std::string>();
+        result.sample_count = value.at("sample_count").get<size_t>();
+        result.median_alignment = value.at("median_alignment").get<double>();
+        result.alignment_mad = value.at("alignment_mad").get<double>();
+        result.direction_stability = value.at("direction_stability").get<double>();
+        if (result.schema_version != 1 || result.synthesis_semantics != "positive_only" ||
+                !value.at("experimental_only").get<bool>() || value.at("learning_eligible").get<bool>() ||
+                result.sample_count < 3 || result.sample_count > 64 ||
+                !std::isfinite(result.median_alignment) || result.median_alignment < -1.0 || result.median_alignment > 1.0 ||
+                !std::isfinite(result.alignment_mad) || result.alignment_mad < 0.0 || result.alignment_mad > 2.0 ||
+                !std::isfinite(result.direction_stability) || result.direction_stability < -1.0 || result.direction_stability > 1.0) {
+            error = "FlyDelta synthesis diagnostics are invalid";
+            return false;
+        }
+        features.push_back(std::move(result));
+    } catch (const std::exception & e) {
+        error = std::string("FlyDelta synthesis diagnostics are malformed: ") + e.what();
+        return false;
+    }
+    return true;
+}
+
 bool daemon_flydelta_run_search_pipeline(
         std::shared_ptr<daemon_flydelta_resource_provider> provider,
         const common_flydelta_experiment_job & job,
@@ -33,6 +123,9 @@ bool daemon_flydelta_run_search_pipeline(
         error = "FlyDelta WHERE search requires a scoped resource provider";
         return false;
     }
+    if (!daemon_flydelta_validate_concept_admission(*provider, job, error)) return false;
+    std::vector<common_flydelta_guidance_synthesis_features> synthesis_features;
+    if (!resolve_synthesis_features(*provider, job, synthesis_features, error)) return false;
     common_flydelta_experiment_fixture fixture;
     fixture.id = job.seed.verifier_ref;
     fixture.task_fingerprint = job.seed.task_fingerprint;
@@ -343,6 +436,7 @@ bool daemon_flydelta_run_search_pipeline(
             !fixture.baseline_deployment_fingerprint.empty() &&
             !fixture.outcome_guidance_verifier_revision.empty()) {
         common_flydelta_outcome_guidance_context base_context;
+        base_context.synthesis_features = synthesis_features;
         base_context.scope_fingerprint = fixture.guidance_scope_fingerprint.empty()
             ? fixture.scope_fingerprint : fixture.guidance_scope_fingerprint;
         base_context.model_profile_fingerprint = fixture.model_profile_fingerprint;
@@ -851,6 +945,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         std::string & error) {
     error.clear();
     provider = daemon_flydelta_provider_for_scope(provider, job.seed.scope);
+    if (!daemon_flydelta_validate_concept_admission(*provider, job, error)) return false;
     common_flydelta_experiment_fixture fixture;
     if (!daemon_flydelta_fixture_from_job(job, fixture, error)) return false;
     fixture.scope_fingerprint = daemon_flydelta_scope_fingerprint(job.seed.scope);
@@ -1008,6 +1103,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
     coefficient_config.guidance_layer_index = layer_index;
     coefficient_config.guidance_model_layer_count = provider->model_n_layers;
     common_flydelta_outcome_guidance_context guidance_context;
+    if (!resolve_synthesis_features(*provider, job, guidance_context.synthesis_features, error, layer_index)) return false;
     guidance_context.scope_fingerprint = fixture.guidance_scope_fingerprint.empty()
         ? fixture.scope_fingerprint : fixture.guidance_scope_fingerprint;
     guidance_context.model_profile_fingerprint = fixture.model_profile_fingerprint;

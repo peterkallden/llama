@@ -25,6 +25,23 @@ bool same_json_object(const std::string & lhs, const std::string & rhs) {
 int main() {
     common_reflection_result result;
     std::string error;
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","task_outcome":"remaining","assurance_action":"revise_plan"})", result, error));
+    CHECK_CONTRACT(result.task_outcome == "remaining");
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept\ntask_outcome blocked", result, error));
+    CHECK_CONTRACT(result.task_outcome == "blocked");
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"accept","task_outcome":"unknown"})", result, error));
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","phase_reviews":[{"phase_id":"method:knowledge","status":"remaining","reason":"Inspect primary documentation","evidence_ids":[]}]})",result,error));
+    CHECK_CONTRACT(result.phase_reviews.size()==1 && result.phase_reviews.front().phase_id=="method:knowledge");
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept\nphase phase_id=\"method:knowledge\" status=\"not_needed\" reason=\"Local evidence is sufficient\" evidence_ids=[]",result,error));
+    CHECK_CONTRACT(result.phase_reviews.size()==1 && result.phase_reviews.front().status=="not_needed");
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","phase_reviews":[{"phase_id":"method:knowledge","status":"remaining","reason":"Need a primary source","evidence_ids":[],"next_work_kind":"external_lookup","next_work_goal":"Read the primary source"}]})",result,error));
+    CHECK_CONTRACT(result.phase_reviews.size()==1 && result.phase_reviews.front().next_work_kind=="external_lookup" &&
+        result.phase_reviews.front().next_work_goal=="Read the primary source");
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect revise\nphase phase_id=\"method:knowledge\" status=\"remaining\" reason=\"Need source\" evidence_ids=[] next_work_kind=\"inspect_source\" next_work_goal=\"Read implementation\"",
+        result,error));
+    CHECK_CONTRACT(result.phase_reviews.size()==1 && result.phase_reviews.front().next_work_kind=="inspect_source" &&
+        result.phase_reviews.front().next_work_goal=="Read implementation");
     const std::string host_step = "tool:agent-blueprint:" + std::string(96, 'a') + ":workflow:action:investigate.source.attach";
     if (!common_reflection_parse_compact_dsl("reflect retry", result, error, {}, 8, {}, host_step) ||
             result.proposed_plan_operations.size() != 1 || result.proposed_plan_operations.front().step_id != host_step) {

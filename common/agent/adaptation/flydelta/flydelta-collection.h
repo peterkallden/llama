@@ -3,6 +3,7 @@
 #include "agent/adaptation/flydelta/flydelta-queue.h"
 #include "agent/adaptation/flydelta/flydelta-candidate-lifecycle.h"
 #include "agent/adaptation/flydelta/flydelta-experiment-orchestration.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-material.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -69,6 +70,19 @@ bool common_flydelta_collect_concept_localization_job(
         const common_flydelta_experiment_queue_limits & queue_limits,
         const common_flydelta_experiment_job & parent_job,
         const common_flydelta_concept_localization_request & request,
+        common_flydelta_experiment_collection_result & result,
+        std::string & error);
+
+// Explicit host admission on an existing authorized search lineage. This
+// queues references only; it never manufactures a verifier or an outcome.
+// Invalid selected material is an error in capture, not a reason to retry with
+// a different synthesis mode.
+bool common_flydelta_collect_concept_experiment_job(
+        const std::filesystem::path & queue_root,
+        const common_flydelta_experiment_queue_limits & queue_limits,
+        const common_flydelta_experiment_job & authorized_parent,
+        const common_flydelta_teaching_material_runtime & material,
+        common_flydelta_teaching_material_mode mode,
         common_flydelta_experiment_collection_result & result,
         std::string & error);
 

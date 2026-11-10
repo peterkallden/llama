@@ -1,5 +1,7 @@
 #include "agent/adaptation/flydelta/flydelta-concept.h"
 #include "agent/adaptation/flydelta/flydelta-semantic-decision.h"
+#include <algorithm>
+#include <limits>
 
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
 
@@ -204,6 +206,76 @@ int main() {
         concept_spec, prototype_config, unverified_positive, controls, candidates, error));
     CHECK(common_flydelta_build_positive_prototype_candidates(
         concept_spec, prototype_config, positive, controls, candidates, error));
+
+    // Positive-only synthesis uses source identity and geometry, never a
+    // fabricated control or a host success label.
+    auto positive_spec = concept_spec;
+    positive_spec.require_control = false;
+    auto independent_positive = positive;
+    for (size_t i = 0; i < independent_positive.size(); ++i)
+        independent_positive[i].observation_fingerprint = "source-input:" + std::to_string(i);
+    common_flydelta_positive_only_build_config positive_only_config;
+    positive_only_config.dimension = 3;
+    common_flydelta_concept_candidate positive_only;
+    CHECK(common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, independent_positive, positive_only, error));
+    CHECK(positive_only.synthesis_semantics == common_flydelta_concept_synthesis_semantics::positive_only);
+    CHECK(positive_only.experimental_only && !positive_only.learning_eligible);
+    CHECK(!positive_only.control_residualized && positive_only.control_trajectories == 0);
+    CHECK(positive_only.representation_diagnostics.sample_count == 3);
+    CHECK(positive_only.representation_diagnostics.direction_stability > 0.99f);
+    const auto stable_candidate = positive_only;
+    std::reverse(independent_positive.begin(), independent_positive.end());
+    CHECK(common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, independent_positive, positive_only, error));
+    CHECK(positive_only.values == stable_candidate.values);
+    CHECK(positive_only.representation_diagnostics.direction_stability ==
+        stable_candidate.representation_diagnostics.direction_stability);
+    common_flydelta_direction_candidate positive_direction;
+    CHECK(common_flydelta_concept_candidate_to_direction(positive_only, positive_direction, error));
+    CHECK(positive_direction.synthesis_semantics == "positive_only" && positive_direction.experimental_only);
+    positive_direction.experimental_only = false;
+    CHECK(!common_flydelta_direction_candidate_validate(positive_direction, 3, error));
+    positive_only.learning_eligible = true;
+    CHECK(!common_flydelta_concept_candidate_validate(positive_only, 3, error));
+    auto duplicate = independent_positive;
+    duplicate[1].observation_fingerprint = duplicate[0].observation_fingerprint;
+    CHECK(!common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, duplicate, positive_only, error));
+    duplicate = independent_positive;
+    duplicate[1].capture_ref = duplicate[0].capture_ref;
+    CHECK(!common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, duplicate, positive_only, error));
+    duplicate = independent_positive;
+    duplicate[1].id = duplicate[0].id;
+    CHECK(!common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, duplicate, positive_only, error));
+    duplicate = independent_positive;
+    duplicate[1].model_profile_fingerprint = "other-model";
+    CHECK(!common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, duplicate, positive_only, error));
+    auto unstable = independent_positive;
+    unstable[0].values = {1.0f, 0.0f, 0.0f};
+    unstable[1].values = {-0.5f, 0.8660254f, 0.0f};
+    unstable[2].values = {-0.5f, -0.8660254f, 0.0f};
+    CHECK(!common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, unstable, positive_only, error));
+    // A nondegenerate mean with two aligned samples can still depend too
+    // strongly on one example: LOO must recompute and reject that direction.
+    unstable[0].values = {1.0f, 0.0f, 0.0f};
+    unstable[1].values = {1.0f, 0.0f, 0.0f};
+    unstable[2].values = {-0.9f, 0.43589f, 0.0f};
+    CHECK(!common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, unstable, positive_only, error));
+    CHECK(error.find("stable enough") != std::string::npos);
+    unstable[0].values[0] = std::numeric_limits<float>::quiet_NaN();
+    CHECK(!common_flydelta_build_positive_only_candidate(
+        positive_spec, positive_only_config, unstable, positive_only, error));
+    CHECK(!common_flydelta_build_positive_only_candidate(
+        concept_spec, positive_only_config, independent_positive, positive_only, error));
+    // The original positive/control builder still requires controls.
+    CHECK(!common_flydelta_build_positive_prototype_candidates(
+        concept_spec, prototype_config, independent_positive, {}, candidates, error));
 
     auto negative = positive;
     for (size_t index = 0; index < negative.size(); ++index) {

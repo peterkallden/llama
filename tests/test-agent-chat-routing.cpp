@@ -6,6 +6,7 @@
 #include "tools/agent/runtime/agent-planning-selection.h"
 #include "tools/agent/cli/agent-cli-runtime.h"
 #include "agent/structured-regeneration.h"
+#include "plan/plan-json.h"
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "json-schema-to-grammar.h"
@@ -64,6 +65,8 @@ struct routing_inference final : common_agent_inference {
 struct planner_prompt_inference final : common_agent_inference {
     std::vector<common_agent_generation_request> requests;
     std::vector<std::string> replies;
+    std::vector<common_agent_generation_stop_reason> stop_reasons;
+    std::vector<int> token_counts;
     size_t capacity = 0;
     size_t token_divisor = 0;
     size_t context_capacity_tokens() const override { return capacity; }
@@ -78,8 +81,9 @@ struct planner_prompt_inference final : common_agent_inference {
             return false;
         }
         result.content = replies[requests.size() - 1];
+        if (requests.size()<=token_counts.size()) result.decoded_tokens=token_counts[requests.size()-1];
         result.status = common_agent_generation_status::completed;
-        result.stop_reason = common_agent_generation_stop_reason::eos;
+        result.stop_reason = requests.size()<=stop_reasons.size() ? stop_reasons[requests.size()-1] : common_agent_generation_stop_reason::eos;
         return true;
     }
 };
@@ -243,7 +247,11 @@ static void check_planner_prompt_contracts() {
             ", large_error=" + error + ")");
     const auto & small_evidence = small_draft.requests[0].messages.back().content;
     const auto & large_evidence = large_draft.requests[0].messages.back().content;
-    require(small_evidence.find("projection: truncated") != std::string::npos &&
+    // When even the bounded observation envelope does not fit, the host
+    // explicitly reports an unavailable projection instead of truncating it.
+    const bool small_evidence_bounded = small_evidence.find("projection: truncated") != std::string::npos ||
+        small_evidence.find("evidence_projection: unavailable") != std::string::npos;
+    require(small_evidence_bounded &&
         large_evidence.find("dataset.schema") != std::string::npos,
         "draft did not truncate its optional evidence view within capacity (small_truncated=" +
             std::to_string(small_evidence.find("projection: truncated") != std::string::npos) +
@@ -357,7 +365,226 @@ static void check_schema_rejection_recovery() {
         "schema-invalid content was accepted or regenerated without a bound");
 }
 
+static void check_method_recovery_contracts() {
+    common_agent_generation_config config;config.n_predict=512;config.planner_n_predict=512;
+    common_agent_request request;request.prompt="Inspect the next source";
+    request.tool_output_format=common_agent_tool_output_format::native;
+    request.plan_repair_targets={{"r1","durable-failed-step"}};
+    common_chat_tool tool{"repository.read","Read source",
+        R"({"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string"}}})","{}"};
+    for (const bool dsl:{false,true}) {
+        request.tool_output_format=dsl?common_agent_tool_output_format::compact_dsl:common_agent_tool_output_format::native;
+        planner_prompt_inference model;
+        model.replies={dsl ? "plan goal=\"Inspect source\"\nstep as=fixed repair=r1 | open! repository.read\npath: new.cpp" :
+            R"({"goal":"Inspect source","steps":[{"tool":"repository.read","args":{"path":"new.cpp"},"repair":"r1"}]})"};
+        auto planner=make_llama_cli_planner(model,config,{tool});std::string error;
+        auto proposal=planner->create_plan(request,error);
+        require(error.empty() && !proposal.operations.empty() &&
+            proposal.operations[0].kind==common_plan_operation_kind::replace_step &&
+            proposal.operations[0].step_id==std::optional<std::string>("durable-failed-step") &&
+            proposal.operations[0].step->id!="durable-failed-step",
+            "explicit repair did not retain its host target and separate slice identity: "+error);
+        require(model.requests.size()==1 && (dsl ? model.requests[0].grammar.find("repair-handle")!=std::string::npos :
+            model.requests[0].json_schema.find("repair")!=std::string::npos),"repair contract was not presented in the selected format");
+    }
+    request.tool_output_format=common_agent_tool_output_format::native;
+    request.plan_repair_targets.clear();
+    planner_prompt_inference forbidden;
+    forbidden.replies={R"({"goal":"Inspect","steps":[{"tool":"repository.read","args":{"path":"a.cpp"},"repair":"invented"}]})",
+        R"({"goal":"Inspect","steps":[{"tool":"repository.read","args":{"path":"b.cpp"},"repair":"invented"}]})"};
+    std::string error;
+    make_llama_cli_planner(forbidden,config,{tool})->create_plan(request,error);
+    require(!error.empty() && forbidden.requests.size()==2,"planner accepted an unissued repair target");
+
+    common_plan_state plan;plan.id="reasoning-contract";
+    common_plan_step step{"inspect","Inspect","Assess inspected source"};step.mode=common_plan_step_mode::reasoning;
+    plan.steps={step};
+    planner_prompt_inference reasoning;
+    reasoning.replies={R"({"summary":"truncated)",R"({"summary":"Inspected source; further inspection remains."})"};
+    reasoning.stop_reasons={common_agent_generation_stop_reason::limit,common_agent_generation_stop_reason::eos};
+    reasoning.token_counts={128,21};
+    auto executor=make_llama_cli_action_executor(reasoning,config);
+    const auto generated=executor->generate_reasoning_result(request,plan,step,error);
+    require(error.empty() && generated.status==common_agent_generation_status::completed && generated.decoded_tokens==149 && reasoning.requests.size()==2 &&
+        reasoning.requests[0].options.n_predict==512 && reasoning.requests[1].options.n_predict==512 &&
+        reasoning.requests[1].messages.back().content.find("configured output token limit")!=std::string::npos &&
+        reasoning.requests[0].json_schema==reasoning.requests[1].json_schema,
+        "reasoning repair lost configured budget, validation feedback or schema: "+error);
+    planner_prompt_inference transport;
+    auto unavailable=make_llama_cli_action_executor(transport,config)->generate_reasoning_result(request,plan,step,error);
+    require(!error.empty() && unavailable.status==common_agent_generation_status::errored && transport.requests.size()==1,
+        "reasoning retried a transport failure or hid its error");
+    planner_prompt_inference malformed;malformed.replies={"invalid JSON","still invalid"};
+    auto rejected=make_llama_cli_action_executor(malformed,config)->generate_reasoning_result(request,plan,step,error);
+    require(!error.empty() && rejected.status==common_agent_generation_status::errored && malformed.requests.size()==2,
+        "reasoning accepted malformed output or exceeded its repair bound");
+    planner_prompt_inference constrained;constrained.capacity=128;
+    make_llama_cli_action_executor(constrained,config)->generate_reasoning_result(request,plan,step,error);
+    require(!error.empty() && constrained.requests.empty(),"reasoning issued a generation outside its context reservation");
+
+    step.id="composite:source:identity";step.status=common_plan_step_status::completed;
+    step.mode=common_plan_step_mode::tool;step.tool_call=common_plan_tool_call{"repository.read","{}"};plan.steps={step};
+    const auto evidence_id="tool:"+step.id+":repository.read";
+    plan.observations={{evidence_id,"repository.read",R"({"content":"inspected source"})",1.0f}};
+    const std::string review=R"({"decision":"revise","assurance_action":"revise_response","task_outcome":"satisfied","issues":[{"description":"Missing source qualification","correction":"Qualify the result","evidence_ids":["e1"]}]})";
+    planner_prompt_inference reviewing;reviewing.replies={review};
+    const auto verdict=make_llama_cli_reflection_engine(reviewing,config)->evaluate_result(request,plan,"draft",error);
+    require(error.empty() && verdict.issues.size()==1 && verdict.issues[0].evidence_ids==std::vector<std::string>{evidence_id} &&
+        reviewing.requests[0].messages.back().content.find(evidence_id)==std::string::npos &&
+        reviewing.requests[0].messages.back().content.find("e1")!=std::string::npos && plan.observations[0].id==evidence_id,
+        "review did not project and restore evidence through the real engine: "+error);
+    auto protected_request=request;
+    protected_request.prompt="The original identifier is "+evidence_id+" and the literal is e1.";
+    const auto protected_draft="Keep exactly "+evidence_id+" and e1.";
+    plan.observations[0].summary=R"({"content":"e1 tool:composite:source:identity:repository.read"})";
+    planner_prompt_inference protected_review;protected_review.replies={review};
+    make_llama_cli_reflection_engine(protected_review,config)->evaluate_result(protected_request,plan,protected_draft,error);
+    const auto & rendered=protected_review.requests.front().messages.back().content;
+    require(error.empty() && rendered.find(protected_request.prompt)!=std::string::npos &&
+        rendered.find(protected_draft)!=std::string::npos &&
+        rendered.find("e1 tool:composite:source:identity:repository.read")!=std::string::npos,
+        "reference projection changed the user request, draft or source evidence");
+    request.tool_output_format=common_agent_tool_output_format::compact_dsl;
+    planner_prompt_inference dsl_review;
+    dsl_review.replies={"reflect revise\nassurance_action revise_response\ntask_outcome satisfied\n"
+        "issue description=\"Missing source qualification\" correction=\"Qualify the result\" evidence_ids=[\"e1\"]"};
+    const auto dsl_verdict=make_llama_cli_reflection_engine(dsl_review,config)->evaluate_result(request,plan,"draft",error);
+    require(error.empty() && dsl_verdict.issues.size()==1 && dsl_verdict.issues[0].evidence_ids==std::vector<std::string>{evidence_id},
+        "DSL review lost evidence provenance: "+error);
+    request.tool_output_format=common_agent_tool_output_format::native;
+    auto unknown=review;unknown.replace(unknown.find("e1"),2,"e999");
+    planner_prompt_inference invalid_review;invalid_review.replies={unknown,unknown};
+    make_llama_cli_reflection_engine(invalid_review,config)->evaluate_result(request,plan,"draft",error);
+    require(!error.empty() && invalid_review.requests.size()==2 &&
+        invalid_review.requests[1].messages.back().content.find("unknown review evidence handle")!=std::string::npos,
+        "unknown review handle bypassed validation or was not returned for repair");
+
+    const auto schema=common_plan_model_facing_json_schema({"repository.read"});
+    const auto invalid=nlohmann::ordered_json{{"goal","Inspect"},{"steps",nlohmann::ordered_json::array({
+        {{"mode","reasoning"},{"as",std::string(65,'a')}}})}};
+    std::string normalized;
+    require(!common_schema_normalize_and_validate_object(invalid.dump(),schema,normalized,error) &&
+        error.find("alternative 2")!=std::string::npos && error.find("steps[0].as")!=std::string::npos,
+        "oneOf error hid the failed reasoning branch behind a missing tool field");
+    const auto reasoning_plan=nlohmann::ordered_json{{"goal","Inspect"},{"steps",nlohmann::ordered_json::array({
+        {{"mode","reasoning"},{"objective","Compare the inspected source with the request"},{"as","source_review"}}})}};
+    require(common_schema_normalize_and_validate_object(reasoning_plan.dump(),schema,normalized,error),
+        "reasoning objective was rejected by the model-facing schema: "+error);
+}
+
+static void check_method_handoff_contracts() {
+    common_agent_generation_config config;config.n_predict=512;config.planner_n_predict=512;
+    common_agent_request request;
+    request.prompt="Inspect the unresolved source and documentation.";
+    request.method_phase_choices={{"p1","durable:local"},{"p2","durable:external"}};
+    common_chat_tool tool{"repository.read","Read project source",
+        R"({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}})"};
+    {
+        struct rejected_plan_inference final : common_agent_inference {
+            std::vector<common_agent_generation_request> requests;
+            bool generate(const common_agent_generation_request & input, common_agent_generation_result & result) override {
+                requests.push_back(input);
+                result={};
+                if (requests.size()==1) {
+                    result.status=common_agent_generation_status::errored;
+                    result.stop_reason=common_agent_generation_stop_reason::error;
+                    result.output_schema_rejected=true;
+                    result.error_message="contract field steps[0].as is too long";
+                } else {
+                    result.status=common_agent_generation_status::completed;
+                    result.stop_reason=common_agent_generation_stop_reason::json_schema;
+                    result.content=R"({"method_phase":"p1","goal":"Assess evidence","steps":[{"mode":"reasoning","objective":"Compare the evidence"}]})";
+                }
+                return true;
+            }
+        } model;
+        request.tool_output_format=common_agent_tool_output_format::native;
+        std::string error;
+        const auto proposal=make_llama_cli_planner(model,config,{})->create_plan_result(request,error);
+        require(error.empty() && proposal.selected_method_phase=="durable:local" && model.requests.size()==2 &&
+            model.requests[0].json_schema==model.requests[1].json_schema &&
+            model.requests[1].messages.back().content.find("steps[0].as")!=std::string::npos &&
+            model.requests[1].messages.back().content.find("put the action in objective")!=std::string::npos,
+            "planner did not repair a schema rejection with its error and original schema: "+error);
+    }
+    {
+        request.method_remaining_new_steps=1;
+        request.tool_output_format=common_agent_tool_output_format::native;
+        planner_prompt_inference model;
+        model.replies={R"({"method_phase":"p1","goal":"Assess evidence","steps":[{"mode":"reasoning","objective":"Check whether the source establishes the requested behavior"}]})"};
+        std::string error;
+        const auto proposal=make_llama_cli_planner(model,config,{})->create_plan_result(request,error);
+        require(error.empty() && !proposal.operations.empty() && model.requests.size()==1 &&
+            model.requests[0].json_schema.find("\"maxItems\":1")!=std::string::npos,
+            "method planner did not respect the remaining durable step capacity: "+error);
+        request.method_remaining_new_steps.reset();
+    }
+    for (const bool dsl:{false,true}) {
+        request.tool_output_format=dsl?common_agent_tool_output_format::compact_dsl:common_agent_tool_output_format::native;
+        planner_prompt_inference model;
+        model.replies={dsl ? "phase invalid\nplan goal=\"Inspect source\"\nstep | open! repository.read\npath: file.cpp" :
+            R"({"method_phase":"invalid","goal":"Inspect source","steps":[{"tool":"repository.read","args":{"path":"file.cpp"}}]})",
+            dsl ? "phase p2\nplan goal=\"Inspect source\"\nstep | open! repository.read\npath: file.cpp" :
+            R"({"method_phase":"p2","goal":"Inspect source","steps":[{"tool":"repository.read","args":{"path":"file.cpp"}}]})"};
+        std::string error;
+        const auto proposal=make_llama_cli_planner(model,config,{tool})->create_plan_result(request,error);
+        require(error.empty() && proposal.selected_method_phase=="durable:external" &&
+            !proposal.operations.empty() && model.requests.size()==2,
+            "ordinary planner lost method selection or bounded correction: "+error);
+        require(model.requests.back().messages.back().content.find("p1")!=std::string::npos &&
+            model.requests.back().messages.back().content.find("p2")!=std::string::npos,
+            "method-selection repair did not retain valid choices");
+    }
+    // Method continuation must also work when reasoning needs no tool, in both
+    // compact DSL and JSON, including an empty authorized tool view.
+    for (const bool dsl:{false,true}) {
+        request.tool_output_format=dsl?common_agent_tool_output_format::compact_dsl:common_agent_tool_output_format::native;
+        planner_prompt_inference model;
+        model.replies={dsl ? "phase p1\nplan goal=\"Assess evidence\"\nstep | reason" :
+            R"({"method_phase":"p1","goal":"Assess evidence","steps":[{"mode":"reasoning"}]})"};
+        std::string error;
+        const auto proposal=make_llama_cli_planner(model,config,{})->create_plan_result(request,error);
+        require(error.empty() && proposal.selected_method_phase=="durable:local" &&
+            !proposal.operations.empty() && proposal.operations.front().step &&
+            proposal.operations.front().step->mode==common_plan_step_mode::reasoning &&
+            !proposal.operations.front().step->tool_call &&
+            std::count_if(proposal.operations.begin(),proposal.operations.end(),[](const auto & operation) {
+                return operation.step && common_plan_step_effective_mode(*operation.step)!=common_plan_step_mode::final_response;
+            })==1,
+            "tool-free method reasoning was rejected: "+error);
+    }
+    // Replay the three observed Luna response shapes through the real reviewer:
+    // omitted annotations, multiple annotations, and empty/null annotations.
+    for (int shape=0;shape<3;++shape) {
+        common_plan_state plan;plan.id="method-replay";plan.phase_review_required=true;
+        plan.observations.push_back({"source","repository.search","Partial source search",0.0f});
+        plan.observations.push_back({"outline","blueprint_outline",
+            R"([{"id":"local"},{"id":"external","depends_on":["local"]}])",0.0f});
+        auto phases=nlohmann::ordered_json::array({
+            {{"phase_id","local"},{"status","remaining"},{"reason","Read relevant source"},{"evidence_ids",{"e1"}}},
+            {{"phase_id","external"},{"status","remaining"},{"reason","Inspect primary documentation"},{"evidence_ids",nlohmann::ordered_json::array()}}});
+        if(shape==1) for(auto & phase:phases) {
+            phase["next_work_kind"]="inspect_source";phase["next_work_goal"]="Inspect relevant evidence";
+        }
+        if(shape==2) {phases[1]["next_work_kind"]=nullptr;phases[1]["next_work_goal"]="";}
+        const auto reply=nlohmann::ordered_json{{"decision","revise"},{"assurance_action","revise_plan"},
+            {"task_outcome","remaining"},{"revision_guidance",{"Read relevant source and primary documentation"}},
+            {"phase_reviews",phases}}.dump();
+        planner_prompt_inference model;model.replies={reply};
+        request.tool_output_format=common_agent_tool_output_format::native;
+        request.method_phase_choices.clear();
+        std::string error,normalized;
+        const auto review=make_llama_cli_reflection_engine(model,config,{tool})->evaluate_result(request,plan,"Insufficient evidence",error);
+        require(error.empty() && review.task_outcome=="remaining" && model.requests.size()==1,
+            "useful multi-phase reflection was rejected: "+error);
+        require(common_schema_normalize_and_validate_object(reply,model.requests.front().json_schema,normalized,error),
+            "HTTP schema rejected an optional empty/null annotation: "+error);
+    }
+}
+
 int main() {
+    check_method_handoff_contracts();
+    check_method_recovery_contracts();
     check_schema_rejection_recovery();
     check_planner_prompt_contracts();
     {
@@ -629,12 +856,22 @@ int main() {
         require(error.empty() && inference.requests.size() == 1, "bounded failed-step reflection did not parse: " + error);
         const auto & generated = inference.requests.front();
         require(generated.grammar.find("reflect abort") != std::string::npos &&
-            generated.grammar.find("reflect retry") != std::string::npos &&
+            generated.grammar.find("reflect retry") == std::string::npos &&
             generated.grammar.find("reflect accept") == std::string::npos,
-            "failed mandatory reflection escaped its declared decision grammar");
+            "non-retryable mandatory failure allowed an unchanged retry or acceptance");
         require(generated.messages.back().content.find("investigate.collect [failed]") != std::string::npos &&
             generated.messages.back().content.find("status: completed") == std::string::npos,
             "reflection lost a composite-ID failure or presented it as completed evidence");
+        auto retryable_failure = nlohmann::ordered_json::parse(plan.observations.front().summary);
+        retryable_failure["failure"]["retryable"] = true;
+        plan.observations.front().summary = retryable_failure.dump();
+        planner_prompt_inference retryable;
+        retryable.replies = {"reflect abort"};
+        make_llama_cli_reflection_engine(retryable, config, {})->evaluate_result(request, plan, "", error);
+        require(error.empty() && retryable.requests.size() == 1 &&
+            retryable.requests.front().grammar.find("reflect retry") != std::string::npos &&
+            retryable.requests.front().grammar.find("reflect accept") == std::string::npos,
+            "retryable mandatory failure lost its bounded retry choice: " + error);
         auto second = failed;
         second.id += ":second";
         plan.steps.push_back(second);

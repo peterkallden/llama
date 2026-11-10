@@ -567,6 +567,12 @@ int main() {
         changed,
         error));
     TEST_ASSERT(error.find("Choose one of") != std::string::npos);
+    common_agent_tool_call unknown_resource{"resource.read", R"({"id":"r3"})"};
+    std::string binding_error;
+    TEST_ASSERT(!common_agent_runtime_apply_safe_tool_defaults(request, unknown_resource, &binding_error));
+    TEST_ASSERT(binding_error.find("Choose one of") != std::string::npos);
+    TEST_ASSERT(unknown_resource.arguments_json == R"({"id":"r3"})");
+
 
     normalized = nlohmann::ordered_json();
     changed = false;

@@ -1243,7 +1243,9 @@ bool common_flydelta_evaluate_job(
                             "Bounded search completed without useful utility; retain trace and stop branch";
                     } else if (!common_flydelta_plan_search_continuation(
                             result.search_continuations.back(), result.evidence_depth,
-                            result.experiment_plan, error)) return false;
+                            result.experiment_plan, error,
+                            job.seed.schema_version == 2 && !job.seed.admission_ref.empty() &&
+                                job.behavior_delta_ids.empty())) return false;
                     if (!result.search_continuations.empty()) {
                         result.has_experiment_plan = true;
                         result.search_budget = result.experiment_plan.budget;

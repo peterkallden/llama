@@ -218,17 +218,17 @@ int main() {
     fetch.id = "fetch"; fetch.from_state = "start"; fetch.to_state = "fetched";
     fetch.tool_name = "web.fetch"; fetch.failure_terminal_state = "unavailable";
     fetch.handled_http_statuses = {403}; workflow.transitions = {fetch};
-    common_plan_step failed;
-    failed.id = "fetch-source"; failed.status = common_plan_step_status::failed;
-    failed.semantic_alias = "workflow-transition:fetch";
-    failed.tool_call = common_plan_tool_call{"web.fetch",
+    common_plan_step failed_fetch;
+    failed_fetch.id = "fetch-source"; failed_fetch.status = common_plan_step_status::failed;
+    failed_fetch.semantic_alias = "workflow-transition:fetch";
+    failed_fetch.tool_call = common_plan_tool_call{"web.fetch",
         R"({"url":"https://user:password@example.test/paper.pdf?token=secret#private"})"};
-    access.steps = {failed};
+    access.steps = {failed_fetch};
     access.observations.push_back({"tool:fetch-source:web.fetch", "web.fetch",
         R"({"failure":{"step_id":"fetch-source","tool":"web.fetch","http_status":403}})", 1.0f});
     common_plan_observation handled;
     std::string access_error;
-    require(common_plan_workflow_handled_failure_observation(access, failed.id,
+    require(common_plan_workflow_handled_failure_observation(access, failed_fetch.id,
         access.observations.front().id, handled, access_error), access_error.c_str());
     access.observations.push_back(handled);
     auto access_context = common_plan_render_tool_observations(access, {4096});
@@ -253,5 +253,21 @@ int main() {
         "terminal outcome lost its source or became an invented access failure");
     require(common_plan_render_tool_observations(access, {900}).size() <= 900,
         "source provenance exceeded its context allocation");
+    // A context byte limit can land inside a multibyte character. The
+    // resulting prompt must still be valid JSON/UTF-8 for HTTP inference.
+    common_plan_state unicode_plan;
+    unicode_plan.id = "unicode";
+    unicode_plan.goal = "Läs källan";
+    common_plan_step unicode_step;
+    unicode_step.id = "inspect";
+    unicode_step.objective = "Undersök återupptagning";
+    unicode_plan.steps.push_back(unicode_step);
+    auto full_step = common_plan_render_step_context(unicode_plan, unicode_step, {4096});
+    const auto accent = full_step.find("ö");
+    require(accent != std::string::npos, "Unicode fixture is missing its multibyte character");
+    auto bounded_step = common_plan_render_step_context(unicode_plan, unicode_step, {accent + 1});
+    require(bounded_step.size() <= accent + 1 &&
+        nlohmann::json(bounded_step).dump().size() > 0,
+        "bounded step context contains incomplete UTF-8");
     return 0;
 }

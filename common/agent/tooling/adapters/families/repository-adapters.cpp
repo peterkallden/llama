@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -109,7 +110,8 @@ bool write_file_atomically(const std::filesystem::path & path, const std::string
 }
 
 bool git_read(const std::string & root, const std::vector<std::string> & git_arguments,
-        std::string & output, std::string & error, bool * truncated = nullptr) {
+        std::string & output, std::string & error, bool * truncated = nullptr,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds(10000)) {
     if (!common_subproc::is_supported()) {
         error = "structured subprocess support is unavailable";
         return false;
@@ -126,8 +128,14 @@ bool git_read(const std::string & root, const std::vector<std::string> & git_arg
     output.clear();
     if (truncated) *truncated = false;
     char buffer[4096];
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (process.alive()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            process.terminate();
+            process.join();
+            error = "Git command timed out";
+            return false;
+        }
         const unsigned count = process.read_stdout(buffer, sizeof(buffer));
         if (count != 0) {
             const size_t retained = std::min<size_t>(count, 256 * 1024 - output.size());
@@ -238,8 +246,13 @@ bool common_try_register_repository_tool_adapter(
             if (bytes_file.bad()) return common_adapter_execution_failure(
                 "tool.repository.read.hash_failed", "repository.read could not hash the complete file",
                 "The selected file could not be read completely.");
+            const size_t total_lines = static_cast<size_t>(std::count(bytes.begin(), bytes.end(), '\n')) +
+                (!bytes.empty() && bytes.back() != '\n' ? 1 : 0);
+            const bool has_more = static_cast<size_t>(end) < total_lines;
             const json output = {{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()},
-                {"lines", lines}, {"sha256", "sha256:" + hash_sha256_hex(bytes.data(), bytes.size())}};
+                {"lines", lines}, {"sha256", "sha256:" + hash_sha256_hex(bytes.data(), bytes.size())},
+                {"total_lines", total_lines}, {"requested_start_line", start}, {"requested_end_line", end},
+                {"has_more", has_more}, {"next_start_line", has_more ? json(end + 1) : json(nullptr)}};
             if (output.dump().size() > max_bytes) return common_adapter_limit_failure(
                 "tool.repository.read.output_limit", "repository.read line output exceeds the response limit",
                 "Reduce the requested line range or read a smaller portion of the file.");
@@ -404,7 +417,7 @@ bool common_try_register_repository_tool_adapter(
                 {"sha256", descriptor.sha256}});
         }, error);
     } else if ((definition.executor_id == "builtin.repository.search" || definition.executor_id == "builtin.workspace.search") && !bindings.repository_root.empty()) {
-        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+        installed = common_adapter_register_definition(definition, registry, [bindings, max_result_bytes = definition.max_result_bytes](const std::string & input) {
             std::string error; json arguments;
             if (!common_adapter_parse_object(input, arguments, error) || !arguments.contains("query") || !arguments["query"].is_string()) {
                 if (error.empty()) error = "repository.search requires a query";
@@ -426,34 +439,103 @@ bool common_try_register_repository_tool_adapter(
             const bool is_directory = !is_file && std::filesystem::is_directory(root, fs_error);
             if (fs_error) return common_adapter_failure("tool.repository.search.path_error", common_tool_failure_class::execution, false, "Repository search path could not be inspected.", fs_error.message());
             if (!is_file && !is_directory) return common_adapter_validation_failure("tool.repository.search.invalid_path_type", "repository.search path must be a file or directory", "Repository search path must be a text file or directory.");
+            // Bound actual work, not just returned matches. Use Git's source
+            // inventory so ignored build/cache trees do not consume the scan.
+            // Non-Git workspaces retain bounded filesystem search.
+            constexpr size_t max_entries = 8192;
+            constexpr size_t max_scan_bytes = 16U * 1024U * 1024U;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
             json matches = json::array();
+            size_t visited_entries = 0, scanned_files = 0, scanned_bytes = 0, skipped_files = 0;
+            std::string stop_reason, method = is_file ? "file" : "filesystem";
+            const auto within_budget = [&]() {
+                if (std::chrono::steady_clock::now() >= deadline) stop_reason = "time_limit";
+                else if (visited_entries >= max_entries) stop_reason = "entry_limit";
+                else if (scanned_bytes >= max_scan_bytes) stop_reason = "byte_limit";
+                return stop_reason.empty();
+            };
             const auto scan_file = [&](const std::filesystem::path & candidate) {
+                if (!within_budget()) return;
+                ++visited_entries;
                 std::error_code candidate_error;
-                if (!std::filesystem::is_regular_file(candidate, candidate_error) || candidate_error) return;
+                // Recursive discovery must never read a link outside the
+                // approved root, including links found in Git's inventory.
+                const auto status = std::filesystem::symlink_status(candidate, candidate_error);
+                if (candidate_error || !std::filesystem::is_regular_file(status)) return;
                 const auto size = std::filesystem::file_size(candidate, candidate_error);
-                if (candidate_error || size > 512 * 1024 || !text_file(candidate)) return;
+                if (candidate_error || size > 512 * 1024 || !text_file(candidate)) { ++skipped_files; return; }
+                if (size > max_scan_bytes - scanned_bytes) { stop_reason = "byte_limit"; return; }
+                scanned_bytes += static_cast<size_t>(size);
+                ++scanned_files;
                 std::ifstream file(candidate);
+                if (!file) { ++skipped_files; return; }
                 std::string line;
-                for (int number = 1; std::getline(file, line) && matches.size() < static_cast<size_t>(limit); ++number) {
+                for (int number = 1; std::getline(file, line); ++number) {
+                    if (std::chrono::steady_clock::now() >= deadline) { stop_reason = "time_limit"; break; }
                     if (line.find(query) == std::string::npos) continue;
-                    matches.push_back({{"path", candidate.lexically_relative(repository_root).generic_string()},
-                        {"line", number}, {"preview", line.substr(0, 512)}});
+                    const json match = {{"path", candidate.lexically_relative(repository_root).generic_string()},
+                        {"line", number}, {"preview", line.substr(0, 256)}};
+                    if (max_result_bytes > 0 && matches.dump().size() + match.dump().size() + 512 > max_result_bytes) {
+                        stop_reason = "output_limit"; break;
+                    }
+                    matches.push_back(match);
+                    if (matches.size() >= static_cast<size_t>(limit)) { stop_reason = "result_limit"; break; }
                 }
+                if (file.bad()) ++skipped_files;
             };
             if (is_file) {
                 scan_file(root);
             } else {
-                std::filesystem::recursive_directory_iterator it(
-                    root, std::filesystem::directory_options::skip_permission_denied, fs_error);
-                const std::filesystem::recursive_directory_iterator end;
-                if (fs_error) return common_adapter_failure("tool.repository.search.directory_error", common_tool_failure_class::execution, false, "Repository search could not open the requested directory.", fs_error.message());
-                while (it != end && matches.size() < static_cast<size_t>(limit)) {
-                    scan_file(it->path());
-                    it.increment(fs_error);
-                    if (fs_error) return common_adapter_failure("tool.repository.search.directory_error", common_tool_failure_class::execution, false, "Repository search could not continue through the requested directory.", fs_error.message());
+                std::string inventory, inventory_error;
+                bool inventory_truncated = false;
+                const auto relative = root.lexically_relative(repository_root).generic_string();
+                // Literal pathspecs prevent a model-selected directory name
+                // from widening the search through Git pathspec syntax.
+                const bool git_inventory = git_read(repository_root.string(),
+                    {"--literal-pathspecs", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", relative},
+                    inventory, inventory_error, &inventory_truncated, std::chrono::milliseconds(1500));
+                if (git_inventory) {
+                    method = "git_worktree";
+                    std::set<std::string> seen;
+                    size_t offset = 0;
+                    while (offset < inventory.size() && within_budget()) {
+                        const auto end = inventory.find('\0', offset);
+                        if (end == std::string::npos) { inventory_truncated = true; break; }
+                        const auto relative_path = inventory.substr(offset, end - offset);
+                        offset = end + 1;
+                        if (relative_path.empty() || !seen.insert(relative_path).second) continue;
+                        std::filesystem::path candidate;
+                        std::string path_error;
+                        if (!repository_path(repository_root.string(), relative_path, candidate, path_error)) {
+                            ++skipped_files; continue;
+                        }
+                        const auto requested_relative = candidate.lexically_relative(root);
+                        if (requested_relative.empty() || *requested_relative.begin() == "..") { ++skipped_files; continue; }
+                        // Reject symlink entries before canonicalization hides
+                        // their identity; approved explicit file reads differ.
+                        if (std::filesystem::is_symlink(repository_root / relative_path, fs_error)) { ++skipped_files; continue; }
+                        scan_file(candidate);
+                    }
+                    if (stop_reason.empty() && inventory_truncated) stop_reason = "inventory_limit";
+                } else {
+                    std::filesystem::recursive_directory_iterator it(
+                        root, std::filesystem::directory_options::skip_permission_denied, fs_error), end;
+                    if (fs_error) return common_adapter_failure("tool.repository.search.directory_error", common_tool_failure_class::execution, false,
+                        "Repository search could not open the requested directory.", fs_error.message());
+                    while (it != end && within_budget()) {
+                        if (it->path().filename() == ".git") { it.disable_recursion_pending(); ++visited_entries; }
+                        else scan_file(it->path());
+                        if (!stop_reason.empty()) break;
+                        it.increment(fs_error);
+                        if (fs_error) return common_adapter_failure("tool.repository.search.directory_error", common_tool_failure_class::execution, false,
+                            "Repository search could not continue through the requested directory.", fs_error.message());
+                    }
                 }
             }
-            return common_adapter_success_json({{"matches", matches}});
+            return common_adapter_success_json({{"matches", matches}, {"complete", stop_reason.empty() && skipped_files == 0},
+                {"stop_reason", stop_reason}, {"enumeration_method", method}, {"scanned_files", scanned_files},
+                {"scanned_bytes", scanned_bytes}, {"skipped_files", skipped_files},
+                {"coverage", "bounded_text_search"}});
         }, error);
     } else if (definition.executor_id == "builtin.workspace.patch" && !bindings.repository_root.empty()) {
         installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {

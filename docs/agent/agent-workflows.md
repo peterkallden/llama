@@ -30,25 +30,19 @@ This page describes runtime workflows (not GitHub Actions workflows).
 
 ## Development methods and knowledge gaps
 
-The starter package `agent-workflows-starter@v48` adds versioned
-`repository-change-v4` and `regression-repair-v4` blueprints, retaining the
-older definitions for existing installations. The feature blueprint makes a
-material knowledge-gap assessment explicit between orientation and design.
-The regression blueprint separates failure evidence and competing hypotheses
-from an optional, authorized repair. Both share procedures for local-first
-source investigation, diagnosis, execution authority and verification
-evidence. These new blueprints deliberately have no fixed workflow binding:
-the existing version-1 workflows have restricted tool envelopes that do not
-provide the optional research path. The host's ordinary planning route chooses
-among the currently authorized tools instead.
+The JSON starter package supplies the current development methods for repository
+investigation, feature implementation, regression repair, compile diagnosis and
+runtime diagnosis. The older development blueprints and one-action repository
+inspection/change/regression workflows have been removed from the current
+package. The built-in fallback no longer installs development methods; load the
+JSON starter package to make them available. Its small dataset/OpenAPI fallback
+and shared safety procedures remain available.
 
-`development-compile-diagnosis-v1` and `development-runtime-diagnosis-v1` are
-standalone blueprints for build failures and runtime symptoms respectively.
-They have no executable workflow binding: the normal blueprint planning path
-chooses available, authorized tools. They can report a diagnosis without
-modifying code, and a denied, unavailable or unrequested build is not a
-successful verification. These templates do not independently authorize
-workspace changes, commands or web access.
+Development methods share local-first source investigation, diagnosis, execution
+authority and verification procedures. They can report a diagnosis without
+modifying code, and a denied, unavailable or unrequested build is not successful
+verification. Templates do not independently authorize workspace changes,
+commands or web access.
 
 The model assesses whether an external question matters and chooses from the
 host's available sources. The shared procedure recommends checking applicable
@@ -57,12 +51,142 @@ does not trigger a provider or a web search. Findings carry source and version
 context through existing plan observations and resource references. Graph
 lookup and policy-gated proposals remain optional.
 
-These definitions do not implement a callable framework-research subworkflow
-or an automatic return from research to an enclosing development phase.
-Continuation links transition between workflow segments; the present package
-does not claim a structured `DevelopmentEvidence` object or new cross-workflow
-return contract. Model-backed route choice and execution still need separate
-verification in a host with the corresponding tools and permissions.
+Research uses the existing escalation and evidence bridge described below;
+there is no separate callable framework-research workflow or subworkflow stack.
+Model-backed route choice and execution need separate verification in a host
+with the corresponding tools and permissions.
+
+### Current development methods (starter v49)
+
+Version 49 adds `repository-change-v5`, `regression-repair-v5`,
+`repository-investigation-v3`, `development-compile-diagnosis-v2` and
+`development-runtime-diagnosis-v2`. Only these current development definitions
+are supplied by this starter package. Shared code overview and entry-point
+analysis methods remain separate. The generic `supersedes_blueprints` contract
+is still available to other imported libraries; this package no longer needs
+replacement lists for definitions it does not contain.
+
+Saved task history and historical library import receipts are not deleted.
+Library-bound resume still requires its authorized historical definition;
+removing current starter entries does not bypass that identity check.
+
+These methods deliberately retain the ordinary planner instead of binding to
+the one-action version-1 development workflows. `phase_review_required` enables
+a generic method contract over the retained `blueprint_outline`: the model
+assesses exact phase IDs in dependency order, with `satisfied`, `not_needed`,
+`remaining` or `blocked`, an explanation and existing evidence references.
+The host validates identity, dependencies and provenance, then stores versioned
+`method_phase_review` observations in the same task plan. SQLite and Cozo keep
+both method metadata and progress. A phase decision is not a tool receipt or
+proof that code changed; it does not alter learning, authority or verification.
+
+After a bounded slice, remaining feasible work returns through the existing
+reflection plan-repair function to the normal planner. It receives the current
+phase decisions and observations, proposes a bounded slice, and the host
+remaps identities and checks the ordinary route and plan policy before adding
+work. A phase may need only reasoning. Failed mandatory calls remain failed;
+a corrected call can replace its failed node with fresh arguments, retaining
+old diagnostics. Identical blind replays and ambiguous replacements fail closed.
+No phase decision silently handles a mandatory execution failure.
+
+New work always receives fresh execution identities, even if it uses the same
+tool as an earlier failed call. Replacement requires an explicit host-issued
+`repair` handle (`repair=r1` in DSL, or `"repair":"r1"` on a JSON tool step).
+Only failed steps are offered as targets. A replacement retains the target's
+tool, mandatory/evidence requirements, provenance and dependencies. Omitting the handle
+does not permit an identical replay of a failed call. The host maps the slice's
+local identities and result bindings to execution identities before comparing
+failed calls and checking the ordinary plan policy. No repair handles are persisted
+or client-selected.
+
+A method slice rejected by host validation is never published or executed.
+The same planner may receive one additional attempt with the validation error,
+retained observations and unchanged tool authority. Transport failures do not
+trigger this retry. Planning occurs in the existing `frame` cognitive mode;
+a descriptive `next_action` supplies guidance rather than standing in for new
+executable work.
+
+The model's review view uses short request-local evidence handles such as
+`e1`. The host restores exact durable observation IDs before checklist and
+phase validation or persistence. Unknown handles fail validation without fuzzy
+matching. Only host-owned reference fields are projected; user requests, drafts
+and source text are kept intact. The mapping never modifies the stored plan.
+Reasoning steps use the configured generation budget rather than an implicit
+128-token ceiling. They receive one bounded structural regeneration for an
+invalid or truncated JSON result, retain local schema validation, and report
+decoded tokens from both attempts. Context admission includes the configured
+output reservation. Artifact-section generation keeps its existing contract.
+
+Material knowledge gaps can use existing research escalation. Its completion
+observation and resource references return to the same task, whose later phase
+reviews can use that evidence. This is not a new callable research workflow or
+an arbitrary subworkflow stack. The specialized compile/runtime methods share
+diagnosis procedures with implementation work; no error-message dictionary
+selects them. Regression repair explicitly retains its guard phase, and source
+snapshot, hash, patch-receipt and post-change verification procedures remain in
+force wherever those host tools are available and authorized.
+
+Phase execution decisions consume existing runtime, tool and configured plan
+revision budgets. They do not consume final-answer wording-repair rounds.
+For unfinished work, reflection assesses all relevant phases and describes missing
+evidence or execution in reasons and revision guidance. It may leave several
+phases unresolved. The host derives a dependency-ready frontier; the existing
+planner selects one issued `pN` handle and plans a bounded slice using its normal
+authorized tool contracts. JSON planning uses `method_phase`; compact DSL adds
+`phase pN` before the ordinary plan. The host resolves the handle and retains
+its durable phase and turn identity separately from the model-facing step alias. It does not interpret request
+keywords or choose an evidence provider. Legacy `next_work_kind` and
+`next_work_goal` annotations are optional, may be empty or null in JSON, and do
+not select execution.
+
+A third consecutive equivalent operation in the same unresolved phase is
+rejected when two completed read-only calls with a known turn ID used the same arguments and
+their complete, persisted observations have the same JSON result. The planner gets one bounded correction with that specific error.
+Changed arguments (including pagination), changed results, and a different
+intervening operation are allowed. Two identical completed reasoning steps in the same turn also cannot justify
+an identical reasoning-only continuation in that phase. The guard is skipped if the host has no turn ID, since the user may be explicitly
+asking for a refresh. These checks bound repeated operations; they do not claim to recognize
+all semantically equivalent searches or prove source freshness.
+Final acceptance still requires the answer-review budget and a decision for
+every method phase. Blocked phases require a blocked user outcome; disabled
+review cannot bypass pending phases. This does not increase host execution
+budgets or make unavailable modification/build/test operations available.
+
+The model-free `llama-agent-development-method-smoke` exercises local inspection,
+phase persistence, normal-planner continuation to an external source and final
+review using deterministic host stubs. Run it after building via
+`scripts/test-agent-development-method-smoke.sh` with `LLAMA_BUILD_DIR` pointing
+to the intended build. It does not establish live Luna quality, network access,
+actual code editing or compiler/test success; those need separate model-backed
+and authorized verification.
+
+### Development execution and recovery boundaries
+
+Route selection exposes each candidate's authorized operation families. A blueprint
+can guide research only when the host also exposes the corresponding tools;
+listed tools do not grant command execution or workspace modification authority.
+
+Repository and workspace text search use a bounded worktree inventory (Git ignores
+apply when available), with a bounded filesystem fallback excluding `.git`.
+Search returns `complete`, `stop_reason`, scan counters and the enumeration method.
+A hit limit, scan limit or skipped file does not establish exhaustive absence;
+narrow the requested path or use the code-analysis tools for further inspection.
+Line reads expose `total_lines`, `has_more` and `next_start_line` independently of
+resource byte/chunk continuation. Resource handles must come from host-issued
+resources; an unknown handle is a binding error, not a missing source-file URI.
+
+Research source selection separates an exact user quote from the registered source
+identity. The model interprets the quoted request against source descriptions;
+the host checks quote provenance and authorized identity. No keyword aliases map
+natural language to providers. An unavailable explicitly requested provider must
+be disclosed rather than silently replaced with general web search.
+
+Response review distinguishes the full user task (`satisfied`, `remaining`,
+`blocked`) from completion of scheduled plan steps. Remaining feasible work needs
+plan repair or authorized evidence gathering; merely rewording an incomplete
+answer is not completion. A genuinely blocked result must disclose its limit.
+An explicitly non-retryable host failure cannot be reset unchanged by reflection.
+These checks preserve existing budgets and do not authorize additional tools.
 
 ## Hypothesis inquiry
 

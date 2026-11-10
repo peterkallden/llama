@@ -91,3 +91,22 @@ inline void verify_atomic_route_entry(common_plan_store & store) {
     require_route_entry(plan->steps[2].tool_call && plan->steps[2].tool_call->arguments_json == R"({"id":"W2"})" &&
         common_plan_step_dependencies_ready(*plan, plan->steps[2]), "committed candidate identity or readiness was lost");
 }
+
+inline void write_method_progress(common_plan_store & store) {
+    common_plan_state plan;plan.id="method-progress-roundtrip";plan.source_revision="method@v2";
+    plan.phase_review_required=true;plan.supersedes_blueprints={"method-v1"};
+    common_plan_step step;step.id="lookup";step.title="Lookup";plan.steps={step};
+    plan.observations.push_back({"method-outline","blueprint_outline",
+        R"([{"id":"orient","depends_on":[]},{"id":"knowledge","depends_on":["orient"]}])",0.0f});
+    plan.observations.push_back({"method-review","method_phase_review",
+        R"({"schema":"method-phase-review.v1","method_revision":"method@v2","phases":{"orient":{"status":"satisfied","reason":"Inspected local source","evidence_ids":[]}}})",0.0f});
+    std::string error;require_route_entry(store.create(plan,error),error);
+}
+inline void verify_method_progress(common_plan_store & store) {
+    std::string error;const auto plan=store.get("method-progress-roundtrip",error);
+    require_route_entry(plan && plan->phase_review_required && plan->source_revision=="method@v2" &&
+        plan->supersedes_blueprints==std::vector<std::string>{"method-v1"} && plan->observations.size()==2 &&
+        plan->observations.back().source=="method_phase_review" &&
+        plan->observations.back().summary.find("Inspected local source")!=std::string::npos,
+        "method metadata or phase progress did not survive store restart");
+}

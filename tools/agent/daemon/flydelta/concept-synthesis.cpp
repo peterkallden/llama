@@ -21,25 +21,38 @@ static bool daemon_flydelta_run_concept_synthesis_at_layer(
         error = "MODEL_ADAPTER_CAPABILITY_UNAVAILABLE: FlyDelta teaching material runtime is not bound";
         return false;
     }
+    if (!daemon_flydelta_validate_concept_admission(*provider, job, error)) return false;
     common_flydelta_teaching_material_group group;
     const bool challenge = !job.concept_localization.layers.empty();
     const auto & material_store = *provider->teaching_material_runtime;
     if (!(challenge ? material_store.resolve_layer_group(job.teaching_material_group_ref,
                 requested_layer, group, error, common_flydelta_concept_localization_material_key(job))
             : material_store.resolve_ready_group(job.teaching_material_group_ref, group, error))) return false;
+    if (group.positive_only && job.seed.schema_version == 1) {
+        common_flydelta_teaching_material_group selected;
+        bool available = false;
+        if (!material_store.resolve_group_for_family(group.teaching_key, group.behavior_key,
+                selected, available, error, common_flydelta_teaching_material_mode::automatic, &job.seed.scope)) return false;
+        if (!available || selected.group_ref != group.group_ref) {
+            error = "FlyDelta automatic concept material selection changed";
+            return false;
+        }
+    }
+    if (!provider->teaching_material_runtime->contrast_admissible(group, error, job.seed.verifier_contract_revision)) return false;
     if (!group.trajectory_material_ready || group.trajectory_refs.size() < group.minimum_trajectories) {
         error = "FlyDelta concept synthesis requires complete trajectory material";
         return false;
     }
-    if (challenge && (group.compatibility_key != common_flydelta_teaching_material_compatibility_key(
-                provider->teaching_material_runtime->identity()) ||
-            group.identity.model_profile_fingerprint != job.seed.model_profile_fingerprint ||
-            group.identity.tokenizer_fingerprint != job.seed.tokenizer_fingerprint ||
-            group.identity.template_fingerprint != job.seed.template_fingerprint ||
-            group.identity.execution_context_fingerprint != job.seed.execution_context_fingerprint ||
-            group.identity.capture_layout_revision != provider->capture_layout_revision)) {
-        error = "FlyDelta localization synthesis material has an incompatible runtime identity";
-        return false;
+    if (challenge || group.positive_only) {
+        if (group.compatibility_key != common_flydelta_teaching_material_compatibility_key(
+                provider->teaching_material_runtime->identity())) {
+            error = "FlyDelta localization synthesis material has an incompatible host identity";
+            return false;
+        }
+        if (!common_flydelta_teaching_material_execution_matches(group.identity,
+                job.seed.model_profile_fingerprint, job.seed.tokenizer_fingerprint,
+                job.seed.template_fingerprint, job.seed.execution_context_fingerprint,
+                provider->capture_layout_revision, error)) return false;
     }
     if (group.relation_refs.empty()) {
         error = "FlyDelta concept synthesis has no source relation";
@@ -105,8 +118,108 @@ static bool daemon_flydelta_run_concept_synthesis_at_layer(
     spec.scope_fingerprint = group.identity.scope_fingerprint;
     spec.host_approved = relation.host_approved;
     spec.redaction_attested = true;
-    spec.require_control = true;
+    spec.require_control = !group.positive_only;
     if (!common_flydelta_concept_spec_validate(spec, error)) return false;
+
+    if (group.positive_only) {
+        std::vector<common_flydelta_concept_prototype_sample> positive;
+        std::set<std::string> tasks;
+        for (const auto & reference : group.trajectory_refs) {
+            json value;
+            if (!daemon_flydelta_read_json(*provider, reference, value, error)) return false;
+            try {
+                const auto relation_ref = value.value("source_ref", "");
+                daemon_flydelta_concept_relation_material source;
+                if (std::find(group.relation_refs.begin(), group.relation_refs.end(), relation_ref) == group.relation_refs.end() ||
+                        !daemon_flydelta_parse_teaching_relation(*provider, relation_ref, source, error)) {
+                    if (error.empty()) error = "positive capture has no authorized source relation";
+                    return false;
+                }
+                if (!source.relation.positive_only || !source.relation.host_approved ||
+                        source.relation.teaching_key != group.teaching_key || source.relation.behavior_key != group.behavior_key ||
+                        source.relation.scope.namespace_id != job.seed.scope.namespace_id ||
+                        source.relation.scope.project_id != job.seed.scope.project_id ||
+                        source.relation.scope.session_id != job.seed.scope.session_id ||
+                        !tasks.insert(source.relation.task_fingerprint).second ||
+                        value.value("schema_version", 0) != 2 || !value.value("positive_only", false) ||
+                        !value.value("host_authorized", false) || !value.value("experimental_only", false) ||
+                        value.value("learning_eligible", true) || value.value("group_ref", "") != group.group_ref ||
+                        value.value("source_relation_id", "") != source.relation.id ||
+                        value.value("task_fingerprint", "") != source.relation.task_fingerprint ||
+                        value.value("execution_context_fingerprint", "") != group.identity.execution_context_fingerprint ||
+                        value.value("verifier_revision", "") != group.identity.verifier_revision ||
+                        (challenge && value.value("capture_set_ref", "") != common_flydelta_concept_localization_material_key(job))) {
+                    error = "positive capture provenance differs from its host material group";
+                    return false;
+                }
+                if (challenge && std::none_of(group.layer_trajectories.begin(), group.layer_trajectories.end(),
+                        [&](const auto & binding) {
+                            return binding.layer_index == target.layer_index && binding.relation_ref == relation_ref &&
+                                binding.trajectory_ref == reference &&
+                                binding.capture_set_ref == common_flydelta_concept_localization_material_key(job);
+                        })) {
+                    error = "positive capture is not bound to the requested localization layer";
+                    return false;
+                }
+                common_agent_generation_request context;
+                if (!daemon_flydelta_parse_context(*provider, source.relation.conditioned_ref, context, error)) return false;
+                const auto input = common_chat_msgs_to_json_oaicompat(context.messages).dump();
+                const auto fingerprint = hash_sha256_hex(input.data(), input.size());
+                if (value.value("observation_fingerprint", "") != fingerprint) {
+                    error = "positive capture does not match its immutable source input";
+                    return false;
+                }
+                common_flydelta_concept_prototype_sample sample;
+                sample.id = value.value("id", "");
+                sample.capture_ref = value.value("capture_ref", "");
+                sample.semantic_anchor = value.value("semantic_anchor", "");
+                sample.model_profile_fingerprint = value.value("model_profile_fingerprint", "");
+                sample.tokenizer_fingerprint = value.value("tokenizer_fingerprint", "");
+                sample.template_fingerprint = value.value("template_fingerprint", "");
+                sample.scope_fingerprint = value.value("scope_fingerprint", "");
+                sample.capture_layout_revision = value.value("capture_layout_revision", "");
+                sample.verifier_ref = source.relation.verifier_ref;
+                sample.layer_index = value.value("layer_index", -1);
+                sample.values = value.value("values", std::vector<float>{});
+                sample.host_verified = source.relation.host_approved; // authorization, not behavioral success
+                sample.independent = true; // unique source inputs checked by the builder
+                sample.observation_fingerprint = fingerprint;
+                if (sample.layer_index != target.layer_index || sample.values.size() != provider->model_n_embd) {
+                    error = "positive capture has an incompatible layer or dimension";
+                    return false;
+                }
+                positive.push_back(std::move(sample));
+            } catch (const std::exception & exception) {
+                error = std::string("invalid positive capture resource: ") + exception.what();
+                return false;
+            }
+        }
+        common_flydelta_positive_only_build_config config;
+        config.dimension = provider->model_n_embd;
+        config.min_samples = std::max<size_t>(3, group.minimum_trajectories);
+        config.max_samples = 64;
+        if (challenge) config.minimum_median_alignment = std::max(
+            config.minimum_median_alignment, job.concept_localization.minimum_alignment);
+        common_flydelta_concept_candidate candidate;
+        common_flydelta_positive_only_build_status status;
+        if (!common_flydelta_build_positive_only_candidate(spec, config, positive, candidate, error, &status)) {
+            if (!challenge || status != common_flydelta_positive_only_build_status::unstable) return false;
+            assessment.layer_index = target.layer_index;
+            assessment.trajectories = positive.size();
+            assessment.usable = false;
+            assessment.reason = error;
+            error.clear();
+            return true;
+        }
+        assessment.layer_index = target.layer_index;
+        assessment.trajectories = positive.size();
+        assessment.median_alignment = candidate.median_alignment;
+        assessment.median_signal_norm = candidate.representation_diagnostics.resultant_norm;
+        assessment.usable = true;
+        assessment.reason = "positive-only representation; behavior unverified";
+        candidates.push_back(std::move(candidate));
+        return true;
+    }
 
     std::vector<common_flydelta_concept_trajectory> trajectories;
     trajectories.reserve(group.trajectory_refs.size());

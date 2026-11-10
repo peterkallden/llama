@@ -84,6 +84,32 @@ int main() {
     CHECK(common_flydelta_experiment_job_from_json(pipeline_text, pipeline_parsed, error));
     CHECK(pipeline_parsed.kind == common_flydelta_experiment_job_kind::search_pipeline);
     CHECK(pipeline_parsed.whirlpool_global_probes_per_round == 1);
+    // A versioned host admission is experimental context, not fabricated
+    // contrast material. It round-trips without acquiring training authority.
+    auto concept_job = job;
+    concept_job.seed.schema_version = 2;
+    concept_job.seed.source = common_adaptation_evidence_source::user_taught_concept;
+    concept_job.seed.teaching_key = "concept:host";
+    concept_job.seed.admission_ref = "resource:host-admission";
+    concept_job.seed.evidence_ref = concept_job.seed.admission_ref;
+    concept_job.seed.verifier_contract_revision = "verifier:v1";
+    concept_job.seed.transaction_ids.clear();
+    concept_job.capture_manifest_ids.clear();
+    concept_job.behavior_delta_ids.clear();
+    concept_job.teaching_material_group_ref = "material:host";
+    concept_job.concept_synthesis_ref = "resource:synthesis";
+    CHECK(common_flydelta_experiment_job_validate(concept_job, 8, error));
+    common_flydelta_experiment_job concept_restored;
+    CHECK(common_flydelta_experiment_job_from_json(common_flydelta_experiment_job_to_json(concept_job), concept_restored, error));
+    CHECK(concept_restored.seed.schema_version == 2 && concept_restored.seed.admission_ref == concept_job.seed.admission_ref);
+    CHECK(concept_restored.concept_synthesis_ref == concept_job.concept_synthesis_ref);
+    CHECK(concept_restored.seed.transaction_ids.empty() && concept_restored.behavior_delta_ids.empty());
+    auto invalid_concept = concept_job;
+    invalid_concept.seed.transaction_ids = {"fabricated-credit"};
+    CHECK(!common_flydelta_experiment_job_validate(invalid_concept, 8, error));
+    invalid_concept = concept_job;
+    invalid_concept.kind = common_flydelta_experiment_job_kind::evaluation;
+    CHECK(!common_flydelta_experiment_job_validate(invalid_concept, 8, error));
     auto legacy_job = job;
     legacy_job.whirlpool_global_probes_per_round = 0;
     const auto legacy_text = common_flydelta_experiment_job_to_json(legacy_job);

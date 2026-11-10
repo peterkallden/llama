@@ -238,6 +238,8 @@ json serialize_plan(const common_plan_state & plan) {
         if (step.selected_tool) value["selected_tool"] = *step.selected_tool;
         if (step.result_summary) value["result_summary"] = *step.result_summary;
         if (step.semantic_alias) value["semantic_alias"] = *step.semantic_alias;
+        if (step.method_phase_id) value["method_phase_id"] = *step.method_phase_id;
+        if (step.method_turn_id) value["method_turn_id"] = *step.method_turn_id;
         if(step.artifact_binding)value["artifact_binding"]={{"transition_id",step.artifact_binding->transition_id},{"profile_ref",step.artifact_binding->profile_ref},{"profile_revision",step.artifact_binding->profile_revision},{"section_id",step.artifact_binding->section_id},{"snapshot_id",step.artifact_binding->snapshot_id}};
         if (step.tool_call) value["tool_call"] = {{"name", step.tool_call->name}, {"arguments_json", step.tool_call->arguments_json}};
         if (step.tool_call) common_plan_tool_result_requirement_to_json(*step.tool_call, value["tool_call"]);
@@ -283,7 +285,7 @@ json serialize_plan(const common_plan_state & plan) {
         {"target_workflow_ref", item.target_workflow_ref},
         {"target_workflow_revision", item.target_workflow_revision}, {"source_observation_id", item.source_observation_id}});
     json procedures = plan.procedure_refs;
-    json value = {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"selection_description", plan.selection_description}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"workflow_policy", workflow_policy_name(plan.workflow_policy)}, {"procedure_refs", procedures}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"workflow_bindings", bindings}, {"workflow_continuation_history", continuation_history}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
+    json value = {{"id", plan.id}, {"namespace_id", plan.namespace_id}, {"session_id", plan.session_id}, {"project_id", plan.project_id}, {"turn_id", plan.turn_id}, {"source_revision", plan.source_revision}, {"selection_description", plan.selection_description}, {"phase_review_required", plan.phase_review_required}, {"supersedes_blueprints", plan.supersedes_blueprints}, {"kind", kind_name(plan.kind)}, {"derived_from_plan_id", plan.derived_from_plan_id}, {"scope", scope_name(plan.scope)}, {"status", status_name(plan.status)}, {"purpose", plan.purpose}, {"goal", plan.goal}, {"success_criteria", plan.success_criteria}, {"required_capabilities", plan.required_capabilities}, {"workflow_policy", workflow_policy_name(plan.workflow_policy)}, {"procedure_refs", procedures}, {"steps", steps}, {"constraints", constraints}, {"assumptions", assumptions}, {"observations", observations}, {"workflow_bindings", bindings}, {"workflow_continuation_history", continuation_history}, {"active_step_id", plan.active_step_id}, {"next_action", plan.next_action}, {"version", plan.version}, {"created_at", plan.created_at}, {"updated_at", plan.updated_at}};
     if (plan.selected_workflow) value["selected_workflow"] = common_plan_workflow_binding_to_json(*plan.selected_workflow);
     if (plan.workflow_definition) value["workflow_definition"] = serialize_workflow_definition(*plan.workflow_definition);
     if (plan.route_binding) value["route_binding"] = {
@@ -313,6 +315,8 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
     plan.turn_id = value.value("turn_id", std::string{});
     plan.source_revision = value.value("source_revision", std::string{});
     plan.selection_description = value.value("selection_description", std::string{});
+    plan.phase_review_required = value.value("phase_review_required", false);
+    plan.supersedes_blueprints = value.value("supersedes_blueprints", std::vector<std::string>{});
     plan.kind = parse_kind(value.value("kind", std::string("task")));
     plan.scope = parse_scope(value.value("scope", std::string("turn")));
     plan.status = parse_status(value.value("status", std::string("proposed")));
@@ -344,6 +348,8 @@ bool deserialize_plan(const std::string & text, common_plan_state & plan) {
         if (item.contains("selected_tool") && item["selected_tool"].is_string()) step.selected_tool = item["selected_tool"].get<std::string>();
         if (item.contains("result_summary") && item["result_summary"].is_string()) step.result_summary = item["result_summary"].get<std::string>();
             if (item.contains("semantic_alias") && item["semantic_alias"].is_string()) step.semantic_alias = item["semantic_alias"].get<std::string>();
+        if (item.contains("method_phase_id") && item["method_phase_id"].is_string()) step.method_phase_id = item["method_phase_id"].get<std::string>();
+        if (item.contains("method_turn_id") && item["method_turn_id"].is_string()) step.method_turn_id = item["method_turn_id"].get<std::string>();
             if(item.contains("artifact_binding")&&item["artifact_binding"].is_object()){const auto & b=item["artifact_binding"];step.artifact_binding=common_plan_artifact_binding{b.value("transition_id",std::string{}),b.value("profile_ref",std::string{}),b.value("profile_revision",std::string{}),b.value("section_id",std::string{}),b.value("snapshot_id",std::string{})};}
             else step.artifact_binding=common_plan_artifact_binding_effective(step);
         if (item.contains("tool_call") && item["tool_call"].is_object()) step.tool_call = common_plan_tool_call{item["tool_call"].value("name", std::string{}), item["tool_call"].value("arguments_json", std::string("{}"))};

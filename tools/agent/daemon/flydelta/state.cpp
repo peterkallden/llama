@@ -74,11 +74,13 @@ bool daemon_flydelta_bind_state_callbacks(
     provider->resolve_representation_augmentation_state_for_job =
         callbacks.resolve_representation_augmentation_state_for_job;
     const auto resolve_bootstrap_state = callbacks.resolve_bootstrap_zoom_state;
-    callbacks.resolve_search_orchestration_state = [provider, resolve_bootstrap_state](
+    callbacks.resolve_search_orchestration_state = [weak_provider = std::weak_ptr<daemon_flydelta_resource_provider>(provider), resolve_bootstrap_state](
             const std::string & state_ref,
             common_flydelta_experiment_plan & plan,
             common_flydelta_utility_history & history,
             std::string & state_error) {
+        const auto provider = weak_provider.lock();
+        if (!provider) { state_error = "FlyDelta state host has shut down"; return false; }
         {
             std::lock_guard<std::mutex> lock(provider->orchestration_mutex);
             const auto cached = provider->orchestration_states.find(state_ref);
@@ -167,12 +169,14 @@ bool daemon_flydelta_bind_state_callbacks(
         }
         return true;
     };
-    callbacks.resolve_search_orchestration_state_for_job = [provider](
+    callbacks.resolve_search_orchestration_state_for_job = [weak_provider = std::weak_ptr<daemon_flydelta_resource_provider>(provider)](
             const common_flydelta_experiment_job & job,
             const std::string & state_ref,
             common_flydelta_experiment_plan & plan,
             common_flydelta_utility_history & history,
             std::string & state_error) {
+        const auto provider = weak_provider.lock();
+        if (!provider) { state_error = "FlyDelta state host has shut down"; return false; }
         if (state_ref.rfind("flydelta://state/bootstrap-zoom/", 0) == 0) {
             common_flydelta_bootstrap_zoom_state bootstrap;
             if (!provider->resolve_bootstrap_zoom_state_for_job ||

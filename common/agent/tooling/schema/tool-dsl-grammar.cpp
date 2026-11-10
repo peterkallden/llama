@@ -410,9 +410,10 @@ private:
 
 static std::string build_tool_dsl_grammar(
         const std::vector<common_chat_tool> & tools, common_tool_dsl_grammar_form form,
-        std::string & error, size_t max_steps, size_t max_goal_chars) {
+        std::string & error, size_t max_steps, size_t max_goal_chars,
+        const std::vector<std::string> & repair_handles, bool allow_reasoning) {
     error.clear();
-    if (tools.empty() || tools.size() > 256 || max_steps == 0 || max_steps > 6 ||
+    if ((tools.empty() && !(form == common_tool_dsl_grammar_form::plan && allow_reasoning)) || tools.size() > 256 || max_steps == 0 || max_steps > 6 ||
             max_goal_chars == 0 || max_goal_chars > 256 ||
             (form == common_tool_dsl_grammar_form::arguments && tools.size() != 1)) {
         error = "invalid DSL grammar catalog, form or plan bounds";
@@ -442,18 +443,36 @@ static std::string build_tool_dsl_grammar(
 
     }
     if (form != common_tool_dsl_grammar_form::arguments) {
-        rules << "call ::= ";
-        for (size_t index = 0; index < tools.size(); ++index) {
-            if (index) rules << " | ";
-            rules << "call-" << index;
+        if (!tools.empty()) {
+            rules << "call ::= ";
+            for (size_t index = 0; index < tools.size(); ++index) {
+                if (index) rules << " | ";
+                rules << "call-" << index;
+            }
+            rules << '\n';
         }
-        rules << '\n';
         if (form == common_tool_dsl_grammar_form::action) {
             rules << "root ::= call \"\\n\"?\n";
         } else {
             rules << "root ::= \"plan goal=\\\"\" char{1," << max_goal_chars << "} \"\\\"\\n\" step";
             if (max_steps > 1) rules << " (\"\\n\" step){0," << max_steps - 1 << "}";
-            rules << " \"\\n\"?\nstep ::= \"step\" (\" as=\" alias)? \" | \" call\n";
+            rules << " \"\\n\"?\nstep ::= \"step\" (\" as=\" alias)?";
+            if (!repair_handles.empty()) {
+                rules << " (\" repair=\" repair-handle)?";
+            }
+            rules << " \" | \" ";
+            if (allow_reasoning && !tools.empty()) rules << "(call | \"reason\")";
+            else if (allow_reasoning) rules << "\"reason\"";
+            else rules << "call";
+            rules << "\n";
+            if (!repair_handles.empty()) {
+                rules << "repair-handle ::= ";
+                for (size_t i=0;i<repair_handles.size();++i) {
+                    if (i) rules << " | ";
+                    rules << literal(repair_handles[i]);
+                }
+                rules << '\n';
+            }
         }
     }
     rules << plain_string_rules();
@@ -476,9 +495,10 @@ char ::= [^"\\\x00-\x1f] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})
 
 std::string common_build_tool_dsl_grammar(
         const std::vector<common_chat_tool> & tools, common_tool_dsl_grammar_form form,
-        std::string & error, size_t max_steps, size_t max_goal_chars) {
+        std::string & error, size_t max_steps, size_t max_goal_chars,
+        const std::vector<std::string> & repair_handles, bool allow_reasoning) {
     try {
-        auto grammar = build_tool_dsl_grammar(tools, form, error, max_steps, max_goal_chars);
+        auto grammar = build_tool_dsl_grammar(tools, form, error, max_steps, max_goal_chars, repair_handles, allow_reasoning);
         if (grammar.size() > 4 * 1024 * 1024) {
             error = "DSL grammar exceeds its serialized size limit";
             return {};

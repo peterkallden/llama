@@ -268,11 +268,19 @@ const common_plan_workflow_transition * common_agent_workflow_next_transition(
             if (allowed_tools && transition.kind == common_plan_workflow_transition_kind::tool &&
                     std::find(allowed_tools->begin(), allowed_tools->end(), transition.tool_name) == allowed_tools->end()) continue;
             const auto next_cost = current.cost + transition.cost;
-            const auto prior = best.find(transition.to_state);
-            if (prior != best.end() && next_cost >= prior->second - 1e-6f) continue;
-            best[transition.to_state] = next_cost;
-            queue.push({next_cost, transition.to_state,
-                current.first.empty() ? transition.id : current.first});
+            const auto enqueue = [&](const std::string & target) {
+                const auto prior = best.find(target);
+                if (prior != best.end() && next_cost >= prior->second - 1e-6f) return;
+                best[target] = next_cost;
+                queue.push({next_cost, target,
+                    current.first.empty() ? transition.id : current.first});
+            };
+            // Fixed choices can branch to states other than the transition's
+            // fallback destination; each is part of the declared graph.
+            if (transition.kind == common_plan_workflow_transition_kind::model_choice &&
+                    !transition.choices.empty()) {
+                for (const auto & choice : transition.choices) enqueue(choice.to_state);
+            } else enqueue(transition.to_state);
         }
     }
     return nullptr;

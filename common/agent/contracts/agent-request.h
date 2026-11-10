@@ -28,6 +28,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct common_flydelta_activation_result;
@@ -140,6 +141,14 @@ struct common_agent_request {
     std::string project_id;
     std::string turn_id;
     std::optional<std::string> plan_id;
+    // Ephemeral host-issued repair handles -> failed step IDs. Only a
+    // continuation planner receives these; clients cannot select targets.
+    std::vector<std::pair<std::string, std::string>> plan_repair_targets;
+    // Host-issued choices for one dependency-ready method phase, handle -> durable ID.
+    std::vector<std::pair<std::string, std::string>> method_phase_choices;
+    // Remaining durable add_step capacity for this method continuation.
+    // Absent for ordinary planning and workflow proposals.
+    std::optional<size_t> method_remaining_new_steps;
     // Host-owned research binding. When present, the workspace is a draft
     // based on a published revision; model input cannot select its identity.
     std::optional<common_agent_research_draft_ref> research_draft;
@@ -210,7 +219,9 @@ struct common_agent_request {
     std::optional<common_agent_tool_call> tool_call;
     common_agent_event_sink event_sink;
     size_t max_iterations = 2;
-    // Actual review evaluations per turn, including review after a rewrite.
+    // Answer-review evaluations per turn, including review after a rewrite.
+    // Explicit phased-method execution decisions consume runtime/revision
+    // budgets instead; they do not spend a final-answer wording retry.
     // Exhaustion never grants acceptance to a rejected/unreviewed draft.
     size_t max_reflection_rounds = 1;
     // Shared by initial execution and all repair slices in this turn.
