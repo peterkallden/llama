@@ -1,5 +1,8 @@
 #pragma once
 #include "agent/agent-runtime.h"
+// Shared by the native schema and the JSON/DSL parser. The plan store's
+// independent string limit remains authoritative when an operation is saved.
+constexpr size_t common_reflection_next_action_max_chars = 1024;
 bool common_reflection_parse_json(
         const std::string & json_text,
         common_reflection_result & result,
@@ -20,3 +23,7 @@ bool common_reflection_parse_compact_dsl(
 
 // Compact model review uses the same assurance actions as the JSON contract.
 std::string common_reflection_review_grammar();
+
+// Validate stop bookkeeping against the host plan and remove redundant completions.
+bool common_reflection_validate_bounded_stop(common_reflection_result &,
+        const common_plan_state &, std::string & error);

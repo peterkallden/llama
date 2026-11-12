@@ -6,9 +6,11 @@ import { structuredToolResult } from "./structured-tool-result";
 import { loadReportSnapshots, type ReportSnapshot } from "./report-snapshots";
 const ResearchEvidenceGraph = defineAsyncComponent(() => import("./ResearchEvidenceGraph.vue"));
 import { parseRelationshipVisualization, type RelationshipVisualization } from "../visualization/contract";
+import type { ReviewProgress } from "../types/agent";
 import type { RelationshipSelection } from "../visualization/relationship-renderer";
 const props = defineProps<{
   uri: string; name: string; sessionId: string; editable: boolean;
+  reviewProgress?: ReviewProgress;
   openDocument: (uri: string) => Promise<unknown>;
   readJson: (uri: string) => Promise<Fields>;
   readBlob?: (uri: string) => Promise<Blob>;
@@ -33,6 +35,8 @@ function clearFigures() {
 const document = computed(() => object(opened.value.document));
 const canShowEvidenceGraph = computed(() => Boolean(props.callTool &&
   typeof snapshot.value.research_workspace_id === "string" && snapshot.value.research_workspace_id));
+const reviewedParts = computed(() => (props.reviewProgress?.parts ?? []).filter((part) =>
+  part.resource_uri === props.uri || part.resource_uri === document.value.editor_markdown_uri));
 const sections = computed(() => objects(document.value.sections));
 const targetIndex = computed(() => new Map<Fields, InspectionTarget[]>(sections.value.flatMap((section) =>
   objects(section.blocks).map((block) => [block, blockTargets(block, document.value, snapshot.value)] as [Fields, InspectionTarget[]]))));
@@ -128,7 +132,12 @@ onBeforeUnmount(() => { generation++; clearFigures(); });
     <header class="report-heading"><div><span class="eyebrow">Saved {{ opened.kind || 'report' }} · revision {{ opened.revision || '…' }}</span><h3>{{ opened.title || name }}</h3></div><div class="report-actions"><button v-if="canShowEvidenceGraph" type="button" :disabled="busy || graphBusy" @click="showEvidenceGraph()">{{ graphBusy ? 'Building graph…' : 'Evidence graph' }}</button><button type="button" :disabled="busy || downloading || !opened.document_uri" @click="download">Download</button><button type="button" :disabled="busy || !editable || !opened.document_uri" @click="emit('edit', uri)">Edit</button></div></header>
     <p v-if="busy" role="status">Opening saved document…</p>
     <p v-if="error" class="error" role="alert">{{ error }} <button type="button" @click="load">Retry</button></p>
-    <p v-if="document.kind === 'report' && document.coverage_complete === false" class="report-warning">Incomplete coverage. {{ strings(document.unresolved_gaps).join(' · ') }}</p>
+    <p v-if="document.coverage_complete === false && strings(document.unresolved_gaps).length" class="report-warning">Evidence coverage is limited. {{ strings(document.unresolved_gaps).join(' · ') }}</p>
+    <section v-if="reviewedParts.length" aria-label="Saved report excerpt review">
+      <h4>Reviewed parts of this saved revision</h4>
+      <p>These assessments cover only the quoted excerpts. Remaining text is unreviewed; evidence coverage is shown separately.</p>
+      <ul><li v-for="part in reviewedParts" :key="part.observation_id + part.excerpt"><strong>{{ part.status }}</strong> · {{ part.reason }}<blockquote>{{ part.excerpt }}</blockquote></li></ul>
+    </section>
     <p v-if="provenanceError" class="muted">Saved source detail unavailable: {{ provenanceError }}</p>
     <section v-for="section in sections" :key="String(section.id)" class="report-section">
       <h4 v-if="document.kind === 'report'">{{ section.title }}</h4>

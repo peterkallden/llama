@@ -8,6 +8,10 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+// UTC presentation derived from the retained millisecond timestamp. An empty
+// result means the timestamp cannot be represented as a four-digit ISO year.
+std::string common_investigation_format_time_utc(int64_t epoch_ms);
+
 // Host-owned, versioned investigation facts. These records contain references
 // to source evidence; they never replace the resource store as byte authority.
 enum class common_investigation_entity_kind {
@@ -393,3 +397,7 @@ bool common_investigation_source_followup(
 // Conflicting transitive same/different-actor decisions fail explicitly.
 bool common_investigation_actor_associations(const common_investigation_case_revision &,
     nlohmann::ordered_json &, std::string & error);
+
+// Bounded read-only projection of existing search acquisition receipts.
+nlohmann::ordered_json common_investigation_collection_context(
+    const common_investigation_case_revision &, const std::string & source_id, size_t limit = 4);

@@ -1,3 +1,5 @@
+#include "tools/agent/runtime/agent-plan-orchestration.h"
+#include "memory/memory-in-memory.h"
 #include "tools/agent/runtime/agent-planning-selection.h"
 #include "tools/agent/runtime/agent-runtime-assembly.h"
 #include "tools/agent/runtime/agent-workflow-transition.h"
@@ -8,9 +10,17 @@
 #include "agent/tooling/catalog/tool-catalog.h"
 #include "agent/tooling/catalog/model-projection.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
+#include "agent/runtime-json-contracts.h"
+#include "agent/tooling/contracts/schema-contract.h"
 #include "plan/plan-blueprint.h"
+#include "plan/plan-in-memory.h"
 #include "plan/plan-workflow-binding.h"
 #include "plan/plan-workflow-state.h"
+#ifdef LLAMA_PLAN_USE_SQLITE
+#include "plan/sqlite/plan-sqlite.h"
+#include <chrono>
+#include <filesystem>
+#endif
 
 #include <cstdlib>
 #include <fstream>
@@ -25,30 +35,39 @@ void require(bool value, const std::string & message) {
 struct scripted_inference final : common_agent_inference {
     std::vector<std::string> replies;
     std::vector<common_agent_generation_request> requests;
+    std::vector<common_agent_generation_stop_reason> stops;
+    size_t capacity = 0;
+    size_t context_capacity_tokens() const override { return capacity; }
     common_agent_generation_status status = common_agent_generation_status::completed;
     common_agent_generation_stop_reason stop = common_agent_generation_stop_reason::eos;
     bool generate(const common_agent_generation_request & request, common_agent_generation_result & result) override {
         require(requests.size() < replies.size(), "unexpected inference call");
         result.content = replies[requests.size()]; requests.push_back(request);
         result.status = status;
-        result.stop_reason = stop;
+        result.stop_reason = stops.empty() ? stop : stops.at(requests.size() - 1);
         return true;
     }
 };
 
 struct canonical_resource_view final : agent_tool_view {
     std::vector<common_chat_tool> tools;
+    std::string execution_schema;
+    std::string denied_uri;
     const std::vector<common_chat_tool> & chat_tools() const override { return tools; }
-    bool exposes_tool(const std::string & name) const override { return name == "resource.read"; }
-    bool is_read_only(const std::string &) const override { return true; }
+    bool exposes_tool(const std::string & name) const override { return name == "resource.read" || name == "resource.inspect"; }
+    bool is_read_only(const std::string & name) const override { return name != "workspace.update"; }
     bool is_policy_gated(const std::string &) const override { return false; }
     bool validate(const agent_tool_call & call, std::string & error) const override {
         const auto args = json::parse(call.arguments_json, nullptr, false);
-        if (call.name != "resource.read" || !args.is_object() || !args.contains("uri") ||
+        if (!exposes_tool(call.name) || !args.is_object() || !args.contains("uri") ||
                 !args["uri"].is_string() || args.contains("id")) {
             error = "host resource.read requires a canonical uri";
             return false;
         }
+        if (!denied_uri.empty() && args["uri"] == denied_uri) { error = "resource is outside the authorized view"; return false; }
+        std::string normalized;
+        if (!execution_schema.empty() && !common_schema_normalize_and_validate_object(
+                call.arguments_json, execution_schema, normalized, error)) return false;
         error.clear(); return true;
     }
     agent_tool_result call(const agent_tool_call &, std::string &) override { return {}; }
@@ -57,6 +76,174 @@ struct canonical_resource_view final : agent_tool_view {
     bool poll_call_async(const agent_tool_pending_call &, bool &, agent_tool_result &, std::string &) override { return false; }
     bool cancel_call_async(const agent_tool_pending_call &, std::string &) override { return false; }
 };
+
+void resource_argument_contracts() {
+    common_tool_catalog catalog;
+    common_tool_bootstrap_result bootstrap;
+    std::string error;
+    require(catalog.bootstrap("minimal", bootstrap, error), error);
+    common_agent_generation_config config; config.n_predict = 1024;
+    common_agent_request request;
+    common_agent_input_resource source;
+    source.resource.uri = "agent-resource://report/retained";
+    request.input_resources = {source};
+    for (const auto * name : {"resource.read", "resource.inspect"}) {
+        const auto * definition = catalog.find_definition(name);
+        require(definition != nullptr, "resource contract is absent");
+        common_chat_tool tool{name, definition->description, common_tool_model_input_schema(*definition)};
+        canonical_resource_view view;
+        view.tools = {tool}; view.execution_schema = definition->input_schema_json;
+        common_plan_workflow_transition transition;
+        transition.id = "read-evidence"; transition.tool_name = name; transition.model_supplies_arguments = true;
+        scripted_inference missing_view;
+        request.tool_output_format = common_agent_tool_output_format::native;
+        require(!select_agent_planning_workflow_action(missing_view, config, request, {tool},
+            {{name,json{{"uri",source.resource.uri}}.dump(),"host",false}}, {},
+            request.tool_output_format, error).action && missing_view.requests.empty(),
+            "missing execution view asked the model to repair a host URI");
+        for (const auto format : {common_agent_tool_output_format::native, common_agent_tool_output_format::compact_dsl}) {
+            request.tool_output_format = format;
+            const auto reply = [&](const json & args) {
+                if (format == common_agent_tool_output_format::native)
+                    return json{{"tool", name}, {"args", args}}.dump();
+                std::string text = std::string("open! ") + name;
+                for (const auto & field : args.items()) text += "\n" + field.key() + ": " + field.value().dump();
+                return text;
+            };
+            scripted_inference bound;
+            bound.replies = {reply(json::object())};
+            std::string arguments;
+            require(select_agent_planning_workflow_transition_arguments(bound, config, request, {tool}, {}, {},
+                transition, json{{"uri", source.resource.uri}}.dump(), arguments, error, &view) &&
+                json::parse(arguments)["uri"] == source.resource.uri && !json::parse(arguments).contains("id"),
+                "host-bound resource was compared with the model schema: " + error);
+            require(bound.requests.size() == 1 && bound.requests.front().messages.front().content.find("id (required") == std::string::npos,
+                "host-bound URI still required a model identity");
+            scripted_inference unbound;
+            unbound.replies = {reply({{"id", "r1"}})};
+            require(select_agent_planning_workflow_transition_arguments(unbound, config, request, {tool}, {}, {},
+                transition, "{}", arguments, error, &view) && json::parse(arguments)["uri"] == source.resource.uri,
+                "model resource handle did not reach the execution contract: " + error);
+            // Non-strict JSON providers may echo a hidden field. The DSL
+            // parser rejects undeclared fields before normalization instead.
+            if (format == common_agent_tool_output_format::native) {
+                scripted_inference echo;
+                echo.replies = {reply({{"id", "r1"}})};
+                require(select_agent_planning_workflow_transition_arguments(echo, config, request, {tool}, {}, {},
+                    transition, json{{"uri", source.resource.uri}}.dump(), arguments, error, &view),
+                    "equivalent handle echo conflicted with its canonical host binding: " + error);
+                const auto schema = json::parse(bound.requests.front().json_schema);
+                require(!schema["oneOf"][0]["properties"]["args"]["properties"].contains("id"),
+                    "bound resource handle leaked into the model schema");
+            }
+            scripted_inference conflict;
+            conflict.replies = {reply({{"id", "agent-resource://different"}}), reply({{"id", "agent-resource://different"}})};
+            require(!select_agent_planning_workflow_transition_arguments(conflict, config, request, {tool}, {}, {},
+                transition, json{{"uri", source.resource.uri}}.dump(), arguments, error, &view) && arguments.empty(),
+                "model resource alias replaced the host-bound URI");
+        }
+        request.tool_output_format = common_agent_tool_output_format::native;
+        scripted_inference repaired;
+        repaired.replies = {json{{"tool",name},{"args",{{"id","r99"}}}}.dump(),
+            json{{"tool",name},{"args",{{"id","r1"}}}}.dump()};
+        const auto repaired_action = select_agent_planning_workflow_action(repaired, config, request, {tool}, {}, {},
+            request.tool_output_format, error, false, &view);
+        require(repaired_action.action && repaired.requests.size() == 2 &&
+            json::parse(repaired_action.action->arguments_json)["uri"] == source.resource.uri,
+            "invalid model resource handle did not receive bounded repair: " + error);
+        scripted_inference malformed;
+        malformed.replies = {json{{"tool",name},{"args",{{"id","r1"},{"invented",true}}}}.dump(),
+            json{{"tool",name},{"args",{{"id","r1"},{"invented",true}}}}.dump()};
+        require(!select_agent_planning_workflow_action(malformed, config, request, {tool}, {}, {},
+            request.tool_output_format, error, false, &view).action && malformed.requests.size() == 2,
+            "execution view bypassed the model schema for unknown fields");
+        scripted_inference denied;
+        denied.replies = {json{{"tool",name},{"args",{{"id","r1"}}}}.dump(),
+            json{{"tool",name},{"args",{{"id","r1"}}}}.dump()};
+        view.denied_uri = source.resource.uri;
+        require(!select_agent_planning_workflow_action(denied, config, request, {tool}, {}, {},
+            request.tool_output_format, error, false, &view).action,
+            "canonical resource normalization bypassed execution-view rejection");
+    }
+    // The ordinary runtime and workflow share conflict checks before defaults.
+    request.tool_argument_bindings = {{"resource.read", json{{"uri",source.resource.uri}}.dump(), "host", false}};
+    json normalized;
+    bool changed = false;
+    require(common_agent_runtime_apply_safe_tool_defaults_to_json(request, "resource.read", {{"id","r1"}},
+        normalized, changed, error) && normalized["uri"] == source.resource.uri && !normalized.contains("id"), error);
+    require(!common_agent_runtime_apply_safe_tool_defaults_to_json(request, "resource.read",
+        {{"id","agent-resource://different"}}, normalized, changed, error), "ordinary normalization overwrote a host binding");
+    require(!common_agent_runtime_apply_host_tool_arguments_to_json(request, "resource.read",
+        {{"uri",source.resource.uri},{"id","agent-resource://different"}}, normalized, changed, error),
+        "conflicting resource aliases were silently collapsed");
+}
+
+void resumed_resource_review_contract() {
+#ifdef LLAMA_PLAN_USE_SQLITE
+    const std::string uri = "agent-resource://report/persisted";
+    common_plan_state saved;
+    saved.id = "resource-review-resume"; saved.status = common_plan_status::active;
+    common_plan_workflow_definition graph;
+    graph.start_state = "start"; graph.terminal_states = {"done"};
+    common_plan_workflow_transition initial;
+    initial.id = "read-report"; initial.from_state = "start"; initial.to_state = "done";
+    initial.tool_name = "resource.read";
+    common_plan_workflow_transition review;
+    review.id = "review"; review.from_state = "done"; review.to_state = "inspect";
+    review.kind = common_plan_workflow_transition_kind::model_choice; review.review_only = true;
+    review.choices.push_back({"read", "Read missing report evidence", "inspect", {}});
+    auto read = initial;
+    read.id = "review-read-evidence"; read.from_state = "inspect"; read.model_supplies_arguments = true;
+    read.argument_bindings.push_back({"/uri", "read-report", "/result/resource/uri", true});
+    graph.transitions = {initial, review, read}; saved.workflow_definition = graph;
+    saved.route_binding = common_plan_route_binding{}; saved.route_binding->route_id = "resource-review-route";
+    common_plan_step completed{"report", "Read report", "Read retained report"};
+    completed.status = common_plan_step_status::completed;
+    completed.tool_call = common_plan_tool_call{"resource.read", json{{"uri",uri}}.dump()};
+    completed.semantic_alias = "workflow-transition:read-report";
+    saved.steps.push_back(completed);
+    saved.observations.push_back({"tool:report:resource.read", "resource.read",
+        json{{"ok",true},{"result",{{"resource",{{"uri",uri}}},{"content","retained text"}}}}.dump(), 1.0f});
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("llama-resource-review-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(directory);
+    std::string error;
+    common_plan_sqlite_store store;
+    require(store.open((directory / "plans.sqlite").string(), error) && store.create(saved, error), error);
+    store.close();
+    require(store.open((directory / "plans.sqlite").string(), error), error);
+    const auto restored = store.get(saved.id, error);
+    require(restored && restored->workflow_definition, "saved review workflow was not restored: " + error);
+    common_agent_route_candidate route;
+    route.id = saved.route_binding->route_id; route.resolved_tools = {"resource.read"};
+    route.workflow_definition = restored->workflow_definition;
+    common_agent_request request; request.tool_output_format = common_agent_tool_output_format::native;
+    common_agent_generation_config config;
+    common_chat_tool tool{"resource.read", "Read resource",
+        R"({"type":"object","additionalProperties":false,"required":["id"],"properties":{"id":{"type":"string"},"offset":{"type":"integer","minimum":0}}})"};
+    canonical_resource_view view;
+    scripted_inference inference;
+    inference.replies = {R"({"tool":"resource.read","args":{"offset":128}})"};
+    auto continuation = make_agent_workflow_graph_continuation(route,
+        [](const auto &, const auto &, std::string & choice, std::string & failure) {
+            choice = "read"; failure.clear(); return true;
+        }, [&](const auto & plan, const auto & observation, const auto & transition,
+                const std::string & seed, std::string & arguments, std::string & failure) {
+            return select_agent_planning_workflow_transition_arguments(inference, config, request, {tool},
+                plan, observation, transition, seed, arguments, failure, &view);
+        });
+    common_plan_observation trigger{"review", common_agent_workflow_review_source,
+        R"({"review_request":{"missing":"report details"}})", 1.0f};
+    common_agent_workflow_continuation next;
+    require(continuation(*restored, completed.id, trigger, next, error) && next.size() == 1,
+        "reflection could not bind the saved report after store reopen: " + error);
+    const auto arguments = json::parse(next.front().tool_call->arguments_json);
+    require(arguments["uri"] == uri && arguments["offset"] == 128 && !arguments.contains("id") &&
+        inference.requests.size() == 1, "resumed review changed the retained resource or lost the model's bounded position");
+    store.close();
+    std::filesystem::remove_all(directory);
+#endif
+}
 
 void selection_formats() {
     common_agent_request request;
@@ -131,6 +318,9 @@ void selection_formats() {
     std::string selected;
     require(select_agent_planning_workflow_candidate(choice, config, request, observation, transition, selected, error), error);
     require(selected == "inspect" && choice.requests.front().json_schema.empty(), "workflow choice escaped DSL");
+    require(choice.requests.front().messages[1].content.find("Reuse sufficient retained evidence")!=std::string::npos,
+        "workflow action choice used the record-matching acquisition prompt");
+
     observation.summary = R"({"ok":false,"count":0,"items":[],"complete":false})";
     require(!common_plan_workflow_choice_available(observation, transition.choices.front()),
         "failed observations enabled a choice");
@@ -358,6 +548,110 @@ void workflow_action_dataset_handles() {
         "explicit source-column names were silently removed");
 }
 
+void workflow_argument_budget_contracts() {
+    common_agent_request request;
+    request.prompt = "Create a record with a detailed description";
+    request.tool_output_format = common_agent_tool_output_format::native;
+    common_agent_generation_config config; config.n_predict = 2048;
+    common_chat_tool tool{"records.create", "Create a record",
+        R"({"type":"object","required":["description"],"properties":{"description":{"type":"string","maxLength":1024}}})"};
+    scripted_inference inference;
+    inference.replies = {R"({"tool":"records.create","args":{"description":)",
+        R"({"tool":"records.create","args":{"description":"Complete bounded description"}})"};
+    inference.stops = {common_agent_generation_stop_reason::limit, common_agent_generation_stop_reason::eos};
+    std::string error;
+    const auto selected = select_agent_planning_workflow_action(inference, config, request, {tool}, {}, {},
+        request.tool_output_format, error);
+    require(selected.action && error.empty() && inference.requests.size() == 2,
+        "truncated workflow arguments were accepted or not regenerated: " + error);
+    require(inference.requests[0].options.n_predict > 128 &&
+        inference.requests[1].options.n_predict > inference.requests[0].options.n_predict &&
+        inference.requests[1].options.n_predict <= config.n_predict,
+        "argument demand or bounded growth ignored the configured ceiling");
+    config.n_predict = 128;
+    scripted_inference capped;
+    capped.replies = {"{"}; capped.stop = common_agent_generation_stop_reason::limit;
+    require(!select_agent_planning_workflow_action(capped, config, request, {tool}, {}, {},
+        request.tool_output_format, error).action && capped.requests.size() == 1,
+        "truncation retried beyond the configured output ceiling");
+    scripted_inference full_context;
+    full_context.capacity=256;
+    require(!select_agent_planning_workflow_action(full_context,config,request,{tool},{},{},
+        request.tool_output_format,error).action && full_context.requests.empty() && !error.empty(),
+        "workflow argument inference ran with no context capacity");
+}
+
+void workflow_no_progress_contracts() {
+    common_chat_tool tool{"records.update", "Update a revision-pinned record",
+        R"({"type":"object","required":["revision","value"],"properties":{"revision":{"type":"integer"},"value":{"type":"string"}},"x-agent-progress":{"changed":"/changed"}})"};
+    common_plan_workflow_transition update;
+    update.id="update"; update.tool_name=tool.name; update.model_supplies_arguments=true;
+    common_plan_state plan;
+    common_plan_step completed;
+    completed.id="prior"; completed.status=common_plan_step_status::completed;
+    completed.tool_call=common_plan_tool_call{tool.name,R"({"revision":3,"value":"saved"})"};
+    plan.steps={completed};
+    common_plan_observation observation{"tool:prior:records.update",tool.name,
+        R"({"ok":true,"result":{"revision":3,"changed":false}})",1.0f};
+    plan.observations={observation};
+    common_agent_request request; request.tool_output_format=common_agent_tool_output_format::native;
+    common_agent_generation_config config; config.n_predict=1024;
+    std::string arguments,error;
+    scripted_inference duplicate;
+    duplicate.replies={R"({"tool":"records.update","args":{"value":"saved","revision":3}})"};
+    require(!select_agent_planning_workflow_transition_arguments(duplicate,config,request,{tool},plan,observation,
+        update,"{}",arguments,error) && error.rfind("workflow.no_progress:",0)==0 && arguments.empty(),
+        "identical no-change call survived persisted evidence replay");
+    scripted_inference changed;
+    changed.replies={R"({"tool":"records.update","args":{"revision":3,"value":"new"}})"};
+    require(select_agent_planning_workflow_transition_arguments(changed,config,request,{tool},plan,observation,
+        update,"{}",arguments,error),"different requested state was blocked: "+error);
+    scripted_inference new_revision;
+    new_revision.replies={R"({"tool":"records.update","args":{"revision":4,"value":"saved"}})"};
+    require(select_agent_planning_workflow_transition_arguments(new_revision,config,request,{tool},plan,observation,
+        update,"{}",arguments,error),"new state revision was blocked: "+error);
+
+    auto changed_plan=plan;
+    changed_plan.observations.front().summary=R"({"ok":true,"result":{"revision":3,"changed":true}})";
+    scripted_inference first_repeat;
+    first_repeat.replies={R"({"tool":"records.update","args":{"revision":3,"value":"saved"}})"};
+    require(select_agent_planning_workflow_transition_arguments(first_repeat,config,request,{tool},changed_plan,observation,
+        update,"{}",arguments,error),"a successful change was misclassified as a proven no-op: "+error);
+
+    common_agent_route_candidate route; route.id="no-progress-route"; route.resolved_tools={tool.name,"records.inspect"};
+    common_plan_workflow_definition graph;
+    graph.start_state="start";graph.terminal_states={"done"};
+    common_plan_workflow_transition first;first.id="first";first.from_state="start";first.to_state="choose";first.tool_name=tool.name;
+    common_plan_workflow_transition choice;choice.id="choice";choice.from_state="choose";
+    choice.kind=common_plan_workflow_transition_kind::model_choice;
+    choice.choices={{"update","Update a changed value","update",{}},{"inspect","Inspect saved evidence","inspect",{}}};
+    update.from_state="update";update.to_state="choose";
+    common_plan_workflow_transition inspect;inspect.id="inspect";inspect.from_state="inspect";inspect.to_state="done";
+    inspect.tool_name="records.inspect";
+    graph.transitions={first,choice,update,inspect};route.workflow_definition=graph;
+    plan.workflow_definition=graph;plan.route_binding=common_plan_route_binding{};plan.route_binding->route_id=route.id;
+    plan.steps[0].semantic_alias="workflow-transition:first";
+    size_t choices=0;
+    auto continuation=make_agent_workflow_graph_continuation(route,
+        [&](const auto & observed,const auto & available,std::string & selected,std::string & failure) {
+            failure.clear();++choices;
+            if(choices==1) selected="update";
+            else {
+                require(json::parse(observed.summary).contains("host_recovery"),"no-progress repair lost host feedback");
+                require(std::none_of(available.choices.begin(),available.choices.end(),[](const auto & c){return c.id=="update";}),
+                    "reconsideration exposed the rejected choice again");
+                selected="inspect";
+            }
+            return true;
+        },[](const auto &,const auto &,const auto & transition,const auto &,std::string & args,std::string & failure) {
+            if(transition.id=="update") {failure="workflow.no_progress: unchanged saved state";return false;}
+            failure.clear();args="{}";return true;
+        });
+    common_agent_workflow_continuation steps;
+    require(continuation(plan,"prior",observation,steps,error) && choices==2 && steps.size()==1 &&
+        steps.front().tool_call->name=="records.inspect","no-progress workflow did not reconsider its next action: "+error);
+}
+
 void dataset_projection_contracts() {
     common_agent_dataset_descriptor dataset;
     dataset.ref.uri = "dataset://source/a";
@@ -386,6 +680,19 @@ void dataset_projection_contracts() {
         projected["properties"]["column"]["enum"] == json::array({"amount", "region"}) &&
         projected["properties"]["groups"]["items"]["enum"] == json::array({"region"}),
         "dataset projection broadened a registered constraint or missed a generic reference field");
+    common_tool_catalog catalog;common_tool_bootstrap_result bootstrap;
+    require(catalog.bootstrap("minimal", bootstrap, error), error);
+    const auto collect = catalog.find_definition("investigate.collect");
+    require(collect != nullptr, "collection contract is missing");
+    auto collect_schema = json::parse(collect->input_schema_json);
+    require(common_agent_project_dataset_model_schema(collect_schema, inventory, json::object(), error), error);
+    require(collect_schema["properties"]["identifier_field"]["enum"] == json::array({"amount", "region"}),
+        "collection did not expose the selected dataset's logical columns");
+    require(!common_agent_validate_dataset_column_arguments(collect_schema,
+        json{{"dataset",dataset.ref.uri},{"identifier_field","invented"}}, inventory, error),
+        "collection accepted an invented logical column");
+    require(common_agent_validate_dataset_column_arguments(collect_schema,
+        json{{"dataset",dataset.ref.uri},{"identifier_field","region"}}, inventory, error), error);
     auto unknown = dataset;
     unknown.ref.uri = "dataset://source/b";
     unknown.columns.clear();
@@ -524,10 +831,10 @@ void blueprint_and_publication_context() {
     common_plan_state plan; plan.id = "case-plan";
     common_plan_step read{"read", "Open", "Open case"}; read.status = common_plan_step_status::completed;
     read.tool_call = common_plan_tool_call{"investigate.case.open", R"({"case_id":"case"})"}; plan.steps.push_back(read);
-    plan.observations.push_back({"tool:read:open", "investigate.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":2}}})", 1.0f});
+    plan.observations.push_back({"tool:read:investigate.case.open", "investigate.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":2}}})", 1.0f});
     auto publish = read; publish.id = "publish"; publish.tool_call = common_plan_tool_call{"investigate.collect", R"({"case_id":"case","expected_revision":2})"};
     plan.steps.push_back(publish);
-    plan.observations.push_back({"tool:publish:collect", "investigate.collect", R"({"ok":true,"result":{"case_id":"case","revision":3}})", 1.0f});
+    plan.observations.push_back({"tool:publish:investigate.collect", "investigate.collect", R"({"ok":true,"result":{"case_id":"case","revision":3}})", 1.0f});
     common_chat_tool events{"investigate.events", "Read events", R"({"type":"object","required":["case_id","case_revision"],"properties":{"case_id":{"type":"string"},"case_revision":{"type":"integer"}},"additionalProperties":false})"};
     common_plan_workflow_transition next; next.tool_name = events.name;
     scripted_inference inference; common_agent_generation_config config; std::string args;
@@ -538,22 +845,207 @@ void blueprint_and_publication_context() {
     request.investigation_context->revision = 3;
     require(select_agent_planning_workflow_transition_arguments(inference, config, request, {events}, plan,
         plan.observations.back(), next, "{}", args, error), "resume failed to replay its own revision chain: " + error);
+    request.investigation_context_json=R"({"case_id":"case","revision":3,"processing_status":"query_complete"})";
+    common_plan_workflow_transition review_choice;
+    review_choice.choices.push_back({"reuse","Use retained evidence","done",{}});
+    request.tool_output_format=common_agent_tool_output_format::native;
+    scripted_inference reviewer;reviewer.replies={R"({"id":"reuse"})"};
+    std::string selected;
+    require(select_agent_planning_workflow_candidate(reviewer,config,request,plan.observations.back(),review_choice,selected,error),error);
+    require(reviewer.requests.front().messages.back().content.find("query_complete")!=std::string::npos &&
+        reviewer.requests.front().messages.back().content.find("supersedes older case snapshots")!=std::string::npos,
+        "workflow selector omitted the separate current case projection");
     auto concurrent = read; concurrent.id = "concurrent-read"; plan.steps.push_back(concurrent);
-    plan.observations.push_back({"tool:concurrent-read:open", "investigate.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":4}}})", 1.0f});
+    plan.observations.push_back({"tool:concurrent-read:investigate.case.open", "investigate.case.open", R"({"ok":true,"result":{"case":{"case_id":"case","revision":4}}})", 1.0f});
     require(!select_agent_planning_workflow_transition_arguments(inference, config, request, {events}, plan,
         plan.observations.back(), next, "{}", args, error), "a read silently rebased the workflow onto an external revision");
+}
+
+void automatic_resume_capacity() {
+    std::string error;
+    common_plan_policy_config limits;limits.max_observations=1;
+    common_plan_in_memory_store plans{common_plan_policy(limits)};
+    common_memory_in_memory_store memory;
+    require(plans.open("",error) && memory.open("",error),error);
+    common_plan_state plan;plan.id="exhausted";plan.status=common_plan_status::active;
+    plan.namespace_id="local";plan.session_id="session";plan.turn_id="old";plan.scope=common_plan_scope::session;
+    common_plan_workflow_definition workflow;workflow.start_state="start";workflow.terminal_states={"done"};
+    common_plan_workflow_transition transition;transition.id="read";transition.from_state="start";
+    transition.to_state="done";transition.tool_name="repository.read";workflow.transitions={transition};
+    plan.workflow_definition=workflow;
+    require(plans.create(plan,error),error);
+    scripted_inference inference;common_agent_generation_config config;
+    common_agent_orchestration_config orchestration;orchestration.prompt="Continue the case";
+    common_agent_scope scope;scope.namespace_id="local";scope.session_id="session";
+    scope.turn_id="new";scope.plan_scope=common_plan_scope::session;
+    std::string current=plan.id;
+    std::vector<common_blueprint_candidate> blueprints;
+    common_agent_route_candidate route;bool selected=false;
+    std::vector<common_memory_hit> memories;std::vector<common_agent_event> events;
+    std::vector<common_runtime_trace_entry> trace;
+    common_agent_orchestration_runtime_context context{inference,config,orchestration,memory,current,scope,plans,
+        blueprints,nullptr,nullptr,route,selected,memories,events,trace};
+    require(maybe_auto_select_plan(context,error) && current.empty() && inference.requests.empty(),
+        "automatic selection resumed an exhausted plan or offered it to the model");
+    current=plan.id;scope.turn_id="old";
+    require(maybe_auto_select_plan(context,error) && current==plan.id,"same accepted turn forked into a new plan");
+    scope.turn_id="new";orchestration.agent_plan="explicit";
+    require(maybe_auto_select_plan(context,error) && current==plan.id,"explicit plan pin was silently replaced");
+    // A new turn may select unfinished work in an exhausted plan. The old
+    // journal remains unchanged and route selection starts afresh.
+    common_plan_operation observed;observed.kind=common_plan_operation_kind::record_observation;
+    observed.plan_id=plan.id;observed.expected_version=plan.version;observed.host_authorized=true;
+    observed.observation=common_plan_observation{"review","response_review",
+        R"({"accepted":false,"checklist":{"blocking":[{"description":"Inspect saved report"}]}})",1.0f};
+    require(plans.apply(observed,plan,error),error);
+    orchestration.agent_plan="auto";current.clear();context.prior_work_checkpoint=&orchestration.prior_work_checkpoint;
+    context.tool_output_format=common_agent_tool_output_format::native;
+    inference.replies={R"({"decision":"resume","plan_id":"exhausted","confidence":1.0})"};
+    require(maybe_auto_select_plan(context,error) && current.empty() && orchestration.prior_work_checkpoint,
+        "unfinished exhausted plan did not yield a linked successor: "+error);
+    const auto checkpoint=json::parse(orchestration.prior_work_checkpoint->summary);
+    require(checkpoint["source_plan_id"]==plan.id && checkpoint["source_plan_version"]==plan.version &&
+        checkpoint["review"]["accepted"]==false && plans.get(plan.id,error)->version==plan.version,
+        "successor changed the source journal or lost its unfinished review");
+    context.tool_output_format=common_agent_tool_output_format::compact_dsl;
+    orchestration.prior_work_checkpoint.reset();inference.requests.clear();
+    inference.replies={"open! selection.plan\ndecision: resume\nplan_id: exhausted\nconfidence: 1"};
+    require(maybe_auto_select_plan(context,error) && current.empty() && orchestration.prior_work_checkpoint,
+        "DSL selection failed to retain prior work: "+error);
+}
+
+void review_read_progress_contracts() {
+    common_agent_request request; request.tool_output_format=common_agent_tool_output_format::native;
+    common_agent_generation_config config; scripted_inference inference;
+    common_chat_tool read{"resource.read","Read a resource",R"({"type":"object","properties":{"uri":{"type":"string"},"offset":{"type":"integer"}},"required":["uri"],"additionalProperties":false})"};
+    canonical_resource_view view; view.tools={read};
+    common_plan_state plan; plan.id="read-progress";
+    common_plan_step completed;completed.id="read";completed.status=common_plan_step_status::completed;
+    completed.tool_call=common_plan_tool_call{read.name,R"({"uri":"resource://retained","offset":0})"};
+    plan.steps={completed};
+    plan.observations.push_back({"tool:read:resource.read",read.name,R"({"ok":true,"result":{"content":"retained"}})",1.0f});
+    common_plan_workflow_transition transition;transition.tool_name=read.name;
+    common_plan_observation review{"review",common_agent_workflow_review_source,R"({"ok":true,"review_request":{"guidance":["Inspect remaining evidence"]}})",1.0f};
+    std::string args,error;
+    const auto select=[&](const std::string & seed) {
+        return select_agent_planning_workflow_transition_arguments(inference,config,request,{read},plan,review,
+            transition,seed,args,error,&view);
+    };
+    require(!select(R"({"uri":"resource://retained","offset":0})") &&
+        error.rfind("workflow.no_progress:",0)==0,"review replayed an identical successful read");
+    require(select(R"({"uri":"resource://retained","offset":128})"),"review blocked an unread byte position: "+error);
+    review.summary=R"({"ok":true})";
+    require(select(R"({"uri":"resource://retained","offset":0})"),"ordinary read acquired review-only restrictions");
+    review.summary=R"({"ok":true,"review_request":{}})";
+    auto mutation=completed;mutation.id="mutation";mutation.tool_call=common_plan_tool_call{"workspace.update","{}"};
+    plan.steps.push_back(mutation);
+    require(select(R"({"uri":"resource://retained","offset":0})"),"review blocked a read after a state mutation: "+error);
+    plan.steps.pop_back();plan.route_binding=common_plan_route_binding{};plan.route_binding->workflow_step_start_index=1;
+    require(select(R"({"uri":"resource://retained","offset":0})"),"prior route read blocked a new authorized route");
+    require(inference.requests.empty(),"deterministic review-read guard invoked inference");
+}
+
+void review_entry_contracts() {
+    std::string error;
+    common_agent_route_candidate route;route.id="review-route";route.resolved_tools={"resource.read"};
+    common_plan_workflow_definition graph;graph.start_state="start";graph.terminal_states={"done"};
+    common_plan_workflow_transition initial;initial.id="initial";initial.from_state="start";
+    initial.to_state="done";initial.tool_name="resource.read";
+    common_plan_workflow_transition entry;entry.id="review";entry.from_state="done";entry.to_state="inspect";
+    entry.kind=common_plan_workflow_transition_kind::model_choice;entry.review_only=true;
+    entry.choices.push_back({"read","Read missing evidence","inspect",{}});
+    auto read=initial;read.id="read-more";read.from_state="inspect";
+    graph.transitions={initial,entry,read};route.workflow_definition=graph;
+    common_plan_state plan;plan.id="review-plan";plan.status=common_plan_status::active;
+    plan.workflow_definition=graph;plan.route_binding=common_plan_route_binding{};plan.route_binding->route_id=route.id;
+    common_plan_step done{"original","Read","Read original range"};done.status=common_plan_step_status::completed;
+    done.tool_call=common_plan_tool_call{"resource.read","{}"};done.semantic_alias="workflow-transition:initial";
+    plan.steps={done};
+    common_plan_observation observed{"tool:original:resource.read","resource.read",R"({"ok":true,"result":{"content":"known"}})",1.0f};
+    plan.observations={observed};
+    size_t selections=0;
+    auto provider=make_agent_workflow_graph_continuation(route,[&](const auto &,const auto &,std::string & id,std::string & failure) {
+        ++selections;id="read";failure.clear();return true;
+    });
+    common_agent_workflow_continuation next;
+    require(provider(plan,done.id,observed,next,error) && next.empty() && selections==0,
+        "normal terminal workflow entered review automatically");
+    observed.source=common_agent_workflow_review_source;
+    require(provider(plan,done.id,observed,next,error) && next.size()==1 && selections==1,error);
+    require(next.front().tool_call->name=="resource.read","review changed its declared operation");
+    next.front().status=common_plan_step_status::completed;plan.steps.push_back(next.front());
+    require(common_plan_workflow_is_terminal(plan,graph),"review aliases did not replay through their declared graph");
+    plan.status=common_plan_status::completed;
+    require(!provider(plan,done.id,observed,next,error),"review reopened an accepted completed plan");
+
+    // Discovery has no selected case until a real host identity is available.
+    common_agent_request request;request.tool_output_format=common_agent_tool_output_format::native;
+    common_chat_tool open{"investigate.case.open","Open selected record",R"({"type":"object","properties":{"case_id":{"type":"string"}},"required":["case_id"],"additionalProperties":false})"};
+    common_plan_workflow_transition select;select.tool_name=open.name;select.model_supplies_arguments=true;
+    scripted_inference inference;inference.replies={R"({"tool":"investigate.case.open","args":{"case_id":"listed-case"}})"};
+    common_plan_observation listed{"listed","investigate.case.list",R"({"ok":true,"result":{"cases":[{"case_id":"listed-case"}]}})",1.0f};
+    common_agent_generation_config config;std::string arguments;
+    require(select_agent_planning_workflow_transition_arguments(inference,config,request,{open},{},listed,select,"{}",arguments,error) &&
+        json::parse(arguments)["case_id"]=="listed-case","discovery manufactured an empty selected-case binding: "+error);
+}
+
+void issued_cursor_contracts() {
+    common_agent_request request;request.tool_output_format=common_agent_tool_output_format::native;
+    common_agent_generation_config config;
+    common_chat_tool page{"records.page","Read a bounded page",
+        R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"},"cursor":{"type":"string"}},"x-agent-pagination":{"cursor":"cursor","next_cursor":"next_cursor","identity_fields":["query"]}})"};
+    common_plan_workflow_transition transition;transition.tool_name=page.name;transition.model_supplies_arguments=true;
+    common_plan_state plan;plan.id="pages";
+    common_plan_step first{"first","Read","Read records"};first.status=common_plan_step_status::completed;
+    first.tool_call=common_plan_tool_call{page.name,R"({"query":"known"})"};plan.steps={first};
+    common_plan_observation observed{"tool:first:records.page",page.name,
+        R"({"ok":true,"result":{"next_cursor":"issued-page-2"}})",1.0f};
+    plan.observations={observed};
+    std::string args,error;
+    scripted_inference valid;valid.replies={R"({"tool":"records.page","args":{"cursor":"issued-page-2"}})"};
+    require(select_agent_planning_workflow_transition_arguments(valid,config,request,{page},plan,observed,
+        transition,R"({"query":"known"})",args,error) && json::parse(args)["cursor"]=="issued-page-2",
+        "compatible issued cursor was rejected: "+error);
+    scripted_inference forged;forged.replies={R"({"tool":"records.page","args":{"cursor":"query=known"}})",
+        R"({"tool":"records.page","args":{}})"};
+    require(select_agent_planning_workflow_transition_arguments(forged,config,request,{page},plan,observed,
+        transition,R"({"query":"known"})",args,error) && !json::parse(args).contains("cursor") &&
+        forged.requests.size()==2,"forged cursor did not receive bounded first-page repair: "+error);
+    scripted_inference transplant;transplant.replies={R"({"tool":"records.page","args":{"cursor":"issued-page-2"}})",
+        R"({"tool":"records.page","args":{"cursor":"issued-page-2"}})"};
+    require(!select_agent_planning_workflow_transition_arguments(transplant,config,request,{page},plan,observed,
+        transition,R"({"query":"different"})",args,error) && args.empty(),"cursor crossed its query identity");
 }
 
 void package_contracts() {
     std::ifstream input(std::string(LLAMA_AGENT_SOURCE_DIR) + "/docs/examples/agent-investigation-workflows-v1.json");
     std::stringstream text; text << input.rdbuf(); common_agent_bootstrap_package package; std::string error;
     require(common_agent_package_parse_json(text.str(), package, error), error);
-    require(package.version == "v8" && package.workflows.size() == 9, "new investigation methods missing");
+    require(package.version == "v11" && package.workflows.size() == 9, "new investigation methods missing");
     for (const auto & workflow : package.workflows) require(!workflow.definition.transitions.empty(), "method still has no executable graph");
     const auto identity = std::find_if(package.workflows.begin(), package.workflows.end(), [](const auto & workflow) {
         return workflow.definition.workflow_ref == "workflow://investigation/identity-analysis";
     });
     require(identity != package.workflows.end(), "identity workflow missing");
+    {
+        common_agent_request entry_request;
+        entry_request.tool_output_format = common_agent_tool_output_format::native;
+        entry_request.workflow_definition = identity->definition;
+        entry_request.prompt = "Continue after the earlier case creation failed.";
+        common_chat_tool open{"investigate.case.open", "Open a case", R"({"type":"object","properties":{}})"};
+        common_chat_tool create{"investigate.case.create", "Create a case", R"({"type":"object","properties":{}})"};
+        scripted_inference selection;
+        selection.replies = {R"("investigate.case.create")", R"({"tool":"investigate.case.create","args":{}})"};
+        common_agent_generation_config generation;
+        const auto action = select_agent_planning_workflow_action(selection, generation, entry_request,
+            {open, create}, {}, {}, entry_request.tool_output_format, error);
+        require(action.action && action.action->tool_name == "investigate.case.create", error);
+        std::string prompt;
+        for (const auto & message : selection.requests.front().messages) prompt += message.content + "\n";
+        require(prompt.find("Open the explicitly selected existing case") != std::string::npos &&
+            prompt.find("continuation after an earlier case-creation failure") != std::string::npos,
+            "workflow entry conditions were absent from the operation choice");
+    }
     const auto choice = std::find_if(identity->definition.transitions.begin(), identity->definition.transitions.end(),
         [](const auto & transition) { return transition.id == "choose-next"; });
     require(choice != identity->definition.transitions.end() && choice->from_state == "assess",
@@ -561,13 +1053,122 @@ void package_contracts() {
     require(std::none_of(identity->definition.transitions.begin(), identity->definition.transitions.end(),
         [](const auto & transition) { return transition.id == "inspect-result"; }),
         "identity analysis result is still replaced by a case summary");
+    const auto actor=std::find_if(package.workflows.begin(),package.workflows.end(),[](const auto & item) {
+        return item.definition.workflow_ref=="workflow://investigation/actor-relationship";
+    });
+    require(actor!=package.workflows.end(),"actor workflow missing");
+    const auto & definition=actor->definition;
+    const auto listed=std::find_if(definition.transitions.begin(),definition.transitions.end(),[](const auto & t){return t.id=="choose-listed-case";});
+    require(listed!=definition.transitions.end(),"case list has no empty-result decision");
+    common_plan_observation empty{"empty","investigate.case.list",R"({"ok":true,"result":{"cases":[]}})",1.0f};
+    require(!common_plan_workflow_choice_available(empty,listed->choices.front()),"empty case list offered an existing-case lookup");
+    require(common_plan_workflow_choice_available(empty,listed->choices.back()),"empty case list lost its clarification path");
+    const auto source_choice=std::find_if(definition.transitions.begin(),definition.transitions.end(),[](const auto & t){return t.id=="choose-case-source";});
+    require(source_choice!=definition.transitions.end(),"source discovery has no empty-result decision");
+    empty.summary=R"({"ok":true,"result":{"sources":[]}})";
+    require(!common_plan_workflow_choice_available(empty,source_choice->choices.front()) &&
+        common_plan_workflow_choice_available(empty,source_choice->choices.back()),
+        "empty authorized source list offered case creation");
+
+    const auto review_entry=std::find_if(definition.transitions.begin(),definition.transitions.end(),[](const auto & t){return t.review_only;});
+    require(review_entry!=definition.transitions.end(),"investigation workflow lacks declared review entry");
+
+    std::vector<common_chat_tool> available={
+        {"investigate.case.items","Read items",R"({"type":"object"})"},
+        {"investigate.case.open","Open case",R"({"type":"object"})"},
+        {"investigate.statement.record","Record text",R"({"type":"object","x-agent-investigation-source-kinds":["document","log_file"]})"},
+        {"investigate.graph.expand","Expand retained events",R"({"type":"object"})"}};
+    std::vector<std::string> names;for(const auto & tool:available)names.push_back(tool.name);
+    common_agent_request search;
+    search.investigation_source_kinds=std::vector<common_investigation_source_kind>{common_investigation_source_kind::search_connector};
+    require(!common_agent_workflow_path_eligible(search,definition,"text-underlay",names,available,error) && error.empty(),
+        "text path passed source eligibility through its read-only prefix");
+    require(common_agent_workflow_path_eligible(search,definition,"event-underlay",names,available,error),error);
+    search.investigation_source_kinds=std::vector<common_investigation_source_kind>{common_investigation_source_kind::document};
+    require(common_agent_workflow_path_eligible(search,definition,"text-underlay",names,available,error),
+        "document actor analysis lost its existing text path");
     for (const auto & blueprint : package.blueprints) require(!blueprint.workflow_bindings.front().phase_bindings.empty(), "blueprint phases are unbound");
     std::string exported;
     require(common_agent_package_to_json(package, exported, error), error);
     common_agent_bootstrap_package restored;
     require(common_agent_package_parse_json(exported, restored, error), error);
+    require(std::any_of(restored.workflows.front().definition.transitions.begin(), restored.workflows.front().definition.transitions.end(),
+        [](const auto & t){return t.review_only;}), "package codec dropped review authority");
     require(restored.blueprints.front().workflow_bindings.front().phase_bindings == package.blueprints.front().workflow_bindings.front().phase_bindings,
         "package roundtrip dropped phase references");
+    const auto report=std::find_if(restored.workflows.begin(),restored.workflows.end(),[](const auto & item) {
+        return item.definition.workflow_ref=="workflow://investigation/report-composition";
+    });
+    require(report!=restored.workflows.end() && report->definition.workflow_revision=="v12",
+        "report scope repair revision missing");
+    const auto & report_graph=report->definition;
+    const auto scope=std::find_if(report_graph.transitions.begin(),report_graph.transitions.end(),[](const auto & t) {
+        return t.id=="report-update-case-scope";
+    });
+    require(scope!=report_graph.transitions.end() && scope->review_mutation_allowed &&
+        scope->tool_name=="investigate.case.update_scope", "package codec lost report scope repair authority");
+    common_agent_route_candidate report_route;report_route.id="report-repair";report_route.workflow_definition=report_graph;
+    for (const auto & t:report_graph.transitions) if(!t.tool_name.empty()) report_route.resolved_tools.push_back(t.tool_name);
+    common_plan_state report_plan;report_plan.id="report-repair";report_plan.status=common_plan_status::active;
+    report_plan.workflow_definition=report_graph;report_plan.route_binding=common_plan_route_binding{};
+    report_plan.route_binding->route_id=report_route.id;
+    // Start at the same terminal report read that reflection repairs in production.
+    for (const auto & id:{"open-case","inspect-underlay","choose-report-preparation=compose,compose-report","read-report"}) {
+        common_plan_step step;step.id="old:"+std::string(id);step.status=common_plan_step_status::completed;
+        step.semantic_alias="workflow-transition:"+std::string(id);report_plan.steps.push_back(step);
+    }
+    auto repair=make_agent_workflow_graph_continuation(report_route,
+        [](const auto &,const auto & t,std::string & choice,std::string & failure) {
+            failure.clear(); choice=t.review_only ? "repair-work" : "update-scope";return true;
+        },[](const auto &,const auto &,const auto &,const std::string & seed,std::string & args,std::string & failure) {
+            args=seed;failure.clear();return true;
+        });
+    common_plan_observation trigger{"review",common_agent_workflow_review_source,R"({"ok":true,"review_request":{"guidance":["Save requested scope"]}})",1.0f};
+    common_agent_workflow_continuation admitted;
+    const auto advance=[&](const std::string & expected) {
+        require(repair(report_plan,report_plan.steps.back().id,trigger,admitted,error) && admitted.size()==1,error);
+        require(admitted.front().tool_call && admitted.front().tool_call->name==expected,
+            "report repair did not follow the declared preparation graph");
+        auto step=admitted.front();step.status=common_plan_step_status::completed;
+        report_plan.steps.push_back(step);
+        trigger={"tool:"+step.id+":"+expected,expected,R"({"ok":true,"result":{"resource":{"uri":"resource://report"},"markdown_uri":"resource://report"}})",1.0f};
+        report_plan.observations.push_back(trigger);
+    };
+    advance("investigate.case.open");
+    advance("investigate.case.items");
+    advance("investigate.case.update_scope");
+    advance("investigate.case.open");
+    advance("investigate.case.items");
+    // The saved scope now satisfies the request: choose compose, not another mutation.
+    repair=make_agent_workflow_graph_continuation(report_route,
+        [](const auto &,const auto &,std::string & choice,std::string & failure) {
+            failure.clear();choice="compose";return true;
+        },[](const auto &,const auto &,const auto &,const std::string & seed,std::string & args,std::string & failure) {
+            args=seed;failure.clear();return true;
+        });
+    advance("investigate.report.compose");
+    advance("resource.read");
+    require(common_plan_workflow_is_terminal(report_plan,report_graph),"scope repair did not return to terminal review");
+    auto invalid_mutation=json::parse(exported);
+    auto & bad_transition=invalid_mutation["workflows"][0]["transitions"][0];
+    bad_transition["review_mutation_allowed"]=true;
+    bad_transition["kind"]="model_choice";
+    bad_transition["choices"]=json::array({{{"id","choose"},{"description","Choose"},{"to",bad_transition["to"]}}});
+    require(!common_agent_package_parse_json(invalid_mutation.dump(),restored,error),
+        "review mutation authorization was accepted on a model choice");
+
+    auto invalid_review = json::parse(exported);
+    for (auto & t : invalid_review["workflows"][0]["transitions"]) if (t.value("review_only",false)) {
+        t["review_only"]=false;break;
+    }
+    require(!common_agent_package_parse_json(invalid_review.dump(),restored,error),
+        "ordinary execution was allowed to leave a terminal workflow state");
+    invalid_review=json::parse(exported);
+    for (auto & t : invalid_review["workflows"][0]["transitions"]) if (t.value("review_only",false)) {
+        t["from"]="start";break;
+    }
+    require(!common_agent_package_parse_json(invalid_review.dump(),restored,error),
+        "review authority was accepted on a normal execution entry");
     auto invalid = json::parse(exported);
     invalid["blueprints"][0]["workflow_bindings"][0]["phase_bindings"]["invented"] = {"open-case"};
     require(!common_agent_package_parse_json(invalid.dump(), restored, error), "invalid phase mapping was imported");
@@ -576,9 +1177,9 @@ void package_contracts() {
 int main(int argc, char ** argv) {
     require(argc == 2, "choose formats, dataset-handles, continuation, blueprint or package");
     const std::string group = argv[1];
-    if (group == "formats") selection_formats();
+    if (group == "formats") { selection_formats(); workflow_argument_budget_contracts(); }
     else if (group == "dataset-handles") { workflow_action_dataset_handles(); dataset_projection_contracts(); result_requirement_selection(); }
-    else if (group == "continuation") transitions_and_resume();
+    else if (group == "continuation") { resource_argument_contracts(); resumed_resource_review_contract(); transitions_and_resume(); automatic_resume_capacity(); review_read_progress_contracts(); review_entry_contracts(); issued_cursor_contracts(); workflow_no_progress_contracts(); }
     else if (group == "blueprint") blueprint_and_publication_context();
     else if (group == "package") package_contracts();
     else require(false, "unknown contract group");

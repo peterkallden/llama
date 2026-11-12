@@ -60,3 +60,7 @@ bool common_plan_parse_proposal_json(
     std::vector<common_plan_operation> & operations,
     std::string & error,
     size_t max_operations = 8);
+
+// Planning accepts deferred output references; execution still validates concrete values.
+nlohmann::ordered_json common_plan_deferred_arguments_schema(
+    const nlohmann::ordered_json & schema, bool canonical = false);

@@ -66,6 +66,13 @@ export type DaemonProviderStatus = {
   status?: string;
 };
 
+export type ReviewProgress = {
+  schema: "review-progress.v1"; plan_id: string; draft_fingerprint: string; evidence_fingerprint: string;
+  accepted: boolean; paused: boolean; follow_up?: string[]; blocked_reason?: string;
+  parts: Array<{ observation_id: string; excerpt: string; status: "reviewed" | "requires_work" | "unreviewed";
+    reason: string; evidence_ids: string[]; resource_uri: string; content_fingerprint: string; evidence_fingerprint?: string }>;
+  remaining: Array<{ id: string; description: string; correction: string; evidence_ids: string[] }>;
+};
 export type UnverifiedDraft = {
   text: string;
   review_status: "unverified";
@@ -84,6 +91,7 @@ export type ChatMessage = {
   sequence?: number;
   pending?: boolean;
   unverifiedDraft?: UnverifiedDraft;
+  reviewProgress?: ReviewProgress;
 };
 
 export type TurnRequest = {
@@ -123,6 +131,7 @@ export type TurnResult = {
   error?: string;
   turn_id?: string;
   unverified_draft?: UnverifiedDraft;
+  review_progress?: ReviewProgress;
   [key: string]: unknown;
 };
 

@@ -1,11 +1,13 @@
 #include "agent/agent-runtime-context.h"
 #include "agent/method-phases.h"
+#include "agent/continuation-control.h"
 #include "plan/plan-context.h"
 #include "plan/plan-workflow-state.h"
 #include "plan/plan-in-memory.h"
 #include "plan/plan-policy.h"
 #include <algorithm>
 #include <map>
+#include <set>
 
 bool evaluate_common_agent_reflection_phase(
         common_agent_runtime_turn_context & context,
@@ -196,13 +198,54 @@ static bool prepare_reflection_plan_repair_attempt(
             context.error = "this repair requires an available declared workflow continuation";
             return false;
         }
-        if (!context.request.workflow_continuation(plan, source->id, *observed, steps, context.error)) return false;
+        // A terminal graph may only leave through an explicitly declared review
+        // entry. Inspect its entire reachable subgraph before admitting any work.
+        const auto & definition = *plan.workflow_definition;
+        const auto state = common_plan_workflow_completed_state(plan, definition);
+        const bool terminal = common_plan_workflow_is_terminal(plan, definition);
+        if (terminal) {
+            std::vector<std::string> pending;
+            for (const auto & transition : definition.transitions)
+                if (transition.review_only && transition.from_state == state)
+                    for (const auto & choice : transition.choices) pending.push_back(choice.to_state);
+            if (pending.empty()) {
+                context.error = "workflow has no declared evidence-review continuation"; return false;
+            }
+            std::set<std::string> visited;
+            while (!pending.empty()) {
+                const auto current = pending.back(); pending.pop_back();
+                if (!visited.insert(current).second ||
+                        std::find(definition.terminal_states.begin(), definition.terminal_states.end(), current) != definition.terminal_states.end()) continue;
+                for (const auto & transition : definition.transitions) {
+                    if (transition.from_state != current || transition.review_only) continue;
+                    if (transition.kind == common_plan_workflow_transition_kind::tool &&
+                            transition.optional_availability && !context.tools->is_available(transition.tool_name)) continue;
+                    if (transition.kind == common_plan_workflow_transition_kind::artifact_compose ||
+                            (transition.kind == common_plan_workflow_transition_kind::tool &&
+                             !context.tools->is_read_only(transition.tool_name) && !transition.review_mutation_allowed)) {
+                        context.error = "workflow review mutation requires explicit transition authorization"; return false;
+                    }
+                    pending.push_back(transition.to_state);
+                    for (const auto & choice : transition.choices) pending.push_back(choice.to_state);
+                }
+            }
+        }
+        auto review = *observed;
+        if (terminal) review.source = common_agent_workflow_review_source;
+        auto payload = nlohmann::ordered_json::parse(review.summary, nullptr, false);
+        if (!payload.is_object()) { context.error = "workflow review requires structured evidence"; return false; }
+        payload["review_request"] = {{"guidance", reflection.revision_guidance},
+            {"scope", "Resolve unfinished work through declared review operations. Writes require explicit transition authorization; preserve completed work."}};
+        review.summary = payload.dump();
+        if (!context.request.workflow_continuation(plan, source->id, review, steps, context.error)) return false;
         if (steps.terminal_choice) {
             context.error = "workflow repair requires an additional step, not a terminal choice";
             return false;
         }
     } else {
         auto request = context.request;
+        if (request.continuation_budget) request.prompt +=
+            common_agent_render_continuation_context(plan, *request.continuation_budget);
         request.plan_id = plan.id;
         request.route_binding = plan.route_binding;
         request.workflow_definition = plan.workflow_definition;
@@ -228,8 +271,9 @@ static bool prepare_reflection_plan_repair_attempt(
             }
             request.prompt += "\n[Host-bound failed operations; repair selects one of these handles]\n"+
                 nlohmann::ordered_json{{"targets",failed},{"omitted_targets",omitted}}.dump();
-            const size_t plan_limit=common_plan_policy_config{}.max_steps;
-            request.method_remaining_new_steps=plan.steps.size()<plan_limit ? plan_limit-plan.steps.size() : 0;
+            request.method_remaining_new_steps = request.continuation_budget
+                ? request.continuation_budget->new_steps_remaining
+                : common_plan_remaining_capacity(plan,common_plan_policy_config{}).steps;
             if (*request.method_remaining_new_steps==0 && request.plan_repair_targets.empty()) {
                 context.error="method plan step capacity exhausted; unresolved phases remain in the saved plan";
                 return false;
@@ -316,7 +360,8 @@ static bool prepare_reflection_plan_repair_attempt(
             else for (auto & step:candidate.steps) if (step.id==operation.step->id) step=*operation.step;
         }
         if (!context.tools->validate_plan(candidate,context.error)) return false;
-        common_plan_in_memory_store preview;
+        common_plan_in_memory_store preview{common_plan_policy(context.plan_store ?
+            context.plan_store->policy_limits() : common_plan_policy_config{})};
         if (!preview.open("",context.error) || !preview.create(plan,context.error)) {
             validation_rejected=false;return false;
         }
@@ -352,9 +397,20 @@ static bool prepare_reflection_plan_repair_attempt(
     std::vector<common_plan_operation> additions;
     for (auto step : steps) {
         if (common_plan_step_effective_mode(step) == common_plan_step_mode::final_response) continue;
+        const bool declared_mutation = declared_graph && step.tool_call && step.semantic_alias &&
+            step.semantic_alias->rfind("workflow-transition:",0)==0 &&
+            std::any_of(plan.workflow_definition->transitions.begin(), plan.workflow_definition->transitions.end(),
+                [&](const auto & transition) {
+                    const auto suffix = "," + transition.id;
+                    const auto direct = "workflow-transition:" + transition.id;
+                    return transition.review_mutation_allowed && transition.tool_name == step.tool_call->name &&
+                        (*step.semantic_alias == direct ||
+                         (step.semantic_alias->size() >= suffix.size() &&
+                          step.semantic_alias->compare(step.semantic_alias->size()-suffix.size(), suffix.size(), suffix)==0));
+                });
         if (!step.tool_call || !context.tools->is_available(step.tool_call->name) ||
-                !context.tools->is_read_only(step.tool_call->name)) {
-            context.error = "additional evidence repair must use available read-only tools";
+                (!context.tools->is_read_only(step.tool_call->name) && !declared_mutation)) {
+            context.error = "review repair requires an available read tool or an explicitly authorized workflow mutation";
             return false;
         }
         step.id = identities.at(step.id);
@@ -379,8 +435,14 @@ static bool prepare_reflection_plan_repair_attempt(
         additions.push_back(std::move(operation));
     }
     if (!context.tools->validate_plan(candidate, context.error)) return false;
+    const auto limits=context.plan_store ? context.plan_store->policy_limits() : common_plan_policy_config{};
+    if(additions.size()>common_plan_remaining_capacity(plan,limits).steps) {
+        context.result.plan_storage_exhausted=true;
+        context.error="reflection repair exceeds remaining durable plan step capacity";
+        return false;
+    }
     // Reuse the actual plan policy for preflight, including dependency bounds.
-    common_plan_in_memory_store preview;
+    common_plan_in_memory_store preview{common_plan_policy(limits)};
     if (!preview.open("", context.error) || !preview.create(plan, context.error)) return false;
     auto projected = plan;
     for (auto operation : additions) {

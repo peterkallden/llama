@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-investigation-workflows",
-  "version": "v8",
+  "version": "v11",
   "procedures": [
     {
       "id": "investigation-evidence-discipline-v2",
@@ -13,7 +13,7 @@
     {
       "id": "investigation-source-boundaries-v2",
       "summary": "Respect configured sources, case scope, time windows and analysis budgets.",
-      "content": "Use only sources configured by the host and available in the current namespace or project scope. Keep collection within the case time window and declared budgets. Treat truncated, timed-out or approximate search results as partial. Never infer that a missing event proves an event did not occur. For uploaded logs, prepare text and call investigate.log.import with an explicit JSONL or CSV field mapping. Use JSON pointers for nested JSON and exact headers for CSV. Preserve rejected records, missing timestamps and parser coverage. Continue bounded pages or resume host-saved progress; never treat a parsed page as complete case coverage. Keep original processor provenance separate from the parser profile.",
+      "content": "Use only sources configured by the host and available in the current namespace or project scope. A case may have no time window. Never invent a window or require one solely to create a case. Apply the case time filter only when supplied; otherwise collect available matching data within declared page and execution budgets. Report incomplete coverage and retain continuation cursors. Treat truncated, timed-out or approximate search results as partial. Never infer that a missing event proves an event did not occur. For uploaded logs, prepare text and call investigate.log.import with an explicit JSONL or CSV field mapping. Use JSON pointers for nested JSON and exact headers for CSV. Preserve rejected records, missing timestamps and parser coverage. Continue bounded pages or resume host-saved progress; never treat a parsed page as complete case coverage. Keep original processor provenance separate from the parser profile.",
       "importance": 1.0,
       "confidence": 1.0
     },
@@ -97,12 +97,12 @@
   ],
   "workflows": [
     {
-      "id": "investigation-identity-analysis-v8",
-      "source_revision": "agent-investigation-workflows@v8",
+      "id": "investigation-identity-analysis-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "workflow_ref": "workflow://investigation/identity-analysis",
-      "workflow_revision": "v8",
+      "workflow_revision": "v11",
       "family": "investigation",
-      "graph_revision": "investigation-identity-analysis@v8",
+      "graph_revision": "investigation-identity-analysis@v11",
       "required_capabilities": [
         "investigation.case",
         "investigate.collect",
@@ -139,13 +139,13 @@
           "tool": "investigate.case.create",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "model_instruction": "Create a case when no existing case is selected and the requested investigation needs one, including continuation after an earlier case-creation failure. Use only explicitly chosen sources and scope.",
           "optional_availability": true
         },
         {
           "id": "list-cases",
           "from": "start",
-          "to": "select-case",
+          "to": "case-list-result",
           "kind": "tool",
           "tool": "investigate.case.list",
           "arguments": "{\"limit\":20}",
@@ -183,9 +183,8 @@
             },
             {
               "id": "collect",
-              "description": "Collect missing events from an explicitly selected configured search source.",
-              "to": "collect",
-              "max_uses": 1
+              "description": "Acquire a missing query or its next saved page from a selected search source; do not repeat a sufficient retained page.",
+              "to": "collect"
             },
             {
               "id": "import",
@@ -208,12 +207,17 @@
               "to": "attach"
             },
             {
+              "id": "update-scope",
+              "description": "Persist a user-requested case time window only when it differs from the current verified case scope. If already saved, continue evidence acquisition or analysis. Temporary acquisition or analysis filters do not require a case update.",
+              "to": "update-scope"
+            },
+            {
               "id": "limited",
               "description": "No sources exist and none are available: report the missing underlay explicitly.",
               "to": "empty-sources"
             }
           ],
-          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again. Read collection_context pages as query-specific receipts. Reuse a sufficient completed query; when a receipt has a next_cursor, request that next page only if the question needs it. A new question or different identifier can justify a new query; source-level query_complete alone is not complete coverage of every question. Start from any known source field, machine, account, address or time hint. No user ID or time window is required. Choose further filters from actual evidence; preserve distinct query provenance when pivoting. Missing identifiers allow bounded source discovery. Changing a temporary filter does not change the saved case scope."
         },
         {
           "id": "collect-events",
@@ -223,7 +227,7 @@
           "tool": "investigate.collect",
           "arguments": "{\"limit\":100}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage. Inspect the selected source collection_context. For a continuation, copy the issued next_cursor and its query_parameters exactly. Omit cursor only for a new query; omit idempotency_key unless intentionally refreshing the same query. Reused pages are already inspected acquisition evidence, not new progress. Identifier filters are optional and may target any configured field, not only users. Query time bounds are optional and temporary; omit them to inherit case scope. Do not invent an identifier or time range.",
           "optional_availability": true
         },
         {
@@ -313,7 +317,7 @@
           "tool": "investigate.events",
           "arguments": "{\"limit\":50}",
           "model_supplies_arguments": true,
-          "model_instruction": "Inspect events for the exact investigated entity or trace and time window. Keep failure, unknown outcome and time uncertainty visible."
+          "model_instruction": "Inspect events for the exact investigated entity or trace and optional time window. Keep failure, unknown outcome and time uncertainty visible."
         },
         {
           "id": "choose-primary",
@@ -455,6 +459,180 @@
           "kind": "tool",
           "tool": "investigate.case.open",
           "arguments": "{}"
+        },
+        {
+          "id": "choose-listed-case",
+          "from": "case-list-result",
+          "to": "select-case",
+          "kind": "model_choice",
+          "model_instruction": "Use the verified list. Open only a returned case identity matching the request. If none matches, discover authorized sources for a new requested investigation, or ask for the missing selection. Never invent an existing case ID.",
+          "choices": [
+            {
+              "id": "open",
+              "description": "Choose a matching existing case from the returned records.",
+              "to": "select-case",
+              "requires": [
+                "/result/cases/0/case_id"
+              ]
+            },
+            {
+              "id": "new",
+              "description": "A new investigation is requested; inspect authorized sources before creating it.",
+              "to": "discover-case-source"
+            },
+            {
+              "id": "clarify",
+              "description": "No usable case or selected source is established; ask for the missing selection.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "list-case-sources",
+          "from": "discover-case-source",
+          "to": "case-source-result",
+          "kind": "tool",
+          "tool": "investigate.source.list",
+          "arguments": "{}",
+          "optional_availability": true
+        },
+        {
+          "id": "create-listed-source-case",
+          "from": "create-from-sources",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigate.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Create the requested case using only an exact authorized source returned by source inspection and the user-established scope. Do not substitute a different source."
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "The host review requests additional evidence. Choose a permitted read operation addressing review_request. Completed acquisition and writes must not be repeated."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Continue only for a specific unresolved review need or unread page. Stop once the bounded evidence need is resolved or a concrete limitation prevents progress."
+        },
+        {
+          "id": "choose-case-source",
+          "from": "case-source-result",
+          "to": "create-from-sources",
+          "kind": "model_choice",
+          "model_instruction": "Match the requested investigation to actual authorized source records. If no suitable source is present, ask for the missing source rather than inventing one.",
+          "choices": [
+            {
+              "id": "create",
+              "description": "An authorized source matching the requested investigation is available; create the case with its exact identity.",
+              "to": "create-from-sources",
+              "requires": [
+                "/result/sources/0/source_id"
+              ]
+            },
+            {
+              "id": "clarify",
+              "description": "No suitable authorized source is established; ask the user to select or configure the missing source.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "update-case-scope",
+          "from": "update-scope",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only a user-requested saved time scope. Supply both integer bounds; zero/zero removes the case time filter. Keep previously retained evidence and inspect coverage under the changed scope. After a successful update, use the returned revision and current case scope; do not repeat an already satisfied update. A scope_changed=false result means the requested scope is already saved.",
+          "optional_availability": true
         }
       ],
       "verification_checks": [
@@ -491,12 +669,12 @@
       ]
     },
     {
-      "id": "investigation-communication-analysis-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-communication-analysis-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "workflow_ref": "workflow://investigation/communication-analysis",
-      "workflow_revision": "v7",
+      "workflow_revision": "v11",
       "family": "investigation",
-      "graph_revision": "investigation-communication-analysis@v7",
+      "graph_revision": "investigation-communication-analysis@v11",
       "required_capabilities": [
         "investigation.case",
         "investigate.collect",
@@ -533,13 +711,13 @@
           "tool": "investigate.case.create",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "model_instruction": "Create a case when no existing case is selected and the requested investigation needs one, including continuation after an earlier case-creation failure. Use only explicitly chosen sources and scope.",
           "optional_availability": true
         },
         {
           "id": "list-cases",
           "from": "start",
-          "to": "select-case",
+          "to": "case-list-result",
           "kind": "tool",
           "tool": "investigate.case.list",
           "arguments": "{\"limit\":20}",
@@ -577,7 +755,7 @@
             },
             {
               "id": "collect",
-              "description": "Collect missing events from an explicitly selected configured search source.",
+              "description": "Acquire a missing query or its next saved page from a selected search source; do not repeat a sufficient retained page.",
               "to": "collect"
             },
             {
@@ -601,12 +779,17 @@
               "to": "attach"
             },
             {
+              "id": "update-scope",
+              "description": "Persist a user-requested case time window only when it differs from the current verified case scope. If already saved, continue evidence acquisition or analysis. Temporary acquisition or analysis filters do not require a case update.",
+              "to": "update-scope"
+            },
+            {
               "id": "limited",
               "description": "No sources exist and none are available: report the missing underlay explicitly.",
               "to": "empty-sources"
             }
           ],
-          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again. Read collection_context pages as query-specific receipts. Reuse a sufficient completed query; when a receipt has a next_cursor, request that next page only if the question needs it. A new question or different identifier can justify a new query; source-level query_complete alone is not complete coverage of every question. Start from any known source field, machine, account, address or time hint. No user ID or time window is required. Choose further filters from actual evidence; preserve distinct query provenance when pivoting. Missing identifiers allow bounded source discovery. Changing a temporary filter does not change the saved case scope."
         },
         {
           "id": "collect-events",
@@ -616,7 +799,7 @@
           "tool": "investigate.collect",
           "arguments": "{\"limit\":100}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage. Inspect the selected source collection_context. For a continuation, copy the issued next_cursor and its query_parameters exactly. Omit cursor only for a new query; omit idempotency_key unless intentionally refreshing the same query. Reused pages are already inspected acquisition evidence, not new progress. Identifier filters are optional and may target any configured field, not only users. Query time bounds are optional and temporary; omit them to inherit case scope. Do not invent an identifier or time range.",
           "optional_availability": true
         },
         {
@@ -706,7 +889,7 @@
           "tool": "investigate.events",
           "arguments": "{\"limit\":50}",
           "model_supplies_arguments": true,
-          "model_instruction": "Inspect events for the exact investigated entity or trace and time window. Keep failure, unknown outcome and time uncertainty visible."
+          "model_instruction": "Inspect events for the exact investigated entity or trace and optional time window. Keep failure, unknown outcome and time uncertainty visible."
         },
         {
           "id": "choose-primary",
@@ -856,6 +1039,180 @@
           "kind": "tool",
           "tool": "investigate.case.open",
           "arguments": "{}"
+        },
+        {
+          "id": "choose-listed-case",
+          "from": "case-list-result",
+          "to": "select-case",
+          "kind": "model_choice",
+          "model_instruction": "Use the verified list. Open only a returned case identity matching the request. If none matches, discover authorized sources for a new requested investigation, or ask for the missing selection. Never invent an existing case ID.",
+          "choices": [
+            {
+              "id": "open",
+              "description": "Choose a matching existing case from the returned records.",
+              "to": "select-case",
+              "requires": [
+                "/result/cases/0/case_id"
+              ]
+            },
+            {
+              "id": "new",
+              "description": "A new investigation is requested; inspect authorized sources before creating it.",
+              "to": "discover-case-source"
+            },
+            {
+              "id": "clarify",
+              "description": "No usable case or selected source is established; ask for the missing selection.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "list-case-sources",
+          "from": "discover-case-source",
+          "to": "case-source-result",
+          "kind": "tool",
+          "tool": "investigate.source.list",
+          "arguments": "{}",
+          "optional_availability": true
+        },
+        {
+          "id": "create-listed-source-case",
+          "from": "create-from-sources",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigate.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Create the requested case using only an exact authorized source returned by source inspection and the user-established scope. Do not substitute a different source."
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "The host review requests additional evidence. Choose a permitted read operation addressing review_request. Completed acquisition and writes must not be repeated."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Continue only for a specific unresolved review need or unread page. Stop once the bounded evidence need is resolved or a concrete limitation prevents progress."
+        },
+        {
+          "id": "choose-case-source",
+          "from": "case-source-result",
+          "to": "create-from-sources",
+          "kind": "model_choice",
+          "model_instruction": "Match the requested investigation to actual authorized source records. If no suitable source is present, ask for the missing source rather than inventing one.",
+          "choices": [
+            {
+              "id": "create",
+              "description": "An authorized source matching the requested investigation is available; create the case with its exact identity.",
+              "to": "create-from-sources",
+              "requires": [
+                "/result/sources/0/source_id"
+              ]
+            },
+            {
+              "id": "clarify",
+              "description": "No suitable authorized source is established; ask the user to select or configure the missing source.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "update-case-scope",
+          "from": "update-scope",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only a user-requested saved time scope. Supply both integer bounds; zero/zero removes the case time filter. Keep previously retained evidence and inspect coverage under the changed scope. After a successful update, use the returned revision and current case scope; do not repeat an already satisfied update. A scope_changed=false result means the requested scope is already saved.",
+          "optional_availability": true
         }
       ],
       "verification_checks": [
@@ -892,12 +1249,12 @@
       ]
     },
     {
-      "id": "investigation-event-chain-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-event-chain-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "workflow_ref": "workflow://investigation/event-chain",
-      "workflow_revision": "v7",
+      "workflow_revision": "v11",
       "family": "investigation",
-      "graph_revision": "investigation-event-chain@v7",
+      "graph_revision": "investigation-event-chain@v11",
       "required_capabilities": [
         "investigation.case",
         "investigation.graph",
@@ -934,13 +1291,13 @@
           "tool": "investigate.case.create",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "model_instruction": "Create a case when no existing case is selected and the requested investigation needs one, including continuation after an earlier case-creation failure. Use only explicitly chosen sources and scope.",
           "optional_availability": true
         },
         {
           "id": "list-cases",
           "from": "start",
-          "to": "select-case",
+          "to": "case-list-result",
           "kind": "tool",
           "tool": "investigate.case.list",
           "arguments": "{\"limit\":20}",
@@ -978,7 +1335,7 @@
             },
             {
               "id": "collect",
-              "description": "Collect missing events from an explicitly selected configured search source.",
+              "description": "Acquire a missing query or its next saved page from a selected search source; do not repeat a sufficient retained page.",
               "to": "collect"
             },
             {
@@ -1002,12 +1359,17 @@
               "to": "attach"
             },
             {
+              "id": "update-scope",
+              "description": "Persist a user-requested case time window only when it differs from the current verified case scope. If already saved, continue evidence acquisition or analysis. Temporary acquisition or analysis filters do not require a case update.",
+              "to": "update-scope"
+            },
+            {
               "id": "limited",
               "description": "No sources exist and none are available: report the missing underlay explicitly.",
               "to": "empty-sources"
             }
           ],
-          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again. Read collection_context pages as query-specific receipts. Reuse a sufficient completed query; when a receipt has a next_cursor, request that next page only if the question needs it. A new question or different identifier can justify a new query; source-level query_complete alone is not complete coverage of every question. Start from any known source field, machine, account, address or time hint. No user ID or time window is required. Choose further filters from actual evidence; preserve distinct query provenance when pivoting. Missing identifiers allow bounded source discovery. Changing a temporary filter does not change the saved case scope."
         },
         {
           "id": "collect-events",
@@ -1017,7 +1379,7 @@
           "tool": "investigate.collect",
           "arguments": "{\"limit\":100}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage. Inspect the selected source collection_context. For a continuation, copy the issued next_cursor and its query_parameters exactly. Omit cursor only for a new query; omit idempotency_key unless intentionally refreshing the same query. Reused pages are already inspected acquisition evidence, not new progress. Identifier filters are optional and may target any configured field, not only users. Query time bounds are optional and temporary; omit them to inherit case scope. Do not invent an identifier or time range.",
           "optional_availability": true
         },
         {
@@ -1107,7 +1469,7 @@
           "tool": "investigate.events",
           "arguments": "{\"limit\":50}",
           "model_supplies_arguments": true,
-          "model_instruction": "Inspect events for the exact investigated entity or trace and time window. Keep failure, unknown outcome and time uncertainty visible."
+          "model_instruction": "Inspect events for the exact investigated entity or trace and optional time window. Keep failure, unknown outcome and time uncertainty visible."
         },
         {
           "id": "choose-primary",
@@ -1257,6 +1619,180 @@
           "kind": "tool",
           "tool": "investigate.case.open",
           "arguments": "{}"
+        },
+        {
+          "id": "choose-listed-case",
+          "from": "case-list-result",
+          "to": "select-case",
+          "kind": "model_choice",
+          "model_instruction": "Use the verified list. Open only a returned case identity matching the request. If none matches, discover authorized sources for a new requested investigation, or ask for the missing selection. Never invent an existing case ID.",
+          "choices": [
+            {
+              "id": "open",
+              "description": "Choose a matching existing case from the returned records.",
+              "to": "select-case",
+              "requires": [
+                "/result/cases/0/case_id"
+              ]
+            },
+            {
+              "id": "new",
+              "description": "A new investigation is requested; inspect authorized sources before creating it.",
+              "to": "discover-case-source"
+            },
+            {
+              "id": "clarify",
+              "description": "No usable case or selected source is established; ask for the missing selection.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "list-case-sources",
+          "from": "discover-case-source",
+          "to": "case-source-result",
+          "kind": "tool",
+          "tool": "investigate.source.list",
+          "arguments": "{}",
+          "optional_availability": true
+        },
+        {
+          "id": "create-listed-source-case",
+          "from": "create-from-sources",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigate.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Create the requested case using only an exact authorized source returned by source inspection and the user-established scope. Do not substitute a different source."
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "The host review requests additional evidence. Choose a permitted read operation addressing review_request. Completed acquisition and writes must not be repeated."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Continue only for a specific unresolved review need or unread page. Stop once the bounded evidence need is resolved or a concrete limitation prevents progress."
+        },
+        {
+          "id": "choose-case-source",
+          "from": "case-source-result",
+          "to": "create-from-sources",
+          "kind": "model_choice",
+          "model_instruction": "Match the requested investigation to actual authorized source records. If no suitable source is present, ask for the missing source rather than inventing one.",
+          "choices": [
+            {
+              "id": "create",
+              "description": "An authorized source matching the requested investigation is available; create the case with its exact identity.",
+              "to": "create-from-sources",
+              "requires": [
+                "/result/sources/0/source_id"
+              ]
+            },
+            {
+              "id": "clarify",
+              "description": "No suitable authorized source is established; ask the user to select or configure the missing source.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "update-case-scope",
+          "from": "update-scope",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only a user-requested saved time scope. Supply both integer bounds; zero/zero removes the case time filter. Keep previously retained evidence and inspect coverage under the changed scope. After a successful update, use the returned revision and current case scope; do not repeat an already satisfied update. A scope_changed=false result means the requested scope is already saved.",
+          "optional_availability": true
         }
       ],
       "verification_checks": [
@@ -1293,12 +1829,12 @@
       ]
     },
     {
-      "id": "investigation-integration-trace-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-integration-trace-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "workflow_ref": "workflow://investigation/integration-trace",
-      "workflow_revision": "v7",
+      "workflow_revision": "v11",
       "family": "investigation",
-      "graph_revision": "investigation-integration-trace@v7",
+      "graph_revision": "investigation-integration-trace@v11",
       "required_capabilities": [
         "investigation.case",
         "investigate.collect",
@@ -1335,13 +1871,13 @@
           "tool": "investigate.case.create",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "model_instruction": "Create a case when no existing case is selected and the requested investigation needs one, including continuation after an earlier case-creation failure. Use only explicitly chosen sources and scope.",
           "optional_availability": true
         },
         {
           "id": "list-cases",
           "from": "start",
-          "to": "select-case",
+          "to": "case-list-result",
           "kind": "tool",
           "tool": "investigate.case.list",
           "arguments": "{\"limit\":20}",
@@ -1379,7 +1915,7 @@
             },
             {
               "id": "collect",
-              "description": "Collect missing events from an explicitly selected configured search source.",
+              "description": "Acquire a missing query or its next saved page from a selected search source; do not repeat a sufficient retained page.",
               "to": "collect"
             },
             {
@@ -1403,12 +1939,17 @@
               "to": "attach"
             },
             {
+              "id": "update-scope",
+              "description": "Persist a user-requested case time window only when it differs from the current verified case scope. If already saved, continue evidence acquisition or analysis. Temporary acquisition or analysis filters do not require a case update.",
+              "to": "update-scope"
+            },
+            {
               "id": "limited",
               "description": "No sources exist and none are available: report the missing underlay explicitly.",
               "to": "empty-sources"
             }
           ],
-          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again. Read collection_context pages as query-specific receipts. Reuse a sufficient completed query; when a receipt has a next_cursor, request that next page only if the question needs it. A new question or different identifier can justify a new query; source-level query_complete alone is not complete coverage of every question. Start from any known source field, machine, account, address or time hint. No user ID or time window is required. Choose further filters from actual evidence; preserve distinct query provenance when pivoting. Missing identifiers allow bounded source discovery. Changing a temporary filter does not change the saved case scope."
         },
         {
           "id": "collect-events",
@@ -1418,7 +1959,7 @@
           "tool": "investigate.collect",
           "arguments": "{\"limit\":100}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage. Inspect the selected source collection_context. For a continuation, copy the issued next_cursor and its query_parameters exactly. Omit cursor only for a new query; omit idempotency_key unless intentionally refreshing the same query. Reused pages are already inspected acquisition evidence, not new progress. Identifier filters are optional and may target any configured field, not only users. Query time bounds are optional and temporary; omit them to inherit case scope. Do not invent an identifier or time range.",
           "optional_availability": true
         },
         {
@@ -1508,7 +2049,7 @@
           "tool": "investigate.events",
           "arguments": "{\"limit\":50}",
           "model_supplies_arguments": true,
-          "model_instruction": "Inspect events for the exact investigated entity or trace and time window. Keep failure, unknown outcome and time uncertainty visible."
+          "model_instruction": "Inspect events for the exact investigated entity or trace and optional time window. Keep failure, unknown outcome and time uncertainty visible."
         },
         {
           "id": "choose-primary",
@@ -1658,6 +2199,180 @@
           "kind": "tool",
           "tool": "investigate.case.open",
           "arguments": "{}"
+        },
+        {
+          "id": "choose-listed-case",
+          "from": "case-list-result",
+          "to": "select-case",
+          "kind": "model_choice",
+          "model_instruction": "Use the verified list. Open only a returned case identity matching the request. If none matches, discover authorized sources for a new requested investigation, or ask for the missing selection. Never invent an existing case ID.",
+          "choices": [
+            {
+              "id": "open",
+              "description": "Choose a matching existing case from the returned records.",
+              "to": "select-case",
+              "requires": [
+                "/result/cases/0/case_id"
+              ]
+            },
+            {
+              "id": "new",
+              "description": "A new investigation is requested; inspect authorized sources before creating it.",
+              "to": "discover-case-source"
+            },
+            {
+              "id": "clarify",
+              "description": "No usable case or selected source is established; ask for the missing selection.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "list-case-sources",
+          "from": "discover-case-source",
+          "to": "case-source-result",
+          "kind": "tool",
+          "tool": "investigate.source.list",
+          "arguments": "{}",
+          "optional_availability": true
+        },
+        {
+          "id": "create-listed-source-case",
+          "from": "create-from-sources",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigate.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Create the requested case using only an exact authorized source returned by source inspection and the user-established scope. Do not substitute a different source."
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "The host review requests additional evidence. Choose a permitted read operation addressing review_request. Completed acquisition and writes must not be repeated."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Continue only for a specific unresolved review need or unread page. Stop once the bounded evidence need is resolved or a concrete limitation prevents progress."
+        },
+        {
+          "id": "choose-case-source",
+          "from": "case-source-result",
+          "to": "create-from-sources",
+          "kind": "model_choice",
+          "model_instruction": "Match the requested investigation to actual authorized source records. If no suitable source is present, ask for the missing source rather than inventing one.",
+          "choices": [
+            {
+              "id": "create",
+              "description": "An authorized source matching the requested investigation is available; create the case with its exact identity.",
+              "to": "create-from-sources",
+              "requires": [
+                "/result/sources/0/source_id"
+              ]
+            },
+            {
+              "id": "clarify",
+              "description": "No suitable authorized source is established; ask the user to select or configure the missing source.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "update-case-scope",
+          "from": "update-scope",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only a user-requested saved time scope. Supply both integer bounds; zero/zero removes the case time filter. Keep previously retained evidence and inspect coverage under the changed scope. After a successful update, use the returned revision and current case scope; do not repeat an already satisfied update. A scope_changed=false result means the requested scope is already saved.",
+          "optional_availability": true
         }
       ],
       "verification_checks": [
@@ -1694,12 +2409,12 @@
       ]
     },
     {
-      "id": "investigation-hypothesis-testing-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-hypothesis-testing-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "workflow_ref": "workflow://investigation/hypothesis-testing",
-      "workflow_revision": "v7",
+      "workflow_revision": "v11",
       "family": "investigation",
-      "graph_revision": "investigation-hypothesis-testing@v7",
+      "graph_revision": "investigation-hypothesis-testing@v11",
       "required_capabilities": [
         "investigation.case",
         "investigation.hypothesis"
@@ -1736,13 +2451,13 @@
           "tool": "investigate.case.create",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "model_instruction": "Create a case when no existing case is selected and the requested investigation needs one, including continuation after an earlier case-creation failure. Use only explicitly chosen sources and scope.",
           "optional_availability": true
         },
         {
           "id": "list-cases",
           "from": "start",
-          "to": "select-case",
+          "to": "case-list-result",
           "kind": "tool",
           "tool": "investigate.case.list",
           "arguments": "{\"limit\":20}",
@@ -1780,7 +2495,7 @@
             },
             {
               "id": "collect",
-              "description": "Collect missing events from an explicitly selected configured search source.",
+              "description": "Acquire a missing query or its next saved page from a selected search source; do not repeat a sufficient retained page.",
               "to": "collect"
             },
             {
@@ -1804,12 +2519,17 @@
               "to": "attach"
             },
             {
+              "id": "update-scope",
+              "description": "Persist a user-requested case time window only when it differs from the current verified case scope. If already saved, continue evidence acquisition or analysis. Temporary acquisition or analysis filters do not require a case update.",
+              "to": "update-scope"
+            },
+            {
               "id": "limited",
               "description": "No sources exist and none are available: report the missing underlay explicitly.",
               "to": "empty-sources"
             }
           ],
-          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again. Read collection_context pages as query-specific receipts. Reuse a sufficient completed query; when a receipt has a next_cursor, request that next page only if the question needs it. A new question or different identifier can justify a new query; source-level query_complete alone is not complete coverage of every question. Start from any known source field, machine, account, address or time hint. No user ID or time window is required. Choose further filters from actual evidence; preserve distinct query provenance when pivoting. Missing identifiers allow bounded source discovery. Changing a temporary filter does not change the saved case scope."
         },
         {
           "id": "collect-events",
@@ -1819,7 +2539,7 @@
           "tool": "investigate.collect",
           "arguments": "{\"limit\":100}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage. Inspect the selected source collection_context. For a continuation, copy the issued next_cursor and its query_parameters exactly. Omit cursor only for a new query; omit idempotency_key unless intentionally refreshing the same query. Reused pages are already inspected acquisition evidence, not new progress. Identifier filters are optional and may target any configured field, not only users. Query time bounds are optional and temporary; omit them to inherit case scope. Do not invent an identifier or time range.",
           "optional_availability": true
         },
         {
@@ -2032,6 +2752,180 @@
           "kind": "tool",
           "tool": "investigate.case.open",
           "arguments": "{}"
+        },
+        {
+          "id": "choose-listed-case",
+          "from": "case-list-result",
+          "to": "select-case",
+          "kind": "model_choice",
+          "model_instruction": "Use the verified list. Open only a returned case identity matching the request. If none matches, discover authorized sources for a new requested investigation, or ask for the missing selection. Never invent an existing case ID.",
+          "choices": [
+            {
+              "id": "open",
+              "description": "Choose a matching existing case from the returned records.",
+              "to": "select-case",
+              "requires": [
+                "/result/cases/0/case_id"
+              ]
+            },
+            {
+              "id": "new",
+              "description": "A new investigation is requested; inspect authorized sources before creating it.",
+              "to": "discover-case-source"
+            },
+            {
+              "id": "clarify",
+              "description": "No usable case or selected source is established; ask for the missing selection.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "list-case-sources",
+          "from": "discover-case-source",
+          "to": "case-source-result",
+          "kind": "tool",
+          "tool": "investigate.source.list",
+          "arguments": "{}",
+          "optional_availability": true
+        },
+        {
+          "id": "create-listed-source-case",
+          "from": "create-from-sources",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigate.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Create the requested case using only an exact authorized source returned by source inspection and the user-established scope. Do not substitute a different source."
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "The host review requests additional evidence. Choose a permitted read operation addressing review_request. Completed acquisition and writes must not be repeated."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Continue only for a specific unresolved review need or unread page. Stop once the bounded evidence need is resolved or a concrete limitation prevents progress."
+        },
+        {
+          "id": "choose-case-source",
+          "from": "case-source-result",
+          "to": "create-from-sources",
+          "kind": "model_choice",
+          "model_instruction": "Match the requested investigation to actual authorized source records. If no suitable source is present, ask for the missing source rather than inventing one.",
+          "choices": [
+            {
+              "id": "create",
+              "description": "An authorized source matching the requested investigation is available; create the case with its exact identity.",
+              "to": "create-from-sources",
+              "requires": [
+                "/result/sources/0/source_id"
+              ]
+            },
+            {
+              "id": "clarify",
+              "description": "No suitable authorized source is established; ask the user to select or configure the missing source.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "update-case-scope",
+          "from": "update-scope",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only a user-requested saved time scope. Supply both integer bounds; zero/zero removes the case time filter. Keep previously retained evidence and inspect coverage under the changed scope. After a successful update, use the returned revision and current case scope; do not repeat an already satisfied update. A scope_changed=false result means the requested scope is already saved.",
+          "optional_availability": true
         }
       ],
       "verification_checks": [
@@ -2053,18 +2947,20 @@
       ]
     },
     {
-      "id": "investigation-report-composition-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-report-composition-v12",
+      "source_revision": "agent-investigation-workflows@v12",
       "workflow_ref": "workflow://investigation/report-composition",
-      "workflow_revision": "v7",
+      "workflow_revision": "v12",
       "family": "investigation",
-      "graph_revision": "investigation-report-composition@v7",
+      "graph_revision": "investigation-report-composition@v12",
       "required_capabilities": [
         "investigation.case",
         "investigation.report",
         "resource.read"
       ],
-      "optional_capabilities": [],
+      "optional_capabilities": [
+        "investigate.case.update_scope"
+      ],
       "required_context": [],
       "start_state": "start",
       "terminal_states": [
@@ -2084,7 +2980,7 @@
         {
           "id": "inspect-underlay",
           "from": "inspect",
-          "to": "compose",
+          "to": "report-preparation",
           "kind": "tool",
           "tool": "investigate.case.items",
           "arguments": "{\"type\":\"analyses\",\"limit\":20}"
@@ -2097,7 +2993,8 @@
           "tool": "investigate.report.compose",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Freeze the selected revision with its evidence, contradictions, gaps and explicitly selected persisted figures. Do not silently use a newer revision."
+          "model_instruction": "Freeze the selected revision with its evidence, contradictions, gaps and explicitly selected persisted figures. Do not silently use a newer revision.",
+          "review_mutation_allowed": true
         },
         {
           "id": "read-report",
@@ -2112,16 +3009,159 @@
               "source": "/result/markdown_uri"
             }
           ]
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "repair-work",
+              "description": "The review identifies an unfinished case scope change or report refresh requested by the user. Reassess current scope, perform only the missing declared change, and compose a report from the resulting revision.",
+              "to": "report-refresh"
+            },
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "Address the specific unresolved review need. Choose repair-work for an unperformed requested change or stale report. Choose evidence reads only for missing evidence. Do not repeat completed work or unchanged evidence pages; finish only when the review need is resolved or blocked."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "repair-work",
+              "description": "The review identifies an unfinished case scope change or report refresh requested by the user. Reassess current scope, perform only the missing declared change, and compose a report from the resulting revision.",
+              "to": "report-refresh"
+            },
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Address the specific unresolved review need. Choose repair-work for an unperformed requested change or stale report. Choose evidence reads only for missing evidence. Do not repeat completed work or unchanged evidence pages; finish only when the review need is resolved or blocked."
+        },
+        {
+          "id": "choose-report-preparation",
+          "from": "report-preparation",
+          "to": "compose",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "compose",
+              "description": "The current case scope satisfies the request; compose a report from the current revision.",
+              "to": "compose"
+            },
+            {
+              "id": "update-scope",
+              "description": "Persist a user-requested time window that differs from the current verified case scope before composing the report.",
+              "to": "report-update-scope"
+            }
+          ],
+          "model_instruction": "Compare the requested saved case scope with the current host-verified case. A temporary acquisition filter does not save case scope. Change scope only when requested and not already satisfied; otherwise compose using the retained evidence."
+        },
+        {
+          "id": "report-update-case-scope",
+          "from": "report-update-scope",
+          "to": "report-refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "review_mutation_allowed": true,
+          "model_instruction": "Persist only the user-requested case time bounds. Preserve retained evidence. Supply both integer bounds; zero/zero removes the case filter. Use the current host-bound case identity and revision; do not repeat an already satisfied update."
+        },
+        {
+          "id": "refresh-report-case",
+          "from": "report-refresh",
+          "to": "inspect",
+          "kind": "tool",
+          "tool": "investigate.case.open",
+          "arguments": "{}"
         }
       ]
     },
     {
-      "id": "investigation-actor-relationship-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-actor-relationship-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "workflow_ref": "workflow://investigation/actor-relationship",
-      "workflow_revision": "v7",
+      "workflow_revision": "v11",
       "family": "investigation",
-      "graph_revision": "investigation-actor-relationship@v7",
+      "graph_revision": "investigation-actor-relationship@v11",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -2130,10 +3170,10 @@
       "required_context": [],
       "optional_capabilities": [
         "investigate.collect",
-        "investigation.graph",
         "investigation.hypothesis",
         "investigation.report",
-        "resource.inspect"
+        "resource.inspect",
+        "investigation.graph"
       ],
       "start_state": "start",
       "terminal_states": [
@@ -2158,13 +3198,13 @@
           "tool": "investigate.case.create",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "model_instruction": "Create a case when no existing case is selected and the requested investigation needs one, including continuation after an earlier case-creation failure. Use only explicitly chosen sources and scope.",
           "optional_availability": true
         },
         {
           "id": "list-cases",
           "from": "start",
-          "to": "select-case",
+          "to": "case-list-result",
           "kind": "tool",
           "tool": "investigate.case.list",
           "arguments": "{\"limit\":20}",
@@ -2202,7 +3242,7 @@
             },
             {
               "id": "collect",
-              "description": "Collect missing events from an explicitly selected configured search source.",
+              "description": "Acquire a missing query or its next saved page from a selected search source; do not repeat a sufficient retained page.",
               "to": "collect"
             },
             {
@@ -2226,12 +3266,17 @@
               "to": "attach"
             },
             {
+              "id": "update-scope",
+              "description": "Persist a user-requested case time window only when it differs from the current verified case scope. If already saved, continue evidence acquisition or analysis. Temporary acquisition or analysis filters do not require a case update.",
+              "to": "update-scope"
+            },
+            {
               "id": "limited",
               "description": "No sources exist and none are available: report the missing underlay explicitly.",
               "to": "empty-sources"
             }
           ],
-          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again. Read collection_context pages as query-specific receipts. Reuse a sufficient completed query; when a receipt has a next_cursor, request that next page only if the question needs it. A new question or different identifier can justify a new query; source-level query_complete alone is not complete coverage of every question. Start from any known source field, machine, account, address or time hint. No user ID or time window is required. Choose further filters from actual evidence; preserve distinct query provenance when pivoting. Missing identifiers allow bounded source discovery. Changing a temporary filter does not change the saved case scope."
         },
         {
           "id": "collect-events",
@@ -2241,7 +3286,7 @@
           "tool": "investigate.collect",
           "arguments": "{\"limit\":100}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage. Inspect the selected source collection_context. For a continuation, copy the issued next_cursor and its query_parameters exactly. Omit cursor only for a new query; omit idempotency_key unless intentionally refreshing the same query. Reused pages are already inspected acquisition evidence, not new progress. Identifier filters are optional and may target any configured field, not only users. Query time bounds are optional and temporary; omit them to inherit case scope. Do not invent an identifier or time range.",
           "optional_availability": true
         },
         {
@@ -2318,15 +3363,15 @@
         {
           "id": "inspect-underlay",
           "from": "underlay",
-          "to": "primary",
+          "to": "underlay-choice",
           "kind": "tool",
-          "tool": "investigate.case.items",
-          "arguments": "{\"type\":\"statements\",\"limit\":50}"
+          "tool": "investigate.case.open",
+          "arguments": "{}"
         },
         {
           "id": "run-method",
           "from": "primary",
-          "to": "assess",
+          "to": "next",
           "kind": "tool",
           "tool": "investigate.statement.record",
           "arguments": "{\"analysis_kind\":\"actor_relationship\"}",
@@ -2444,6 +3489,239 @@
           "kind": "tool",
           "tool": "investigate.case.open",
           "arguments": "{}"
+        },
+        {
+          "id": "choose-underlay",
+          "from": "underlay-choice",
+          "to": "text-underlay",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "text",
+              "description": "Inspect retained source-anchored statements for document or log text analysis.",
+              "to": "text-underlay"
+            },
+            {
+              "id": "events",
+              "description": "Inspect retained event entities and their observed relations; event entities are not automatically reviewed human actors.",
+              "to": "event-underlay"
+            },
+            {
+              "id": "limited",
+              "description": "No statements or events exist; report the missing evidence and its limitations.",
+              "to": "empty-underlay"
+            }
+          ],
+          "model_instruction": "Choose the evidence representation that answers the actor question. Search connectors supply events and entities; source documents supply text-anchored statements and mentions. Mixed cases may use both through a later declared follow-up. Do not fabricate text anchors for events or merge actor identities by name."
+        },
+        {
+          "id": "inspect-text-underlay",
+          "from": "text-underlay",
+          "to": "primary",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"statements\",\"limit\":50}"
+        },
+        {
+          "id": "inspect-event-underlay",
+          "from": "event-underlay",
+          "to": "event-relations",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"entities\",\"limit\":50}"
+        },
+        {
+          "id": "expand-event-relations",
+          "from": "event-relations",
+          "to": "next",
+          "kind": "tool",
+          "tool": "investigate.graph.expand",
+          "arguments": "{\"max_depth\":1,\"max_nodes\":50,\"max_edges\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Choose an exact entity ID from inspected case evidence that is relevant to the question. Report observed event-backed relations and their source evidence. A shared name or address does not establish reviewed actor identity or causality.",
+          "optional_availability": true
+        },
+        {
+          "id": "finish-no-underlay",
+          "from": "empty-underlay",
+          "to": "done",
+          "kind": "tool",
+          "tool": "investigate.case.open",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-listed-case",
+          "from": "case-list-result",
+          "to": "select-case",
+          "kind": "model_choice",
+          "model_instruction": "Use the verified list. Open only a returned case identity matching the request. If none matches, discover authorized sources for a new requested investigation, or ask for the missing selection. Never invent an existing case ID.",
+          "choices": [
+            {
+              "id": "open",
+              "description": "Choose a matching existing case from the returned records.",
+              "to": "select-case",
+              "requires": [
+                "/result/cases/0/case_id"
+              ]
+            },
+            {
+              "id": "new",
+              "description": "A new investigation is requested; inspect authorized sources before creating it.",
+              "to": "discover-case-source"
+            },
+            {
+              "id": "clarify",
+              "description": "No usable case or selected source is established; ask for the missing selection.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "list-case-sources",
+          "from": "discover-case-source",
+          "to": "case-source-result",
+          "kind": "tool",
+          "tool": "investigate.source.list",
+          "arguments": "{}",
+          "optional_availability": true
+        },
+        {
+          "id": "create-listed-source-case",
+          "from": "create-from-sources",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigate.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Create the requested case using only an exact authorized source returned by source inspection and the user-established scope. Do not substitute a different source."
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "The host review requests additional evidence. Choose a permitted read operation addressing review_request. Completed acquisition and writes must not be repeated."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Continue only for a specific unresolved review need or unread page. Stop once the bounded evidence need is resolved or a concrete limitation prevents progress."
+        },
+        {
+          "id": "choose-case-source",
+          "from": "case-source-result",
+          "to": "create-from-sources",
+          "kind": "model_choice",
+          "model_instruction": "Match the requested investigation to actual authorized source records. If no suitable source is present, ask for the missing source rather than inventing one.",
+          "choices": [
+            {
+              "id": "create",
+              "description": "An authorized source matching the requested investigation is available; create the case with its exact identity.",
+              "to": "create-from-sources",
+              "requires": [
+                "/result/sources/0/source_id"
+              ]
+            },
+            {
+              "id": "clarify",
+              "description": "No suitable authorized source is established; ask the user to select or configure the missing source.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "update-case-scope",
+          "from": "update-scope",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only a user-requested saved time scope. Supply both integer bounds; zero/zero removes the case time filter. Keep previously retained evidence and inspect coverage under the changed scope. After a successful update, use the returned revision and current case scope; do not repeat an already satisfied update. A scope_changed=false result means the requested scope is already saved.",
+          "optional_availability": true
         }
       ],
       "verification_checks": [
@@ -2461,16 +3739,46 @@
             "source": "literal",
             "value": 0
           }
+        },
+        {
+          "id": "empty-events-underlay",
+          "transition": "finish-no-underlay",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-underlay",
+            "pointer": "/result/case/counts/events"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
+        },
+        {
+          "id": "empty-statements-underlay",
+          "transition": "finish-no-underlay",
+          "phase": "before_tool",
+          "operation": "equal",
+          "left": {
+            "source": "observation",
+            "transition": "inspect-underlay",
+            "pointer": "/result/case/counts/statements"
+          },
+          "right": {
+            "source": "literal",
+            "value": 0
+          }
         }
       ]
     },
     {
-      "id": "investigation-narrative-comparison-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-narrative-comparison-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "workflow_ref": "workflow://investigation/narrative-comparison",
-      "workflow_revision": "v7",
+      "workflow_revision": "v11",
       "family": "investigation",
-      "graph_revision": "investigation-narrative-comparison@v7",
+      "graph_revision": "investigation-narrative-comparison@v11",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -2507,13 +3815,13 @@
           "tool": "investigate.case.create",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "model_instruction": "Create a case when no existing case is selected and the requested investigation needs one, including continuation after an earlier case-creation failure. Use only explicitly chosen sources and scope.",
           "optional_availability": true
         },
         {
           "id": "list-cases",
           "from": "start",
-          "to": "select-case",
+          "to": "case-list-result",
           "kind": "tool",
           "tool": "investigate.case.list",
           "arguments": "{\"limit\":20}",
@@ -2551,7 +3859,7 @@
             },
             {
               "id": "collect",
-              "description": "Collect missing events from an explicitly selected configured search source.",
+              "description": "Acquire a missing query or its next saved page from a selected search source; do not repeat a sufficient retained page.",
               "to": "collect"
             },
             {
@@ -2575,12 +3883,17 @@
               "to": "attach"
             },
             {
+              "id": "update-scope",
+              "description": "Persist a user-requested case time window only when it differs from the current verified case scope. If already saved, continue evidence acquisition or analysis. Temporary acquisition or analysis filters do not require a case update.",
+              "to": "update-scope"
+            },
+            {
               "id": "limited",
               "description": "No sources exist and none are available: report the missing underlay explicitly.",
               "to": "empty-sources"
             }
           ],
-          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again. Read collection_context pages as query-specific receipts. Reuse a sufficient completed query; when a receipt has a next_cursor, request that next page only if the question needs it. A new question or different identifier can justify a new query; source-level query_complete alone is not complete coverage of every question. Start from any known source field, machine, account, address or time hint. No user ID or time window is required. Choose further filters from actual evidence; preserve distinct query provenance when pivoting. Missing identifiers allow bounded source discovery. Changing a temporary filter does not change the saved case scope."
         },
         {
           "id": "collect-events",
@@ -2590,7 +3903,7 @@
           "tool": "investigate.collect",
           "arguments": "{\"limit\":100}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage. Inspect the selected source collection_context. For a continuation, copy the issued next_cursor and its query_parameters exactly. Omit cursor only for a new query; omit idempotency_key unless intentionally refreshing the same query. Reused pages are already inspected acquisition evidence, not new progress. Identifier filters are optional and may target any configured field, not only users. Query time bounds are optional and temporary; omit them to inherit case scope. Do not invent an identifier or time range.",
           "optional_availability": true
         },
         {
@@ -2793,6 +4106,180 @@
           "kind": "tool",
           "tool": "investigate.case.open",
           "arguments": "{}"
+        },
+        {
+          "id": "choose-listed-case",
+          "from": "case-list-result",
+          "to": "select-case",
+          "kind": "model_choice",
+          "model_instruction": "Use the verified list. Open only a returned case identity matching the request. If none matches, discover authorized sources for a new requested investigation, or ask for the missing selection. Never invent an existing case ID.",
+          "choices": [
+            {
+              "id": "open",
+              "description": "Choose a matching existing case from the returned records.",
+              "to": "select-case",
+              "requires": [
+                "/result/cases/0/case_id"
+              ]
+            },
+            {
+              "id": "new",
+              "description": "A new investigation is requested; inspect authorized sources before creating it.",
+              "to": "discover-case-source"
+            },
+            {
+              "id": "clarify",
+              "description": "No usable case or selected source is established; ask for the missing selection.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "list-case-sources",
+          "from": "discover-case-source",
+          "to": "case-source-result",
+          "kind": "tool",
+          "tool": "investigate.source.list",
+          "arguments": "{}",
+          "optional_availability": true
+        },
+        {
+          "id": "create-listed-source-case",
+          "from": "create-from-sources",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigate.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Create the requested case using only an exact authorized source returned by source inspection and the user-established scope. Do not substitute a different source."
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "The host review requests additional evidence. Choose a permitted read operation addressing review_request. Completed acquisition and writes must not be repeated."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Continue only for a specific unresolved review need or unread page. Stop once the bounded evidence need is resolved or a concrete limitation prevents progress."
+        },
+        {
+          "id": "choose-case-source",
+          "from": "case-source-result",
+          "to": "create-from-sources",
+          "kind": "model_choice",
+          "model_instruction": "Match the requested investigation to actual authorized source records. If no suitable source is present, ask for the missing source rather than inventing one.",
+          "choices": [
+            {
+              "id": "create",
+              "description": "An authorized source matching the requested investigation is available; create the case with its exact identity.",
+              "to": "create-from-sources",
+              "requires": [
+                "/result/sources/0/source_id"
+              ]
+            },
+            {
+              "id": "clarify",
+              "description": "No suitable authorized source is established; ask the user to select or configure the missing source.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "update-case-scope",
+          "from": "update-scope",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only a user-requested saved time scope. Supply both integer bounds; zero/zero removes the case time filter. Keep previously retained evidence and inspect coverage under the changed scope. After a successful update, use the returned revision and current case scope; do not repeat an already satisfied update. A scope_changed=false result means the requested scope is already saved.",
+          "optional_availability": true
         }
       ],
       "verification_checks": [
@@ -2814,12 +4301,12 @@
       ]
     },
     {
-      "id": "investigation-document-provenance-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-document-provenance-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "workflow_ref": "workflow://investigation/document-provenance",
-      "workflow_revision": "v7",
+      "workflow_revision": "v11",
       "family": "investigation",
-      "graph_revision": "investigation-document-provenance@v7",
+      "graph_revision": "investigation-document-provenance@v11",
       "required_capabilities": [
         "investigation.case",
         "resource.inspect"
@@ -2856,13 +4343,13 @@
           "tool": "investigate.case.create",
           "arguments": "{}",
           "model_supplies_arguments": true,
-          "model_instruction": "Create a case only when no existing case is selected and the user requests a new investigation. Use only explicitly chosen sources and scope.",
+          "model_instruction": "Create a case when no existing case is selected and the requested investigation needs one, including continuation after an earlier case-creation failure. Use only explicitly chosen sources and scope.",
           "optional_availability": true
         },
         {
           "id": "list-cases",
           "from": "start",
-          "to": "select-case",
+          "to": "case-list-result",
           "kind": "tool",
           "tool": "investigate.case.list",
           "arguments": "{\"limit\":20}",
@@ -2900,7 +4387,7 @@
             },
             {
               "id": "collect",
-              "description": "Collect missing events from an explicitly selected configured search source.",
+              "description": "Acquire a missing query or its next saved page from a selected search source; do not repeat a sufficient retained page.",
               "to": "collect"
             },
             {
@@ -2924,12 +4411,17 @@
               "to": "attach"
             },
             {
+              "id": "update-scope",
+              "description": "Persist a user-requested case time window only when it differs from the current verified case scope. If already saved, continue evidence acquisition or analysis. Temporary acquisition or analysis filters do not require a case update.",
+              "to": "update-scope"
+            },
+            {
               "id": "limited",
               "description": "No sources exist and none are available: report the missing underlay explicitly.",
               "to": "empty-sources"
             }
           ],
-          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again."
+          "model_instruction": "Choose from actual source kinds, versions, processing status and retained coverage. Do not reacquire sufficient evidence or add an existing source again. Read collection_context pages as query-specific receipts. Reuse a sufficient completed query; when a receipt has a next_cursor, request that next page only if the question needs it. A new question or different identifier can justify a new query; source-level query_complete alone is not complete coverage of every question. Start from any known source field, machine, account, address or time hint. No user ID or time window is required. Choose further filters from actual evidence; preserve distinct query provenance when pivoting. Missing identifiers allow bounded source discovery. Changing a temporary filter does not change the saved case scope."
         },
         {
           "id": "collect-events",
@@ -2939,7 +4431,7 @@
           "tool": "investigate.collect",
           "arguments": "{\"limit\":100}",
           "model_supplies_arguments": true,
-          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage.",
+          "model_instruction": "Use the exact identity, trace or other identifier established by the question and evidence. Do not substitute an unrelated IP. Preserve partial coverage. Inspect the selected source collection_context. For a continuation, copy the issued next_cursor and its query_parameters exactly. Omit cursor only for a new query; omit idempotency_key unless intentionally refreshing the same query. Reused pages are already inspected acquisition evidence, not new progress. Identifier filters are optional and may target any configured field, not only users. Query time bounds are optional and temporary; omit them to inherit case scope. Do not invent an identifier or time range.",
           "optional_availability": true
         },
         {
@@ -3142,6 +4634,180 @@
           "kind": "tool",
           "tool": "investigate.case.open",
           "arguments": "{}"
+        },
+        {
+          "id": "choose-listed-case",
+          "from": "case-list-result",
+          "to": "select-case",
+          "kind": "model_choice",
+          "model_instruction": "Use the verified list. Open only a returned case identity matching the request. If none matches, discover authorized sources for a new requested investigation, or ask for the missing selection. Never invent an existing case ID.",
+          "choices": [
+            {
+              "id": "open",
+              "description": "Choose a matching existing case from the returned records.",
+              "to": "select-case",
+              "requires": [
+                "/result/cases/0/case_id"
+              ]
+            },
+            {
+              "id": "new",
+              "description": "A new investigation is requested; inspect authorized sources before creating it.",
+              "to": "discover-case-source"
+            },
+            {
+              "id": "clarify",
+              "description": "No usable case or selected source is established; ask for the missing selection.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "list-case-sources",
+          "from": "discover-case-source",
+          "to": "case-source-result",
+          "kind": "tool",
+          "tool": "investigate.source.list",
+          "arguments": "{}",
+          "optional_availability": true
+        },
+        {
+          "id": "create-listed-source-case",
+          "from": "create-from-sources",
+          "to": "sources",
+          "kind": "tool",
+          "tool": "investigate.case.create",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Create the requested case using only an exact authorized source returned by source inspection and the user-established scope. Do not substitute a different source."
+        },
+        {
+          "id": "review-read-evidence",
+          "from": "review-read",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Resolve the review_request using an already-issued resource URI. Use model_content_range.next_offset when presentation omitted text, even if the previous source read was exhausted. Keep reads bounded and do not repeat unchanged ranges.",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "read-report",
+              "source": "/result/resource/uri",
+              "required": false
+            }
+          ]
+        },
+        {
+          "id": "review-case-relations",
+          "from": "review-relations",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.case.items",
+          "arguments": "{\"type\":\"relations\",\"limit\":100}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Inspect the retained relation page required by the review; use its exact cursor if more relevant items remain."
+        },
+        {
+          "id": "review-case-events",
+          "from": "review-events",
+          "to": "review-assess",
+          "kind": "tool",
+          "tool": "investigate.events",
+          "arguments": "{\"limit\":50}",
+          "model_supplies_arguments": true,
+          "optional_availability": true,
+          "model_instruction": "Use exact retained identity/relation IDs and event page cursors. Inspect only the evidence needed by the review."
+        },
+        {
+          "id": "review-evidence-entry",
+          "from": "done",
+          "to": "review-assess",
+          "kind": "model_choice",
+          "review_only": true,
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            }
+          ],
+          "model_instruction": "The host review requests additional evidence. Choose a permitted read operation addressing review_request. Completed acquisition and writes must not be repeated."
+        },
+        {
+          "id": "review-evidence-next",
+          "from": "review-assess",
+          "to": "done",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "read",
+              "description": "Read an issued resource at the exact byte position not yet shown to the model; preserve its identity and source range.",
+              "to": "review-read"
+            },
+            {
+              "id": "relations",
+              "description": "Inspect retained case relations and source evidence relevant to the review; a neighborhood count is not the case-wide total.",
+              "to": "review-relations"
+            },
+            {
+              "id": "events",
+              "description": "Inspect relevant retained source events or their issued continuation page.",
+              "to": "review-events"
+            },
+            {
+              "id": "finish",
+              "description": "The required evidence has been inspected, or further inspection is blocked; return for a fresh answer review with explicit remaining limitations.",
+              "to": "done"
+            }
+          ],
+          "model_instruction": "Continue only for a specific unresolved review need or unread page. Stop once the bounded evidence need is resolved or a concrete limitation prevents progress."
+        },
+        {
+          "id": "choose-case-source",
+          "from": "case-source-result",
+          "to": "create-from-sources",
+          "kind": "model_choice",
+          "model_instruction": "Match the requested investigation to actual authorized source records. If no suitable source is present, ask for the missing source rather than inventing one.",
+          "choices": [
+            {
+              "id": "create",
+              "description": "An authorized source matching the requested investigation is available; create the case with its exact identity.",
+              "to": "create-from-sources",
+              "requires": [
+                "/result/sources/0/source_id"
+              ]
+            },
+            {
+              "id": "clarify",
+              "description": "No suitable authorized source is established; ask the user to select or configure the missing source.",
+              "to": "done"
+            }
+          ]
+        },
+        {
+          "id": "update-case-scope",
+          "from": "update-scope",
+          "to": "refresh",
+          "kind": "tool",
+          "tool": "investigate.case.update_scope",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use only a user-requested saved time scope. Supply both integer bounds; zero/zero removes the case time filter. Keep previously retained evidence and inspect coverage under the changed scope. After a successful update, use the returned revision and current case scope; do not repeat an already satisfied update. A scope_changed=false result means the requested scope is already saved.",
+          "optional_availability": true
         }
       ],
       "verification_checks": [
@@ -3165,8 +4831,8 @@
   ],
   "blueprints": [
     {
-      "id": "investigation-identity-analysis-v8",
-      "source_revision": "agent-investigation-workflows@v8",
+      "id": "investigation-identity-analysis-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "selection_description": "Trace an identity through hosts and authentication events.",
       "purpose": "Establish which configured sources record authentication activity for the selected identity.",
       "goal": "Produce a source-linked account of observed authentication destinations and related events.",
@@ -3186,7 +4852,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/identity-analysis",
-          "workflow_revision": "v8",
+          "workflow_revision": "v11",
           "phase_bindings": {
             "select-scope": [
               "open-case",
@@ -3225,7 +4891,7 @@
         {
           "id": "select-scope",
           "title": "Select scope",
-          "objective": "Confirm exact identity, selected sources, case revision and time window. Result: scope and unresolved identity bindings."
+          "objective": "Confirm exact identity, selected sources, case revision and optional time window. Missing time bounds allow bounded inspection of available matching data. Result: scope and unresolved identity bindings."
         },
         {
           "id": "prepare-source-events",
@@ -3263,8 +4929,8 @@
       "next_action": "select-scope"
     },
     {
-      "id": "investigation-communication-analysis-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-communication-analysis-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "selection_description": "Trace observed network communication from a host or address.",
       "purpose": "Describe source-linked communication paths and their time coverage.",
       "goal": "Identify the observed peers and supporting flow records for the selected host or address.",
@@ -3284,7 +4950,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/communication-analysis",
-          "workflow_revision": "v7",
+          "workflow_revision": "v11",
           "phase_bindings": {
             "select-scope": [
               "open-case",
@@ -3362,8 +5028,8 @@
       "next_action": "select-scope"
     },
     {
-      "id": "investigation-event-chain-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-event-chain-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "selection_description": "Find a bounded time-compatible chain between two entities.",
       "purpose": "Test whether recorded relations form a time-ordered path under explicit bounds.",
       "goal": "Return a bounded shortest-hop temporal path or an explicit no-path/budget-limited result.",
@@ -3383,7 +5049,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/event-chain",
-          "workflow_revision": "v7",
+          "workflow_revision": "v11",
           "phase_bindings": {
             "define-endpoints": [
               "open-case",
@@ -3461,8 +5127,8 @@
       "next_action": "define-endpoints"
     },
     {
-      "id": "investigation-integration-trace-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-integration-trace-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "selection_description": "Follow an exact trace, correlation or message identifier across services.",
       "purpose": "Reconstruct an integration path from source events that share a stable trace identifier.",
       "goal": "Describe the observed service/event sequence with its timestamps and source evidence.",
@@ -3482,7 +5148,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/integration-trace",
-          "workflow_revision": "v7",
+          "workflow_revision": "v11",
           "phase_bindings": {
             "select-trace": [
               "open-case",
@@ -3560,8 +5226,8 @@
       "next_action": "select-trace"
     },
     {
-      "id": "investigation-hypothesis-testing-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-hypothesis-testing-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "selection_description": "Evaluate a testable claim against supporting and contradicting evidence.",
       "purpose": "Keep an explanation as a hypothesis until an analyst reviews the evidence.",
       "goal": "Record a hypothesis with both supporting and contradicting source references and explicit limitations.",
@@ -3579,7 +5245,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/hypothesis-testing",
-          "workflow_revision": "v7",
+          "workflow_revision": "v11",
           "phase_bindings": {
             "state-claim": [
               "open-case",
@@ -3642,12 +5308,12 @@
       "next_action": "state-claim"
     },
     {
-      "id": "investigation-report-composition-v7",
-      "source_revision": "agent-investigation-workflows@v7",
-      "selection_description": "Freeze a report from a selected investigation case revision.",
+      "id": "investigation-report-composition-v12",
+      "source_revision": "agent-investigation-workflows@v12",
+      "selection_description": "Create or refresh a frozen investigation report, optionally saving a user-requested case time scope first. Other analysis or acquisition requires a broader investigation route.",
       "purpose": "Create an auditable report resource tied to one immutable case revision.",
       "goal": "Produce a source-linked report containing a timeline, relations, hypotheses and coverage limitations.",
-      "success_criteria": "The report URI and content fingerprint identify a frozen case revision; later analysis does not rewrite it.",
+      "success_criteria": "Any requested case time scope is saved and verified before report composition. The report URI and fingerprint identify the resulting frozen case revision; retained evidence is preserved.",
       "required_capabilities": [
         "investigation.case",
         "investigation.report",
@@ -3656,7 +5322,8 @@
       "optional_capabilities": [
         "artifact.export",
         "document.open",
-        "document.save"
+        "document.save",
+        "investigate.case.update_scope"
       ],
       "workflow_policy": "preferred",
       "procedure_refs": [
@@ -3667,11 +5334,14 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/report-composition",
-          "workflow_revision": "v7",
+          "workflow_revision": "v12",
           "phase_bindings": {
             "confirm-revision": [
               "open-case",
-              "inspect-underlay"
+              "inspect-underlay",
+              "choose-report-preparation",
+              "report-update-case-scope",
+              "refresh-report-case"
             ],
             "compose-report": [
               "compose-report"
@@ -3686,7 +5356,7 @@
         {
           "id": "confirm-revision",
           "title": "Confirm revision",
-          "objective": "Open the exact published case revision and inspect its saved items in bounded pages. Result: frozen source/evidence selection and coverage; do not collect new evidence while composing this revision."
+          "objective": "Open the selected case, compare its current saved scope with any requested scope change, and persist only a missing user-requested change before freezing a report. Preserve retained evidence and verify the resulting revision."
         },
         {
           "id": "compose-report",
@@ -3708,12 +5378,12 @@
       "next_action": "confirm-revision"
     },
     {
-      "id": "investigation-actor-relationship-v7",
-      "source_revision": "agent-investigation-workflows@v7",
-      "selection_description": "Compare named actors across explicitly selected source documents.",
-      "purpose": "Record source-anchored actor mentions and proposed relationships without merging identities by name alone.",
-      "goal": "Produce a paginated actor and relationship view with every mention linked to its retained source anchor.",
-      "success_criteria": "Quoted positions are host-verified; proposed identity bindings remain unreviewed and unresolved matches stay separate.",
+      "id": "investigation-actor-relationship-v11",
+      "source_revision": "agent-investigation-workflows@v11",
+      "selection_description": "Analyze selected actors or event entities through source-anchored text or retained event relations.",
+      "purpose": "Describe supported actor mentions and event-entity relationships while retaining identity uncertainty.",
+      "goal": "Produce a source-linked relationship analysis using the selected case evidence representation.",
+      "success_criteria": "Text anchors are host-verified; event links retain supporting records. Proposed actor identity remains unreviewed and distinct from event entity identity.",
       "required_capabilities": [
         "investigation.case",
         "investigation.analysis",
@@ -3729,7 +5399,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/actor-relationship",
-          "workflow_revision": "v7",
+          "workflow_revision": "v11",
           "phase_bindings": {
             "select-sources": [
               "open-case",
@@ -3748,13 +5418,18 @@
               "inspect-underlay",
               "run-method",
               "read-text",
-              "record-extraction"
+              "record-extraction",
+              "choose-underlay",
+              "inspect-text-underlay",
+              "inspect-event-underlay",
+              "expand-event-relations"
             ],
             "review-bindings": [
               "inspect-result",
               "choose-next",
               "final-summary",
-              "finish-empty"
+              "finish-empty",
+              "finish-no-underlay"
             ]
           }
         }
@@ -3763,20 +5438,20 @@
         {
           "id": "select-sources",
           "title": "Select sources",
-          "objective": "Confirm case revision and exact authorized old/new documents. Result: selected source IDs, versions and actor question."
+          "objective": "Confirm case revision, selected source identities and the actor or entity question. Preserve source-local identity domains."
         },
         {
           "id": "prepare-text",
-          "title": "Prepare text",
-          "objective": "Reuse retained prepared text for the selected versions; invoke configured processing only where missing. Result: representation references, processor/OCR versions and coverage limits.",
+          "title": "Prepare evidence",
+          "objective": "Reuse sufficient retained query receipts, event pages or document representations. Acquire only missing evidence and preserve the issued continuation position.",
           "depends_on": [
             "select-sources"
           ]
         },
         {
           "id": "extract-mentions",
-          "title": "Extract mentions",
-          "objective": "Reuse saved anchored statements, extract only missing mentions, then read host-created actors and actor_mentions through case.items. Result: verified anchors, mention IDs and distinct candidate IDs, including isolated actors.",
+          "title": "Inspect actors and entities",
+          "objective": "Select text-anchored mention analysis or event-backed entity relations according to the available evidence and question. Preserve exact IDs and provenance; do not turn event entities into reviewed actors.",
           "depends_on": [
             "prepare-text"
           ]
@@ -3784,7 +5459,7 @@
         {
           "id": "review-bindings",
           "title": "Qualify identities",
-          "objective": "Propose possible_same_actor links only between selected candidates with supporting statement IDs and rationale. Result: evidence-backed proposals and unresolved identities; user review uses the host-authorized path and never silently merges names.",
+          "objective": "Separate observed event relationships, source-anchored mentions and proposed identity links. Report evidence and coverage limits; analyst review remains host-authorized.",
           "depends_on": [
             "extract-mentions"
           ]
@@ -3793,8 +5468,8 @@
       "next_action": "select-sources"
     },
     {
-      "id": "investigation-narrative-comparison-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-narrative-comparison-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "selection_description": "Compare event descriptions and statements across selected documents and logs.",
       "purpose": "Find supported agreement, contradiction, qualification, source dependency, and unresolved differences.",
       "goal": "Record comparable source-anchored statements and explicitly qualified pairwise comparisons.",
@@ -3814,7 +5489,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/narrative-comparison",
-          "workflow_revision": "v7",
+          "workflow_revision": "v11",
           "phase_bindings": {
             "select-sources": [
               "open-case",
@@ -3906,8 +5581,8 @@
       "next_action": "select-sources"
     },
     {
-      "id": "investigation-document-provenance-v7",
-      "source_revision": "agent-investigation-workflows@v7",
+      "id": "investigation-document-provenance-v11",
+      "source_revision": "agent-investigation-workflows@v11",
       "selection_description": "Inspect origin, versions, and processing history of selected investigation documents.",
       "purpose": "Summarize verifiable metadata and representation lineage for the case sources.",
       "goal": "Produce a source-by-source provenance account with explicit metadata gaps and processor history.",
@@ -3926,7 +5601,7 @@
       "workflow_bindings": [
         {
           "workflow_ref": "workflow://investigation/document-provenance",
-          "workflow_revision": "v7",
+          "workflow_revision": "v11",
           "phase_bindings": {
             "select-sources": [
               "open-case",

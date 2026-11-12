@@ -399,6 +399,8 @@ if (LLAMA_AGENT_RUNTIME)
         test-agent-workflow-recovery.cpp
         test-agent-synthesis-state.cpp
         test-agent-method-phases.cpp
+        test-agent-continuation-control.cpp
+        test-agent-investigation-context.cpp
         test-agent-response-protocol.cpp
         test-agent-runtime-json.cpp
         test-agent-chat-routing.cpp
@@ -607,7 +609,7 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-plan-context")
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "orchestration;model-free")
         endif()
-        if (TEST_NAME STREQUAL "test-agent-synthesis-state" OR TEST_NAME STREQUAL "test-agent-method-phases")
+        if (TEST_NAME STREQUAL "test-agent-synthesis-state" OR TEST_NAME STREQUAL "test-agent-method-phases" OR TEST_NAME STREQUAL "test-agent-continuation-control" OR TEST_NAME STREQUAL "test-agent-investigation-context")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "agent;model-free;orchestration")
         endif()

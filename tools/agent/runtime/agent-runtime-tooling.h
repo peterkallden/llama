@@ -58,6 +58,8 @@ struct common_agent_runtime_tooling {
     // request-scoped and contains only case metadata and selected evidence.
     std::optional<std::string> investigation_context_text;
     std::optional<common_investigation_context_binding> investigation_context;
+    std::function<bool(const common_investigation_context_binding &,
+        nlohmann::ordered_json &, std::string &)> investigation_context_reader;
     std::optional<std::vector<common_investigation_source_kind>> investigation_source_kinds;
     std::shared_ptr<const common_agent_template_library_snapshot> template_libraries;
 };

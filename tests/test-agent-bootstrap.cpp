@@ -420,7 +420,7 @@ int main() {
     investigation_file_text << investigation_file.rdbuf();
     common_agent_bootstrap_package investigation_package;
     assert(common_agent_package_parse_json(investigation_file_text.str(), investigation_package, error));
-    require_code_workflow(investigation_package.version == "v8",
+    require_code_workflow(investigation_package.version == "v11",
         "investigation package revision is stale");
     const std::vector<std::string> investigation_workflows = {
         "workflow://investigation/identity-analysis",
@@ -452,9 +452,8 @@ int main() {
         assert(!blueprint.steps.empty() && !blueprint.procedure_refs.empty());
     }
     for (const auto & blueprint : investigation_package.blueprints) {
-        const bool identity = blueprint.workflow_bindings.front().workflow_ref ==
-            "workflow://investigation/identity-analysis";
-        const std::string revision = identity ? "v8" : "v7";
+        const std::string revision = blueprint.workflow_bindings.front().workflow_ref ==
+            "workflow://investigation/report-composition" ? "v12" : "v11";
         require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@" + revision &&
             blueprint.workflow_bindings.front().workflow_revision == revision,
             "investigation immutable identity does not match revised authority");

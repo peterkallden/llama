@@ -137,6 +137,7 @@ struct common_agent_runtime_session_host_turn_result {
     std::vector<common_runtime_trace_entry> trace;
     std::string error;
     std::optional<common_agent_unverified_draft> unverified_draft;
+    std::optional<common_agent_review_progress> review_progress;
 };
 
 struct common_agent_runtime_session_host_descriptor {

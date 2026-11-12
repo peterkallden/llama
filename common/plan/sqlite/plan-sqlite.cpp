@@ -130,6 +130,8 @@ json serialize_workflow_definition(const common_plan_workflow_definition & defin
                 {"artifact_section_id", transition.artifact_section_id},
                 {"artifact_profile_json", transition.artifact_profile_json},
                 {"optional", transition.optional}, {"max_pages", transition.max_pages}};
+            if (transition.review_only) item["review_only"] = true;
+            if (transition.review_mutation_allowed) item["review_mutation_allowed"] = true;
             if (!transition.choices.empty()) {
                 item["choices"] = json::array();
                 for (const auto & choice : transition.choices) item["choices"].push_back({
@@ -196,6 +198,8 @@ common_plan_workflow_definition parse_workflow_definition(const json & definitio
         transition.candidate_id_json_pointer = item.value("candidate_id", std::string("/id"));
         transition.model_supplies_arguments = item.value("model_supplies_arguments", false);
         transition.optional_availability = item.value("optional_availability", false);
+        transition.review_only = item.value("review_only", false);
+        transition.review_mutation_allowed = item.value("review_mutation_allowed", false);
         transition.failure_terminal_state = item.value("failure_terminal_state", std::string{});
         transition.handled_http_statuses = item.value("handled_http_statuses", std::vector<int>{});
         transition.model_instruction = item.value("model_instruction", std::string{});

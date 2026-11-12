@@ -1,4 +1,5 @@
 #include "agent/runtime-json-contracts.h"
+#include "agent/contracts/agent-recovery.h"
 
 #include <algorithm>
 #include <cctype>
@@ -118,25 +119,30 @@ bool resolve_model_resource_handle(
         const json & arguments,
         json & normalized_arguments,
         std::string & error) {
-    const char * supplied_key = nullptr;
-    for (const char * key : {"id", "resource", "resource_id"}) {
-        if (arguments.contains(key)) {
-            supplied_key = key;
-            break;
+    std::string resolved_uri;
+    bool supplied = false;
+    // Resolve every supplied alias before comparing it with a host binding.
+    // An id must never overwrite a different canonical URI.
+    for (const char * key : {"uri", "id", "resource", "resource_id"}) {
+        if (!arguments.contains(key)) continue;
+        if (!arguments.at(key).is_string()) {
+            error = "resource handle must be a string";
+            return false;
         }
+        std::string uri;
+        if (!resolve_model_resource_value(request, arguments.at(key).get<std::string>(), uri, error)) return false;
+        if (supplied && uri != resolved_uri) {
+            error = "conflicting resource references";
+            return false;
+        }
+        resolved_uri = std::move(uri);
+        supplied = true;
     }
-    if (supplied_key == nullptr) return true;
-    if (!arguments.at(supplied_key).is_string()) {
-        error = "resource handle must be a string";
-        return false;
-    }
-    const auto handle = arguments.at(supplied_key).get<std::string>();
-    std::string uri;
-    if (!resolve_model_resource_value(request, handle, uri, error)) return false;
+    if (!supplied) return true;
     normalized_arguments.erase("id");
     normalized_arguments.erase("resource");
     normalized_arguments.erase("resource_id");
-    normalized_arguments["uri"] = uri;
+    normalized_arguments["uri"] = std::move(resolved_uri);
     return true;
 }
 
@@ -169,6 +175,8 @@ nlohmann::ordered_json common_agent_runtime_failure_observation_to_json(
             {"tool", failure.tool_name},
             {"step_id", failure.step_id},
             {"retryable", failure.retryable},
+            {"recovery_action", common_agent_recovery_action_name(
+                common_agent_recovery_for_failure(failure.classification, failure.retryable))},
             {"safe_summary", failure.safe_summary},
             {"evidence_id", failure.evidence_id},
             {"repair_context", failure.repair_context_json.empty()
@@ -179,6 +187,7 @@ nlohmann::ordered_json common_agent_runtime_failure_observation_to_json(
     if (failure.http_status >= 100 && failure.http_status <= 599) {
         result["failure"]["http_status"] = failure.http_status;
     }
+    if (!failure.call_fingerprint.empty()) result["failure"]["call_fingerprint"] = failure.call_fingerprint;
     return result;
 }
 
@@ -232,6 +241,9 @@ bool common_agent_runtime_apply_host_tool_arguments_to_json(
         return false;
     }
     normalized_arguments = arguments;
+    const bool resource_tool = tool_name == "resource.read" || tool_name == "resource.inspect";
+    if (resource_tool && !resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
+    changed = normalized_arguments != arguments;
     json host_fields = json::object();
     size_t binding_count = 0;
     for (const auto & binding : request.tool_argument_bindings) {
@@ -244,10 +256,15 @@ bool common_agent_runtime_apply_host_tool_arguments_to_json(
             error = "host tool argument binding is invalid";
             return false;
         }
-        const auto bound = json::parse(binding.arguments_json, nullptr, false);
+        auto bound = json::parse(binding.arguments_json, nullptr, false);
         if (bound.is_discarded() || !bound.is_object()) {
             error = "host tool argument binding must contain a JSON object";
             return false;
+        }
+        if (resource_tool) {
+            json canonical = bound;
+            if (!resolve_model_resource_handle(request, bound, canonical, error)) return false;
+            bound = std::move(canonical);
         }
         for (const auto & item : bound.items()) {
             if (item.key().empty() || item.key().size() > 128) {
@@ -325,23 +342,9 @@ bool common_agent_runtime_apply_safe_tool_defaults_to_json(
         if (!normalized_arguments.contains("start_line")) { normalized_arguments["start_line"] = 1; changed = true; }
         if (!normalized_arguments.contains("end_line")) { normalized_arguments["end_line"] = 200; changed = true; }
     } else if (tool_name == "resource.read") {
-        if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
-        if (normalized_arguments.contains("uri") && normalized_arguments["uri"].is_string() &&
-                normalized_arguments["uri"].get<std::string>().find("://") == std::string::npos) {
-            std::string uri;
-            if (!resolve_model_resource_value(request, normalized_arguments["uri"].get<std::string>(), uri, error)) return false;
-            normalized_arguments["uri"] = uri;
-        }
         if (!normalized_arguments.contains("max_bytes")) { normalized_arguments["max_bytes"] = 8192; changed = true; }
         if (normalized_arguments.contains("uri")) changed = true;
     } else if (tool_name == "resource.inspect") {
-        if (!resolve_model_resource_handle(request, arguments, normalized_arguments, error)) return false;
-        if (normalized_arguments.contains("uri") && normalized_arguments["uri"].is_string() &&
-                normalized_arguments["uri"].get<std::string>().find("://") == std::string::npos) {
-            std::string uri;
-            if (!resolve_model_resource_value(request, normalized_arguments["uri"].get<std::string>(), uri, error)) return false;
-            normalized_arguments["uri"] = uri;
-        }
         if (normalized_arguments.contains("uri")) changed = true;
     } else if (tool_name == "dataset.inspect" || tool_name == "dataset.schema" || tool_name == "dataset.sample") {
         // Compatibility repair for the old compact-schema example. The

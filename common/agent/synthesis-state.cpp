@@ -100,7 +100,7 @@ std::string common_agent_render_synthesis_state(const common_agent_synthesis_sta
 }
 json common_agent_review_checklist_json(const common_agent_review_checklist & c) {
     return {{"round",c.round},{"draft_fingerprint",c.draft_fingerprint},{"evidence_fingerprint",c.evidence_fingerprint},
-        {"blocking",items_json(c.blocking)},{"advisory",c.advisory}};
+        {"blocking",items_json(c.blocking)},{"advisory",c.advisory},{"parts",common_agent_review_parts_json(c.parts)}};
 }
 bool common_agent_review_checklist_from_json(const json & value,common_agent_review_checklist & out) {
     try {
@@ -121,6 +121,7 @@ bool common_agent_review_checklist_from_json(const json & value,common_agent_rev
         }
         next.advisory=value.value("advisory",std::vector<std::string>{}); if(next.advisory.size()>4)return false;
         if(std::any_of(next.advisory.begin(),next.advisory.end(),[](const auto & text){return text.size()>512;})) return false;
+        if(value.contains("parts") && !common_agent_review_parts_from_json(value["parts"],next.parts)) return false;
         out=std::move(next); return true;
     } catch(const json::exception &) {return false;}
 }

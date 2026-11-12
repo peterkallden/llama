@@ -3,6 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ctime>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 #include <deque>
 #include <limits>
 #include <map>
@@ -11,6 +15,28 @@
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+
+std::string common_investigation_format_time_utc(int64_t epoch_ms) {
+    int64_t seconds = epoch_ms / 1000;
+    int64_t milliseconds = epoch_ms % 1000;
+    if (milliseconds < 0) { --seconds; milliseconds += 1000; }
+    if (seconds < -62135596800LL || seconds > 253402300799LL) return {};
+    const auto time = static_cast<std::time_t>(seconds);
+    if (static_cast<int64_t>(time) != seconds) return {};
+    std::tm utc{};
+#ifdef _WIN32
+    if (gmtime_s(&utc, &time) != 0) return {};
+#else
+    if (!gmtime_r(&time, &utc)) return {};
+#endif
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::setfill('0') << std::setw(4) << utc.tm_year + 1900 << '-'
+        << std::setw(2) << utc.tm_mon + 1 << '-' << std::setw(2) << utc.tm_mday << 'T'
+        << std::setw(2) << utc.tm_hour << ':' << std::setw(2) << utc.tm_min << ':'
+        << std::setw(2) << utc.tm_sec << '.' << std::setw(3) << milliseconds << 'Z';
+    return out.str();
+}
 
 namespace {
 bool valid_id(const std::string & value) { return !value.empty() && value.size() <= 512; }
@@ -232,6 +258,27 @@ bool common_investigation_case_from_json(const nlohmann::ordered_json & j, commo
     return common_investigation_case_validate(c,error);
 }
 
+nlohmann::ordered_json common_investigation_collection_context(
+        const common_investigation_case_revision & value, const std::string & source_id, size_t limit) {
+    using json = nlohmann::ordered_json;
+    json pages = json::array();
+    size_t total = 0;
+    for (auto it = value.analyses.rbegin(); it != value.analyses.rend(); ++it) {
+        if (it->kind != "search_collection" || std::find(it->source_ids.begin(),it->source_ids.end(),source_id) == it->source_ids.end()) continue;
+        ++total;
+        if (pages.size() >= std::min(limit,size_t(4))) continue;
+        const auto saved = json::parse(it->result_json,nullptr,false);
+        if (!saved.is_object()) continue;
+        json page = {{"analysis_id",it->id},{"published_revision",it->published_revision}};
+        for (const auto * field : {"query_fingerprint","query_parameters","offset","next_offset","next_cursor",
+                "more_data","complete","collection_key","pagination_consistency","collected_events","limitations"})
+            if (saved.contains(field)) page[field] = saved[field];
+        pages.push_back(std::move(page));
+    }
+    return {{"pages",pages},{"total_pages",total},{"truncated",total > pages.size()},
+        {"coverage_scope","recorded_queries_only"}};
+}
+
 bool common_investigation_project_context(
         const common_investigation_case_revision & value,
         const common_investigation_context_binding & binding,
@@ -310,8 +357,13 @@ bool common_investigation_project_context(
     for (auto & source : projection["selected_sources"]) {
         source["has_log_parser_profile"] = !source.value("log_parser_profile_json",std::string{}).empty();
         source.erase("log_parser_profile_json");
+        if (source.value("kind",std::string{}) == "search_connector")
+            source["collection_context"] = common_investigation_collection_context(value,source.value("provider_id",std::string{}));
     }
     projection["analysis_profile"] = binding.analysis_profile;
+    projection["counts"] = {{"events",value.events.size()},{"entities",value.entities.size()},
+        {"relations",value.relations.size()},{"statements",value.statements.size()},
+        {"actors",value.actors.size()},{"analyses",value.analyses.size()}};
     projection.erase("entities");
     projection.erase("relations");
     projection.erase("events");
@@ -327,6 +379,18 @@ bool common_investigation_project_context(
     projection.erase("fingerprint");
     projection.erase("previous_revision_uri");
     projection.erase("scope");
+    while (projection.dump().size() > 16 * 1024) {
+        nlohmann::ordered_json * largest = nullptr;
+        for (auto & source : projection["selected_sources"]) {
+            if (!source.contains("collection_context")) continue;
+            auto & pages = source["collection_context"]["pages"];
+            if (!pages.empty() && (!largest || pages.dump().size() > (*largest)["pages"].dump().size()))
+                largest = &source["collection_context"];
+        }
+        if (!largest) break;
+        (*largest)["pages"].erase((*largest)["pages"].end()-1);
+        (*largest)["truncated"] = true;
+    }
     error.clear();
     return true;
 }
@@ -356,7 +420,7 @@ bool common_investigation_case_validate(
             value.title.empty() || value.title.size() > 512 || value.question.size() > 8192 ||
             value.source_id.size() > 256 || (value.source_id.empty() && value.sources.empty()) ||
             value.scope.namespace_id.empty() || value.scope.session_id.empty() ||
-            ((!value.source_id.empty() || value.window_start_ms || value.window_end_ms) &&
+            ((value.window_start_ms || value.window_end_ms) &&
                 value.window_start_ms >= value.window_end_ms) ||
             value.entities.size() > 100000 || value.events.size() > 500000 ||
             value.relations.size() > 500000 || value.claims.size() > 10000 ||

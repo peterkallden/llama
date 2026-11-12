@@ -199,6 +199,44 @@ static std::string render_flat_observation(
     }
     if (payload.is_object() && payload.value("result_truncated", plan_context_json(false)) == true)
         out << "  source_projection: partial; original result exceeded the retained observation budget\n";
+    if (tool_name == "resource.read" && result.is_object() &&
+            result.value("representation", plan_context_json("text")) == "text" &&
+            result.contains("content") && result["content"].is_string() &&
+            result.contains("range") && result["range"].is_object() &&
+            result["range"].contains("offset") && result["range"]["offset"].is_number_integer() &&
+            (result["range"]["offset"].is_number_unsigned() || result["range"]["offset"].get<int64_t>() >= 0)) {
+        const auto & range = result["range"];
+        const auto text = result["content"].get<std::string>();
+        const auto offset = range["offset"].get<uint64_t>();
+        const auto render = [&](size_t count) {
+            std::string value = out.str();
+            if (result.contains("resource") && result["resource"].is_object()) {
+                const auto & resource = result["resource"];
+                for (const auto * field : {"uri", "sha256", "mime_type"})
+                    if (resource.contains(field)) value += std::string("resource.") + field + ": " + observation_scalar(resource[field]) + "\n";
+            }
+            value += "representation: " + observation_scalar(result.value("representation", plan_context_json("text"))) + "\n";
+            value += "source_read_range: " + range.dump() + "\n";
+            value += "model_content_range: " + plan_context_json{{"offset",offset},{"bytes",count},
+                {"next_offset",offset+count},{"returned_content_complete",count==text.size() &&
+                    payload.value("result_truncated",plan_context_json(false)) != true},
+                {"more_resource_data",range.value("resource_has_more",plan_context_json("unknown"))}}.dump() + "\n";
+            value += "content: " + observation_scalar(text.substr(0,count)) + "\n";
+            value += "source_read_range describes tool IO; model_content_range describes only text shown here. "
+                "If returned_content_complete is false, read again from model_content_range.next_offset; source exhaustion does not prove model inspection.\n";
+            return value;
+        };
+        size_t low=0,high=text.size();
+        while (low<high) {
+            const auto mid=low+(high-low+1)/2;
+            if (render(common_utf8_prefix_bytes(text,mid)).size()<=budget) low=mid;
+            else high=mid-1;
+        }
+        auto rendered=render(common_utf8_prefix_bytes(text,low));
+        if (rendered.size()<=budget) return rendered;
+        // Fall through to the ordinary bounded facts if even the range
+        // envelope cannot fit; do not claim that any content was displayed.
+    }
     size_t fact_count = 0;
     // The character allocation is the effective bound. A fixed field count
     // used to discard later records in otherwise small, complete result sets

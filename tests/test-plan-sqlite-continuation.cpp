@@ -104,6 +104,12 @@ int main() {
     search.failure_terminal_state = "unavailable";
     search.handled_http_statuses = {403, 404};
     target.transitions.push_back(choice);
+    target.start_state="start";target.terminal_states={"searched","unavailable"};
+    auto review_entry=choice;review_entry.id="review-entry";review_entry.from_state="searched";
+    review_entry.review_only=true;review_entry.candidate_json_pointer.clear();
+    review_entry.choices={{"inspect","Inspect retained evidence","selected",{}}};
+    target.transitions.push_back(review_entry);
+    search.review_mutation_allowed=true;
     target.transitions.push_back(search);
     common_plan_operation transition;
     transition.kind = common_plan_operation_kind::request_route_transition;
@@ -137,6 +143,8 @@ int main() {
     assert(read->source_uri=="resource://eurostat/toc"&&read->source_fingerprint=="sha256:catalogue");
     assert(read->representation=="text/plain"&&read->source_parent_uri=="resource://eurostat/original");
     assert(restored->workflow_definition && restored->workflow_definition->workflow_ref == "workflow://eurostat/metadata");
+    assert(restored->workflow_definition->transitions[1].review_only);
+    assert(restored->workflow_definition->transitions[2].review_mutation_allowed);
     assert(restored->workflow_definition->preferred_thinking_mode == "deliberate");
     assert(restored->workflow_definition->require_declared_claims);
     assert(restored->workflow_definition->verification_checks.front().left.literal_json == "1");

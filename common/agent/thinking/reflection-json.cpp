@@ -336,7 +336,10 @@ bool common_reflection_parse_json(
             else if (action == "fail_bounded") result.next_action = common_agent_reflection_next_action::fail_bounded;
             else { error = "unsupported reflection assurance action"; return false; }
         }
-        result.structured_review=j.contains("issues") || j.contains("resolved_issue_ids");
+        if(j.contains("parts") && !common_agent_review_parts_from_json(j["parts"],result.parts)) {
+            error="invalid bounded excerpt review";return false;
+        }
+        result.structured_review=j.contains("issues") || j.contains("resolved_issue_ids") || j.contains("parts");
         if (!common_json_contract_optional_string_array(j,"advisory_notes",4,512,result.advisory_notes,error) ||
             !common_json_contract_optional_string_array(j,"resolved_issue_ids",4,64,result.resolved_issue_ids,error)) return false;
         if(j.contains("issues")) {
@@ -399,6 +402,14 @@ bool common_reflection_parse_json(
         if (j.contains("next_action")) {
             if (!j["next_action"].is_string()) { error = "next_action must be a string"; return false; }
             const auto action = j["next_action"].get<std::string>();
+            // Count UTF-8 code points, matching JSON Schema maxLength.
+            const auto characters = std::count_if(action.begin(), action.end(), [](unsigned char c) {
+                return (c & 0xc0) != 0x80;
+            });
+            if (static_cast<size_t>(characters) > common_reflection_next_action_max_chars) {
+                error = "reflection next_action exceeds " + std::to_string(common_reflection_next_action_max_chars) + " characters";
+                return false;
+            }
             if (!trim_reflection_text(action).empty()) {
                 common_plan_operation op;
                 op.kind = common_plan_operation_kind::set_next_action;
@@ -526,6 +537,19 @@ bool common_reflection_parse_json(
                  result.next_action == common_agent_reflection_next_action::accept)) {
             error = "reflection decision contradicts its assurance action or readiness";
             return false;
+        }
+        if (result.next_action == common_agent_reflection_next_action::fail_bounded) {
+            if (result.task_outcome == "satisfied" || result.task_outcome == "remaining") {
+                error = "fail_bounded requires a blocked outcome; use revise_plan for supported remaining work";
+                return false;
+            }
+            for (const auto & op : result.proposed_plan_operations) {
+                if (op.kind != common_plan_operation_kind::set_next_action &&
+                        op.kind != common_plan_operation_kind::complete_step) {
+                    error = "fail_bounded cannot also mutate or execute plan steps";
+                    return false;
+                }
+            }
         }
         if(result.revision_guidance.empty() && result.decision!=common_reflection_decision::accept)
             for(const auto & issue:result.issues) result.revision_guidance.push_back(issue.correction);
@@ -702,6 +726,11 @@ bool common_reflection_parse_compact_dsl(
             if (!parse_reflection_dsl_fields(argument,fields,error)) return false;
             if (!normalized.contains("phase_reviews")) normalized["phase_reviews"]=json::array();
             normalized["phase_reviews"].push_back(std::move(fields));
+        } else if (verb == "part") {
+            json fields;
+            if(!parse_reflection_dsl_fields(argument,fields,error)) return false;
+            if(!normalized.contains("parts")) normalized["parts"]=json::array();
+            normalized["parts"].push_back(std::move(fields));
         } else if (verb == "issue") {
             json fields;
             if(!parse_reflection_dsl_fields(argument,fields,error)) return false;
@@ -845,7 +874,9 @@ bool common_reflection_parse_compact_dsl(
 std::string common_reflection_review_grammar() {
     return R"gbnf(root ::= ("reflect accept" | "reflect abort" | revision) followup{0,24}
 revision ::= "reflect revise" "\nassurance_action " action ("\nguidance " text | issue)
-followup ::= "\nresolved " text | "\nadvisory " text | "\ntask_outcome " ("satisfied" | "remaining" | "blocked") | issue | phase
+followup ::= "\nresolved " text | "\nadvisory " text | "\ntask_outcome " ("satisfied" | "remaining" | "blocked") | issue | phase | part
+part ::= "\npart observation_id=" text " excerpt=" text " status=" part_status " reason=" text " evidence_ids=[" (text (", " text){0,7})? "]"
+part_status ::= "\"reviewed\"" | "\"requires_work\"" | "\"unreviewed\""
 phase ::= "\nphase phase_id=" text " status=" text " reason=" text (" evidence_ids=[" text (", " text){0,7} "]")? (" next_work_kind=" work_kind " next_work_goal=" text)?
 work_kind ::= "\"inspect_source\"" | "\"external_lookup\"" | "\"reason\""
 issue ::= "\nissue description=" text " correction=" text (" previous_issue_id=" text)? (" evidence_ids=[" text (", " text){0,7} "]")?
@@ -853,4 +884,29 @@ action ::= "revise_response" | "revise_plan" | "fail_bounded" | "escalate_delibe
 text ::= "\"" character{1,512} "\""
 character ::= [^"\\\n\r] | "\\" ["\\/bfnrt]
 )gbnf";
+}
+
+// Completion claims in a stop response may only repeat host-verified work.
+// Normalize them before any plan operations can be applied.
+bool common_reflection_validate_bounded_stop(common_reflection_result & result,
+        const common_plan_state & plan, std::string & error) {
+    error.clear();
+    if (result.next_action != common_agent_reflection_next_action::fail_bounded &&
+            result.decision != common_reflection_decision::abort) return true;
+    for (const auto & op : result.proposed_plan_operations) {
+        if (op.kind == common_plan_operation_kind::set_next_action) continue;
+        const auto found = std::find_if(plan.steps.begin(), plan.steps.end(), [&](const auto & step) {
+            return op.step_id && step.id == *op.step_id;
+        });
+        if (op.kind != common_plan_operation_kind::complete_step || found == plan.steps.end() ||
+                found->status != common_plan_step_status::completed) {
+            error = "blocked reflection may only repeat completion of an already completed host step";
+            return false;
+        }
+    }
+    result.proposed_plan_operations.erase(std::remove_if(result.proposed_plan_operations.begin(),
+        result.proposed_plan_operations.end(), [](const auto & op) {
+            return op.kind == common_plan_operation_kind::complete_step;
+        }), result.proposed_plan_operations.end());
+    return true;
 }

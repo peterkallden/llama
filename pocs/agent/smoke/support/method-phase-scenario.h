@@ -87,7 +87,8 @@ public:
         return result;
     }
 };
-inline common_plan_state run(bool reject_first_continuation=false,bool reject_all_continuations=false,bool fail_continuation_transport=false) {
+inline common_plan_state run(bool reject_first_continuation=false,bool reject_all_continuations=false,bool fail_continuation_transport=false,
+        size_t execution_limit=12, size_t tool_limit=2) {
     std::string error;
     common_plan_in_memory_store store;require(store.open("",error),error);
     phase_planner planner;phase_executor executor;phase_reviewer reviewer;phase_tools tools;
@@ -101,9 +102,22 @@ inline common_plan_state run(bool reject_first_continuation=false,bool reject_al
     method.steps={{"orient","Orient","Inspect local source"},{"knowledge","Knowledge","Inspect applicable documentation"}};
     method.steps[1].depends_on={"orient"};
     common_agent_request request;request.prompt=method.goal;request.blueprint_definition=method;
-    request.enable_memory=false;request.max_iterations=12;request.max_tool_batches=2;
+    request.enable_memory=false;request.max_iterations=execution_limit;request.max_tool_batches=tool_limit;
     request.max_reflection_rounds=1; // Phase continuation must not consume the final verdict budget.
     auto result=runtime.run(request);
+    if (execution_limit == 1 || tool_limit == 1) {
+        require(result.limit_reached && !result.error.empty() && result.response.empty(),
+            "exhausted continuation did not report a resumable limit");
+        require(tools.executed == std::vector<std::string>{"repository.read"} &&
+            planner.calls == (execution_limit == 1 ? 1u : 2u),
+            "exhausted budget executed work or planned a slice with no execution round");
+        auto stopped=store.get("method-test",error);
+        require(stopped && common_agent_method_has_remaining(*stopped) &&
+            std::none_of(stopped->steps.begin(),stopped->steps.end(),[](const auto & step) {
+                return step.tool_call && step.tool_call->name=="web.fetch";
+            }), "unrunnable continuation mutated the saved plan");
+        return *stopped;
+    }
     if (reject_all_continuations || fail_continuation_transport) {
         require(!result.error.empty() && planner.calls==(fail_continuation_transport?2u:3u) &&
             tools.executed==std::vector<std::string>{"repository.read"},

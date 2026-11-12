@@ -28,6 +28,9 @@ struct common_agent_orchestration_config {
     common_blueprint_instance_materializer blueprint_instance_materializer;
     // Host-supplied graph retrieval query, independent of the composed prompt.
     std::optional<std::string> graph_query;
+    // Selected by the ordinary model plan selector, built only from scoped
+    // host records. A successor gets new budgets and no inherited authority.
+    std::optional<common_plan_observation> prior_work_checkpoint;
 };
 
 struct common_agent_orchestration_build_config {
@@ -86,6 +89,7 @@ struct common_agent_orchestration_runtime_context {
     // Initial attachment orientation is a host-owned route, not a model route
     // classification or model-selected tool action.
     bool attachment_orientation = false;
+    std::optional<common_plan_observation> * prior_work_checkpoint = nullptr;
 };
 
 bool maybe_auto_select_plan(

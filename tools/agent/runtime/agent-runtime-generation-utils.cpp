@@ -1,4 +1,6 @@
 #include "tools/agent/runtime/agent-runtime-generation-utils.h"
+#include "agent/investigation-context.h"
+#include <algorithm>
 
 std::string make_agent_runtime_generation_trace_id(
         const common_agent_request & request,
@@ -39,6 +41,12 @@ common_agent_generation_request make_agent_runtime_generation_request(
         std::string json_schema,
         std::vector<common_chat_tool> tools,
         common_chat_tool_choice tool_choice) {
+    const auto investigation = common_agent_render_investigation_context(request);
+    if (!investigation.empty()) {
+        const auto user = std::find_if(messages.rbegin(),messages.rend(),[](const auto & message) { return message.role == "user"; });
+        if (user != messages.rend()) user->content += investigation;
+        else messages.push_back({"user", investigation});
+    }
     auto generation = common_agent_make_generation_request(
         purpose,
         make_agent_runtime_generation_trace_id(request, purpose),

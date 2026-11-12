@@ -71,6 +71,37 @@ it("retains an unapproved draft when terminal SSE precedes the failed turn respo
   transport.signals.length=0;
 });
 
+it("presents a bounded review as paused work and restores its partial assessment", async () => {
+  transport.calls.length=0; transport.replies.length=0;
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  const pending=session.submit("Update the saved report with retained evidence");
+  const turnId=String(transport.calls[0].turn_id);
+  const draft={text:"Report saved with qualified coverage",review_status:"unverified",stop_reason:"Step capacity exhausted",
+    plan_id:"p",draft_fingerprint:"draft",evidence_fingerprint:"evidence",issues:[]};
+  const progress={schema:"review-progress.v1",plan_id:"p",draft_fingerprint:"draft",evidence_fingerprint:"evidence",
+    accepted:false,paused:true,parts:[{observation_id:"read",excerpt:"Observed event",status:"reviewed",
+      reason:"Supported by retained evidence",evidence_ids:["source"],resource_uri:"resource://report-r3",content_fingerprint:"content"}],
+    remaining:[{id:"review-1",description:"Review the remaining section",correction:"Inspect its citations",evidence_ids:[]}],follow_up:[]};
+  transport.sink({event_type:"turn.failed",turn_id:turnId,session_id:session.sessionId,error:"Step capacity exhausted"});
+  transport.replies[0]({ok:false,response:"",error:"Step capacity exhausted",unverified_draft:draft,review_progress:progress});
+  expect(await pending).toBe(false); // Paused work is not an accepted answer.
+  expect(session.error).toBe("");
+  let assistant=session.messages.find(message=>message.role==="assistant");
+  expect(assistant?.content).toContain("Review paused");
+  expect(assistant?.reviewProgress).toEqual(progress);
+  expect(assistant?.unverifiedDraft).toEqual(draft);
+  transport.history=async(id,project)=>({chat:{id,project_id:project,title:"Partial review"},history_available:true,messages:[{
+    id:assistant?.id,turn_id:turnId,role:"assistant",content:"",recorded_at:1,sequence:1,unverified_draft:draft,review_progress:progress}]});
+  await session.activateChat({id:session.sessionId,project_id:"",title:"Partial review",created_at:1,last_active_at:1});
+  assistant=session.messages.find(message=>message.role==="assistant");
+  expect(assistant?.reviewProgress?.parts[0].status).toBe("reviewed");
+  expect(assistant?.reviewProgress?.remaining[0].id).toBe("review-1");
+});
+
 it("retains report metadata from the completed HTTP turn when the event stream was unavailable", async () => {
   transport.calls.length = 0;
   transport.replies.length = 0;
@@ -507,4 +538,31 @@ it("updates the scoped chat title from the latest persisted goal", async () => {
   transport.replies.at(-1)!({ ok: true, response: "Done", chat: { id: "other-chat", project_id: session.projectId, title: "Wrong chat" } });
   await pending;
   expect(session.chatTitle).toBe("Explain the database timeout");
+});
+
+
+it("shows a validated blocked outcome without accepting it or displaying an infrastructure error", async () => {
+  transport.calls.length=0; transport.replies.length=0;
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  const pending=session.submit("Inspect the configured source");
+  const turnId=String(transport.calls[0].turn_id);
+  const progress={schema:"review-progress.v1",plan_id:"blocked-plan",draft_fingerprint:"",evidence_fingerprint:"evidence",
+    accepted:false,paused:false,parts:[],remaining:[],follow_up:[],blocked_reason:"The case is saved; collection is unavailable."};
+  transport.sink({event_type:"turn.failed",turn_id:turnId,session_id:session.sessionId,error:"Source unavailable"});
+  transport.replies[0]({ok:false,response:"",error:"Source unavailable",review_progress:progress});
+  expect(await pending).toBe(false);
+  expect(session.error).toBe("");
+  const assistant=session.messages.find(message=>message.role==="assistant");
+  expect(assistant?.content).toContain("Work blocked");
+  expect(assistant?.reviewProgress?.accepted).toBe(false);
+  expect(assistant?.reviewProgress?.paused).toBe(false);
+  expect(assistant?.unverifiedDraft).toBeUndefined();
+  transport.history=async(id,project)=>({chat:{id,project_id:project,title:"Blocked"},history_available:true,messages:[{
+    id:assistant?.id,turn_id:turnId,role:"assistant",content:assistant?.content,recorded_at:1,sequence:1,review_progress:progress}]});
+  await session.activateChat({id:session.sessionId,project_id:"",title:"Blocked",created_at:1,last_active_at:1});
+  expect(session.messages.find(message=>message.role==="assistant")?.reviewProgress?.blocked_reason).toBe(progress.blocked_reason);
 });

@@ -78,6 +78,15 @@ int main() {
     assert(segments.size()==3);
     for(const auto & segment:segments) assert(segment.content.find("UNVERIFIED REVIEW TEXT")==std::string::npos);
     assert(!after_review_restart.append_unverified_draft("missing-request","turn-2",unverified,error));
+    const nlohmann::ordered_json progress{{"schema","review-progress.v1"},{"plan_id","saved-plan"},
+        {"paused",true},{"accepted",false},{"parts",nlohmann::ordered_json::array()},
+        {"remaining",nlohmann::ordered_json::array({{{"description","Review remaining evidence"}}})}};
+    assert(after_review_restart.append_review_progress("request-2","turn-2",progress,error));
+    assert(!after_review_restart.append_review_progress("missing-request","turn-2",progress,error));
+    agent_session_context_store after_progress_restart(&resources,"ns-a","session-a",true);
+    assert(after_progress_restart.load(segments,checkpoint,epoch,error));
+    assert(segments.size()==3); // Display progress never enters model history as an accepted assistant answer.
+
     auto composition = compose_common_agent_conversation_context(segments, &*checkpoint, 1, 4096);
     assert(composition.used_checkpoint);
     assert(composition.rendered_history.find("UNVERIFIED REVIEW TEXT")==std::string::npos);
@@ -91,6 +100,31 @@ int main() {
     assert(composition.rendered_history.find("Memory ref: memory:fact-1") != std::string::npos);
     assert(std::find(composition.included_sections.begin(), composition.included_sections.end(), "checkpoint") != composition.included_sections.end());
     assert(std::find(composition.included_sections.begin(), composition.included_sections.end(), "evidence_references") != composition.included_sections.end());
+
+    // A failed review must remain visible on the next turn and after restart,
+    // while a retry with the same request can still save an accepted answer.
+    agent_session_context_store blocked_session(&resources, "ns-a", "blocked-session", true);
+    user.request_id = "blocked-request"; user.turn_id = "blocked-turn";
+    assert(blocked_session.append(user, error));
+    common_agent_review_progress blocked;
+    blocked.blocked_reason = "Case creation failed; no case was created.";
+    assert(blocked_session.append_blocked_outcome("blocked-request", "blocked-turn", blocked, "plan-1", error));
+    assert(blocked_session.append_blocked_outcome("blocked-request", "blocked-turn", blocked, "plan-1", error));
+    agent_session_context_store blocked_restart(&resources, "ns-a", "blocked-session", true);
+    std::vector<common_agent_conversation_segment> blocked_segments;
+    std::optional<common_agent_context_checkpoint> blocked_checkpoint;
+    uint64_t blocked_epoch = 0;
+    assert(blocked_restart.load(blocked_segments, blocked_checkpoint, blocked_epoch, error));
+    assert(blocked_segments.size() == 2);
+    assert(common_agent_conversation_same_request(blocked_segments.back(), "blocked-request"));
+    const auto blocked_context = compose_common_agent_conversation_context(blocked_segments, nullptr, 2, 8192);
+    assert(blocked_context.rendered_history.find("Case creation failed; no case was created.") != std::string::npos);
+    assert(blocked_context.rendered_history.find("work blocked and unfinished") != std::string::npos);
+    auto accepted = assistant;
+    accepted.request_id = "blocked-request"; accepted.turn_id = "retry-turn";
+    assert(blocked_restart.append(accepted, error));
+    blocked.accepted = true;
+    assert(!blocked_restart.append_blocked_outcome("blocked-request", "retry-turn", blocked, "plan-1", error));
 
     auto too_small = compose_common_agent_conversation_context(segments, &*checkpoint, 1, 8);
     assert(!too_small.missing_protected_refs.empty());

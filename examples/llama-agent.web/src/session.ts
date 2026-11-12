@@ -261,7 +261,7 @@ async function refreshCurrentHistory() {
   for (const item of history.messages) {
     const current = currentById.get(item.id);
     restored.set(item.id, current?.pending ? current : {
-      id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft,
+      id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft, reviewProgress: item.review_progress,
     });
   }
   for (const item of messages.value) if (item.pending) restored.set(item.id, item);
@@ -282,7 +282,7 @@ async function loadOlderMessages() {
     if (disposed || requestEpoch !== sessionEpoch || requestSession !== sessionId.value || requestProject !== projectId.value) return;
     const known = new Map(messages.value.map((message) => [message.id, message]));
     for (const item of page.messages) if (!known.has(item.id)) known.set(item.id, {
-      id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft,
+      id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft, reviewProgress: item.review_progress,
     });
     messages.value = [...known.values()].sort((a, b) => (a.sequence ?? Number.MAX_SAFE_INTEGER) - (b.sequence ?? Number.MAX_SAFE_INTEGER));
     historyCursor.value = page.next_cursor ?? "";
@@ -485,8 +485,24 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     if (assistant && typeof result.response === "string") assistant.content = result.response;
     if (assistant && result.unverified_draft?.review_status === "unverified") assistant.unverifiedDraft = result.unverified_draft;
     else if (assistant && result.ok !== false) assistant.unverifiedDraft = undefined;
-    if (assistant) assistant.pending = false;
+    if (assistant) { assistant.pending = false; assistant.reviewProgress = result.review_progress; }
     if (result.ok === false) {
+      if (result.review_progress?.blocked_reason && !result.review_progress.accepted) {
+        error.value = ""; turnRequestFailure = "";
+        if (assistant) assistant.content = "Work blocked; the requested analysis is unfinished.";
+        busy.value = false; activeTurnId.value = "";
+        if (propagateFailure) throw new Error(result.review_progress.blocked_reason);
+        return false;
+      }
+      if(result.unverified_draft && result.review_progress?.paused) {
+        // Keep ok:false and the saved draft; a budget stop is resumable work,
+        // not an accepted answer or an infrastructure error banner.
+        error.value = ""; turnRequestFailure = "";
+        if(assistant) assistant.content = "Work saved. Review paused at this turn’s budget; remaining work is listed below.";
+        busy.value = false; activeTurnId.value = "";
+        if(propagateFailure) throw new Error(result.error || "Review paused");
+        return false;
+      }
       error.value = result.error || "Turn failed";
       if (assistant && !assistant.content) assistant.content = error.value;
       busy.value = false;
@@ -501,9 +517,10 @@ async function submit(prompt: string, additionalResourceRefs: string[] = [], pro
     busy.value = false; activeTurnId.value = "";
     const assistant = messages.value.find((message) => message.turnId === turnId && message.role === "assistant");
     if (assistant) assistant.pending = false;
-    error.value = turnRequestFailure || (cause instanceof Error ? cause.message : String(cause));
-    if (assistant && !assistant.content) assistant.content = error.value;
-    if (propagateFailure) throw new Error(error.value);
+    const failure = turnRequestFailure || (cause instanceof Error ? cause.message : String(cause));
+    error.value = assistant?.reviewProgress?.blocked_reason ? "" : failure;
+    if (assistant && !assistant.content) assistant.content = failure;
+    if (propagateFailure) throw new Error(failure);
     return false;
   } finally {
     if (requestEpoch === sessionEpoch && requestSessionId === sessionId.value) {
@@ -878,7 +895,7 @@ async function activateChat(chat: WebChat) {
     sessionStorage.setItem(navigationSchemaKey, "1");
     sessionStorage.setItem("llama-agent-web.project-id", projectId.value);
     sessionStorage.setItem("llama-agent-web.chat-title", chatTitle.value);
-    messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft }));
+    messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft, reviewProgress: item.review_progress }));
     historyCursor.value = history.next_cursor ?? "";
     events.value = [];
     attachments.value = [];
@@ -944,7 +961,7 @@ async function ensureActiveChat() {
     const history = await api.value.chatMessages(sessionId.value, projectId.value);
     chatTitle.value = history.chat.title;
     historyAvailable.value = history.history_available;
-    messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft }));
+    messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft, reviewProgress: item.review_progress }));
     historyCursor.value = history.next_cursor ?? "";
     attachments.value = (history.chat.attachments ?? []).map((item) => ({ name: item.name,
       mime_type: item.mime_type ?? "application/octet-stream", scope: "session" as const,
@@ -961,7 +978,7 @@ async function ensureActiveChat() {
       const history = await api.value.chatMessages(sessionId.value, projectId.value);
       chatTitle.value = history.chat.title;
       historyAvailable.value = history.history_available;
-      messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft }));
+      messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft, reviewProgress: item.review_progress }));
       historyCursor.value = history.next_cursor ?? "";
       attachments.value = (history.chat.attachments ?? []).map((item) => ({ name: item.name,
         mime_type: item.mime_type ?? "application/octet-stream", scope: "session" as const,

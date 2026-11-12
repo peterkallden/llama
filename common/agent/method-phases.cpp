@@ -1,4 +1,5 @@
 #include "method-phases.h"
+#include "continuation-control.h"
 #include "plan/plan-context.h"
 #include <algorithm>
 #include <map>
@@ -292,6 +293,7 @@ bool common_agent_method_append_slice(const common_plan_state & plan,const commo
                         old.tool_call->name!=step.tool_call->name) continue;
                 const auto failed_arguments=json::parse(old.tool_call->arguments_json,nullptr,false);
                 if (!failed_arguments.is_discarded() && failed_arguments==arguments) {
+                    if (old.id == step.id && common_agent_continuation_allows_same_call(plan, old.id)) continue;
                     error="phase repair cannot blindly replay the same failed arguments";return false;
                 }
             }

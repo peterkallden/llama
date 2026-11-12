@@ -35,6 +35,8 @@ struct common_agent_result {
     bool reflected = false;
     bool revised = false;
     bool limit_reached = false;
+    // Hard durable-plan capacity cannot be replenished by another turn slice.
+    bool plan_storage_exhausted = false;
     std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
     std::vector<common_agent_generation_record> generation_records;
     std::optional<common_agent_research_result> research_result;
@@ -50,4 +52,5 @@ struct common_agent_result {
     std::vector<common_agent_event> events;
     std::vector<common_runtime_trace_entry> trace;
     std::optional<common_agent_unverified_draft> unverified_draft;
+    std::optional<common_agent_review_progress> review_progress;
 };

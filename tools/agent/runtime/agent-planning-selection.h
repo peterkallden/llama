@@ -53,6 +53,8 @@ bool common_agent_workflow_tool_eligible(const common_agent_request &,
 // Select one exact tool and schema-valid argument object inside a compiled
 // workflow route. The host later owns plan IDs, dependencies and materializing
 // any deterministic A* prefix.
+// A projected model contract is validated separately from the canonical call;
+// pass the authorized execution view when host and model schemas differ.
 common_agent_workflow_action_selection_result select_agent_planning_workflow_action(
     common_agent_inference & inference,
     const common_agent_generation_config & generation_config,
@@ -62,7 +64,8 @@ common_agent_workflow_action_selection_result select_agent_planning_workflow_act
     const std::vector<std::string> & host_resolved_dataset_tools,
     common_agent_tool_output_format output_format,
     std::string & error,
-    bool research_context = false);
+    bool research_context = false,
+    const agent_tool_view * tool_view = nullptr);
 
 // Interpret the result independently, through the existing DSL/JSON selection
 // boundary. The runtime owns persistence and subsequent contract checks.

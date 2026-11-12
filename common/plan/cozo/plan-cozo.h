@@ -2,6 +2,7 @@
 #include "plan/plan-in-memory.h"
 class common_plan_cozo_store final : public common_plan_store {
 public:
+    common_plan_policy_config policy_limits() const override { return cache.policy_limits(); }
     common_plan_cozo_store(); ~common_plan_cozo_store() override;
     bool open(const std::string & path, std::string & error) override; void close() override;
     bool create(const common_plan_state & plan, std::string & error) override;

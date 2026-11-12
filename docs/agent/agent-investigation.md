@@ -8,6 +8,96 @@ resources for collected evidence, and the packaged Vue/Cytoscape MCP App. It is 
 build and a Cozo data store. Configuration changes take effect after daemon
 restart.
 
+## Current orchestration contract
+
+Configured search connectors and datasets have separate identities. A turn-local
+dataset handle such as `d1` is valid only in dataset fields. Fields annotated with
+`x-agent-source-kind: investigation_search` receive the exact source IDs authorized
+for the current scope through the shared host tool selection path. Existing enum
+restrictions are intersected with that set. When no search connector is authorized,
+the model must omit the source field; resource-backed investigation remains possible.
+`investigate.source.list` can discover currently authorized connectors. Provider
+metadata in the dataset inventory describes lineage and does not grant authority.
+
+The execution adapter rechecks live configuration and authorization. An unknown
+connector ID produces `tool.investigation.source_invalid` (validation), enabling
+the existing host-bound argument replacement path. A known but unauthorized
+connector produces `tool.investigation.source_denied` (policy). Neither result
+authorizes an unchanged retry or creates a case revision. Current user instructions
+follow prior-work context during route and entry selection; failed arguments are
+historical observations rather than authoritative bindings.
+
+Timeline reports and event pages provide host-formatted UTC timestamps alongside
+the original epoch milliseconds. Unknown times remain unknown. Dates outside the
+supported ISO year range retain the numeric evidence with a conversion limitation.
+Formatting is deterministic; model interpretation of that evidence still requires
+verification.
+
+The active package file `docs/examples/agent-investigation-workflows-v1.json`
+contains immutable revision v11. The older `agent-investigation-workflows-v4.json`
+is a historical package. Existing pinned definitions remain unchanged; new
+selection uses the revised definitions after the host loads the package.
+
+A selected case projection travels separately from user text. New conversation
+segments retain the user's request, not a copy of the mutable case projection.
+Before a workflow decision or answer, the host refreshes the selected source
+metadata along the same plan's successful publication chain, including linked
+routes. A scoped store read checks that baseline; an external publication is a
+conflict rather than permission to rebase. Older conversation records may still
+contain snapshots; the current projection explicitly supersedes them. Existing
+records are not rewritten.
+
+Record selection and workflow-action selection use different instructions.
+The model chooses whether evidence is sufficient and which declared branch
+answers the question. The host checks source-kind eligibility through the
+whole deterministic prefix up to the next model decision. This prevents an
+available read operation from hiding a later incompatible extraction operation.
+The actor/relationship workflow supports both source-anchored text statements
+and retained event entities/relations. These remain distinct representations;
+observed event links do not establish reviewed human actor identity.
+
+`investigate.collect` accepts an optional opaque `cursor`. The first page uses
+no cursor; subsequent pages copy the issued cursor and its `query_parameters`.
+Each page publishes its events, immutable evidence references and a
+`search_collection` analysis receipt in the same case revision. Receipts are
+preserved by the existing case codecs and Cozo publication path. Repeating a
+page replays the receipt without another query, resource write or case revision.
+An optional `idempotency_key` starts an intentionally fresh acquisition of the
+same query; retries must retain that key. The host rejects keys reused for a
+different query and cursors belonging to another query, source version or scope.
+An idempotent reply retains `published_revision`; `revision` can identify the
+caller's already validated current baseline, while `current_revision` is only
+informational and never authorizes an external rebase.
+
+Results expose `offset`, `next_offset`, `next_cursor`, `more_data` (`yes`, `no`
+or `unknown`), `exhausted`, `complete` and `reused`. `more_data` describes
+remaining query rows; `complete` also accounts for coverage limitations.
+Source projections expose a bounded `collection_context` with query-specific
+receipts. Older receipts remain accessible through `case.items` analyses pages.
+A source's `query_complete` status is not proof that every question about the
+source has been investigated. Elasticsearch/OpenSearch pages currently use
+bounded live offsets ordered by the configured event-time field. They do not
+pin a point-in-time snapshot, and equal timestamps or source changes can affect
+page boundaries. Later pages therefore retain an explicit consistency limitation
+even when the query is exhausted. No PIT or `search_after` support is claimed.
+
+Graph workflows keep a separate bounded allowance for host control proofs
+(default 128) in addition to the normal 32 evidence observations and 16 plan
+steps. The plan store exposes its actual policy limits. Before dispatch, the
+runtime reserves space for the result, failure evidence and workflow controls;
+a hard capacity limit cannot be repaired by repeating the same runtime slice.
+The result retains a continuation checkpoint and the case evidence/collection
+positions. Automatic plan selection excludes exhausted plans, including a
+session's previously selected plan, so a later task can continue from retained
+case evidence in a fresh plan. Explicitly pinned plans are not silently replaced.
+No history is deleted and no model-selected budget expansion is introduced.
+
+Contracts cover the context publication chain and external conflicts,
+source-compatible actor branches, query-page replay and codec restoration,
+separate evidence/control budgets and stopping before a write. These changes
+still require compilation, CTest execution and a fresh Luna/UI run for live
+verification; previous smoke evidence below does not verify revision v11.
+
 ## Configure a source
 
 Add an `investigation` section to the daemon JSON configuration. Provider IDs,
@@ -777,3 +867,13 @@ a later search/hypothesis, validation versus genuine conflict, restart/resume,
 then the actual browser graph/evidence/report flow. Preserve the request, selected
 transitions, tool outcomes and published revisions. A fixture or response text
 alone is not model or production proof.
+
+### Cases without a time filter
+
+A configured search source can be selected when creating a case or attached to an existing case without supplying time bounds. Both saved bounds being zero means no time filter; an explicitly supplied pair must have start before end. Collection requires an authorized source, a bounded page and the existing execution budgets. It omits time predicates when the case has no window, while preserving its query fingerprint and continuation cursor. Event and graph reads retain their existing unrestricted-time behavior for such cases.
+
+Observed event timestamps describe the returned evidence and never silently establish a new search window. Reports distinguish the saved case time scope from acquisition-specific filters. Page completeness does not prove exhaustive source or temporal coverage.
+
+A later question can use temporary `investigate.events` or `investigate.graph.expand` bounds without changing the case. To persist a user-requested search scope, use `investigate.case.update_scope` with the current `expected_revision` and both bounds. A zero/zero pair removes the filter. The existing revision publication path retains all earlier evidence and reports, and resets search-source completeness. Existing acquisition records keep their original query fingerprints; a changed filter produces a different collection query and cannot reuse an incompatible page cursor. Compose a new report from the resulting revision; an earlier report remains a frozen snapshot.
+
+Investigation need not start from a user identity. `investigate.collect` accepts an optional source-field/value pair, for example a known machine, or can start with a time-only or bounded unfiltered page. Per-query paired time bounds override the case default only for that acquisition; an explicit zero/zero pair removes the query time filter. Subsequent queries may pivot to identifiers found in inspected evidence. Query parameters, time bounds, fingerprints and cursors remain tied to each acquisition; changing them invalidates a continuation cursor. These are model choices within host-authorized fields, sources and page budgets.

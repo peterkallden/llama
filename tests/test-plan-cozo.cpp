@@ -103,7 +103,13 @@ int main() {
         transitioned_workflow.resource_read_policy = common_plan_workflow_resource_read_policy::chunked;
         transitioned_workflow.start_state = "record";
         transitioned_workflow.terminal_states = {"complete"};
+        fetch_full_text.review_mutation_allowed=true;
         transitioned_workflow.transitions = {choose_depth, fetch_full_text};
+        auto review_entry=choose_depth;review_entry.id="review-entry";review_entry.from_state="complete";
+        review_entry.to_state="full";review_entry.review_only=true;
+        review_entry.choices={{"read","Inspect the retained source","full",{}}};
+        transitioned_workflow.transitions.insert(transitioned_workflow.transitions.begin()+1,review_entry);
+
         common_plan_route_binding transitioned_binding{
             "blueprint:dataset-quality:workflow:workflow://dataset/quality@v2",
             "dataset-quality", "bp-v2", "workflow://dataset/quality", "v2",
@@ -190,6 +196,8 @@ int main() {
             plan->workflow_definition->workflow_ref == "workflow://dataset/quality" &&
             plan->workflow_definition->resource_read_policy ==
                 common_plan_workflow_resource_read_policy::chunked);
+        assert(plan->workflow_definition->transitions[1].review_only);
+        assert(plan->workflow_definition->transitions[2].review_mutation_allowed);
         assert(plan->workflow_definition->preferred_thinking_mode == "research");
         assert(plan->workflow_definition->require_declared_claims);
         assert(plan->workflow_definition->verification_checks.size() == 1);
@@ -212,14 +220,14 @@ int main() {
             plan->workflow_definition->continuation_links.front().argument_bindings.front().source_transition_id == "choose-depth");
         assert(plan->workflow_continuation_history.size() == 1 &&
             plan->workflow_continuation_history.front().source_fingerprint == "fingerprint-1");
-        assert(plan->workflow_definition->transitions.size() == 2 &&
+        assert(plan->workflow_definition->transitions.size() == 3 &&
             plan->workflow_definition->transitions[0].choices.size() == 2 &&
             plan->workflow_definition->transitions[0].candidate_id_json_pointer == "/code" &&
             plan->workflow_definition->transitions[0].choices[1].id == "full-text" &&
-            plan->workflow_definition->transitions[1].argument_bindings.size() == 1 &&
-            plan->workflow_definition->transitions[1].argument_bindings[0].source_transition_id == "get-work" &&
-            plan->workflow_definition->transitions[1].failure_terminal_state == "complete" &&
-            (plan->workflow_definition->transitions[1].handled_http_statuses == std::vector<int>{403, 404}));
+            plan->workflow_definition->transitions[2].argument_bindings.size() == 1 &&
+            plan->workflow_definition->transitions[2].argument_bindings[0].source_transition_id == "get-work" &&
+            plan->workflow_definition->transitions[2].failure_terminal_state == "complete" &&
+            (plan->workflow_definition->transitions[2].handled_http_statuses == std::vector<int>{403, 404}));
         assert(plan->route_binding &&
             plan->route_binding->route_id.find("blueprint:dataset-quality") == 0 &&
             plan->route_binding->execution_envelope_fingerprint == "env-v2");

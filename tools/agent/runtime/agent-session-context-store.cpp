@@ -1,4 +1,5 @@
 #include "agent-session-context-store.h"
+#include "hash/hash.h"
 
 #include <algorithm>
 #include <ctime>
@@ -105,6 +106,32 @@ bool agent_session_context_store::put_internal(const std::string & name, const s
 
 bool agent_session_context_store::append_unverified_draft(const std::string & request_id,const std::string & turn_id,
         const json & draft,std::string & error) {
+    return append_review_record(request_id,turn_id,"unverified_draft",draft,error);
+}
+bool agent_session_context_store::append_review_progress(const std::string & request_id,const std::string & turn_id,
+        const json & progress,std::string & error) {
+    return append_review_record(request_id,turn_id,"review_progress",progress,error);
+}
+bool agent_session_context_store::append_blocked_outcome(const std::string & request_id,
+        const std::string & turn_id, const common_agent_review_progress & progress,
+        const std::string & plan_id, std::string & error) {
+    if (request_id.empty() || turn_id.empty() || progress.accepted || progress.paused || progress.blocked_reason.empty()) {
+        error = "blocked conversation outcome requires a validated unfinished review";
+        return false;
+    }
+    common_agent_conversation_segment segment;
+    segment.request_id = "host-blocked:" + turn_id;
+    segment.origin_request_id = request_id;
+    segment.turn_id = turn_id;
+    segment.role = common_agent_conversation_role::assistant;
+    segment.content = "Host-recorded review outcome: work blocked and unfinished. "
+        "The following assessment is prior context, not proof that any operation succeeded:\n" +
+        common_agent_review_progress_json(progress).dump();
+    if (!plan_id.empty()) segment.evidence_refs.push_back("plan:" + plan_id);
+    return append(std::move(segment), error);
+}
+bool agent_session_context_store::append_review_record(const std::string & request_id,const std::string & turn_id,
+        const std::string & field,const json & value,std::string & error) {
     if(!persistent()) {error.clear();return true;}
     std::vector<common_agent_conversation_segment> segments;
     std::optional<common_agent_context_checkpoint> checkpoint;
@@ -112,21 +139,23 @@ bool agent_session_context_store::append_unverified_draft(const std::string & re
     if(!load(segments,checkpoint,epoch,error)) return false;
     uint64_t sequence=0;
     for(const auto & item:segments)
-        if(item.request_id==request_id && item.role==common_agent_conversation_role::user) sequence=item.sequence;
-    if(!sequence) {error="unverified draft requires a persisted user turn";return false;}
+        if(item.request_id==request_id && item.turn_id==turn_id && item.role==common_agent_conversation_role::user)
+            sequence=item.sequence;
+    if(!sequence) {error="review record requires its persisted user turn";return false;}
     json payload{{"schema_version",1},{"request_id",request_id},{"turn_id",turn_id},{"role","assistant"},
         {"sequence",sequence},{"epoch",epoch},{"recorded_at",static_cast<int64_t>(std::time(nullptr))},
-        {"content",""},{"unverified_draft",draft},{"model_visible",false}};
+        {"content",""},{field,value},{"model_visible",false}};
+    const std::string purpose=field=="unverified_draft" ? "agent.context.review_draft.v1" : "agent.context.review_progress.v1";
     agent_resource_descriptor saved;
-    return put_internal("agent.context.review_draft.v1","review-draft:"+std::to_string(epoch)+":"+request_id+":"+
-        hash_text(draft.dump()),payload,saved,error);
+    return put_internal(purpose,field+":"+std::to_string(epoch)+":"+request_id+":"+hash_text(value.dump()),payload,saved,error);
 }
 
 bool agent_session_context_store::append(common_agent_conversation_segment segment, std::string & error) {
     if (!persist || store == nullptr) {
         for (const auto & old : transient_segments) {
             if (old.request_id != segment.request_id || old.role != segment.role) continue;
-            if (old.content != segment.content || old.evidence_refs != segment.evidence_refs) {
+            if (old.content != segment.content || old.evidence_refs != segment.evidence_refs ||
+                    old.origin_request_id != segment.origin_request_id) {
                 error = "request_id was reused with conflicting conversation content";
                 return false;
             }
@@ -157,6 +186,7 @@ bool agent_session_context_store::append(common_agent_conversation_segment segme
         if (!store->read_text(descriptor.uri, authority, 1024 * 1024, stored, error)) return false;
         const auto old = json::parse(stored, nullptr, false);
         if (!old.is_object() || old.value("content", std::string()) != segment.content ||
+                old.value("origin_request_id", std::string()) != segment.origin_request_id ||
                 old.value("evidence_refs", std::vector<std::string>()) != segment.evidence_refs) {
             error = "request_id was reused with conflicting conversation content";
             return false;
@@ -173,10 +203,13 @@ bool agent_session_context_store::append(common_agent_conversation_segment segme
     segment.recorded_at = static_cast<int64_t>(std::time(nullptr));
     segment.content_hash = hash_text(segment.content);
     const json payload = {{"schema_version", 1}, {"request_id", segment.request_id},
+        {"origin_request_id", segment.origin_request_id},
         {"turn_id", segment.turn_id}, {"sequence", segment.sequence}, {"recorded_at", segment.recorded_at},
         {"epoch", current_epoch},
         {"role", common_agent_conversation_role_name(segment.role)}, {"content", segment.content},
-        {"content_hash", segment.content_hash}, {"evidence_refs", segment.evidence_refs}};
+        {"content_hash", segment.content_hash},
+        {"review_content_fingerprint",hash_sha256_hex(segment.content.data(),segment.content.size())},
+        {"evidence_refs", segment.evidence_refs}};
     agent_resource_descriptor saved;
     return put_internal(k_turn_purpose, cache_key, payload, saved, error);
 }
@@ -215,6 +248,7 @@ bool agent_session_context_store::load(std::vector<common_agent_conversation_seg
             if (role != "user" && role != "assistant") continue;
             segment.resource_uri = descriptor.uri;
             segment.request_id = value.value("request_id", std::string());
+            segment.origin_request_id = value.value("origin_request_id", std::string());
             segment.turn_id = value.value("turn_id", std::string());
             segment.sequence = value.value("sequence", uint64_t(0));
             segment.recorded_at = value.value("recorded_at", int64_t(0));

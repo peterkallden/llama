@@ -25,6 +25,11 @@ bool same_json_object(const std::string & lhs, const std::string & rhs) {
 int main() {
     common_reflection_result result;
     std::string error;
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","parts":[{"observation_id":"e1","excerpt":"Observed event","status":"reviewed","reason":"Matches saved evidence","evidence_ids":["e2"]}]})",result,error));
+    CHECK_CONTRACT(result.parts.size()==1 && result.parts.front().status=="reviewed");
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept\npart observation_id=\"e1\" excerpt=\"Observed event\" status=\"reviewed\" reason=\"Matches saved evidence\" evidence_ids=[\"e2\"]",result,error));
+    CHECK_CONTRACT(result.parts.size()==1 && result.parts.front().evidence_ids==std::vector<std::string>{"e2"});
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"accept","parts":[{"observation_id":"e1","excerpt":"Observed event","status":"verified_fact","reason":"Wrong status","evidence_ids":[]}]})",result,error));
     CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","task_outcome":"remaining","assurance_action":"revise_plan"})", result, error));
     CHECK_CONTRACT(result.task_outcome == "remaining");
     CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept\ntask_outcome blocked", result, error));
@@ -64,6 +69,36 @@ int main() {
             result.proposed_plan_operations[1].step_id != host_step) {
         std::cerr << "host retry alias rewrote a model-written reference" << '\n'; return 1;
     }
+    const auto next_work = nlohmann::json{{"decision","revise"},{"assurance_action","revise_plan"},
+        {"task_outcome","remaining"},{"next_action",std::string(1024,'x')}};
+    CHECK_CONTRACT(common_reflection_parse_json(next_work.dump(),result,error));
+    CHECK_CONTRACT(result.proposed_plan_operations.front().value == std::string(1024,'x'));
+    auto too_long = next_work; too_long["next_action"] = std::string(1025,'x');
+    CHECK_CONTRACT(!common_reflection_parse_json(too_long.dump(),result,error));
+    std::string unicode_work;
+    for (size_t i=0;i<1024;++i) unicode_work += "å";
+    auto unicode_next=next_work;unicode_next["next_action"]=unicode_work;
+    CHECK_CONTRACT(common_reflection_parse_json(unicode_next.dump(),result,error));
+    unicode_next["next_action"]=unicode_work+"å";
+    CHECK_CONTRACT(!common_reflection_parse_json(unicode_next.dump(),result,error));
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect revise\nassurance_action fail_bounded\nguidance \"Source unavailable; retain unfinished work\"\ntask_outcome blocked",result,error));
+    CHECK_CONTRACT(result.next_action==common_agent_reflection_next_action::fail_bounded && result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"remaining"})",result,error));
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"blocked","add_steps":[{"mode":"reasoning"}]})",result,error));
+    common_plan_state stopped_plan;
+    common_plan_step done;done.id="created";done.status=common_plan_step_status::completed;
+    common_plan_step failed;failed.id="collect";failed.status=common_plan_step_status::failed;
+    stopped_plan.steps={done,failed};
+    CHECK_CONTRACT(common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"blocked","complete":["created"]})",result,error));
+    CHECK_CONTRACT(common_reflection_validate_bounded_stop(result,stopped_plan,error));
+    CHECK_CONTRACT(result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"blocked","complete":["collect"]})",result,error));
+    CHECK_CONTRACT(!common_reflection_validate_bounded_stop(result,stopped_plan,error));
     CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","next_action":""})", result, error));
     CHECK_CONTRACT(result.proposed_plan_operations.empty());
     CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","next_action":"  \t "})", result, error));

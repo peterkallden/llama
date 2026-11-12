@@ -233,29 +233,60 @@ bool common_try_register_repository_tool_adapter(
             const int start = arguments.value("start_line", 1), end = arguments.value("end_line", start + 199);
             if (start < 1 || end < start || end - start > 399) return common_adapter_validation_failure("tool.repository.read.invalid_range", "repository.read range or file is invalid", "Requested line range is invalid.");
             if (!text_file(path)) return common_adapter_validation_failure("tool.repository.read.not_text", "repository.read range or file is invalid", "Repository file is not a readable text file.");
-            std::ifstream file(path, std::ios::binary); std::string line; json lines = json::array();
-            for (int number = 1; std::getline(file, line); ++number) if (number >= start && number <= end) {
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                lines.push_back({{"line", number}, {"text", line}});
-            }
-            if (file.bad()) return common_adapter_execution_failure(
-                "tool.repository.read.read_failed", "repository.read could not finish reading the file",
-                "The selected file could not be read completely.");
             std::ifstream bytes_file(path, std::ios::binary);
             const std::string bytes((std::istreambuf_iterator<char>(bytes_file)), std::istreambuf_iterator<char>());
-            if (bytes_file.bad()) return common_adapter_execution_failure(
-                "tool.repository.read.hash_failed", "repository.read could not hash the complete file",
+            if (!bytes_file.is_open() || bytes_file.bad()) return common_adapter_execution_failure(
+                "tool.repository.read.read_failed", "repository.read could not finish reading the file",
                 "The selected file could not be read completely.");
             const size_t total_lines = static_cast<size_t>(std::count(bytes.begin(), bytes.end(), '\n')) +
                 (!bytes.empty() && bytes.back() != '\n' ? 1 : 0);
-            const bool has_more = static_cast<size_t>(end) < total_lines;
-            const json output = {{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()},
-                {"lines", lines}, {"sha256", "sha256:" + hash_sha256_hex(bytes.data(), bytes.size())},
+            json output = {{"path", std::filesystem::relative(path, bindings.repository_root).generic_string()},
+                {"lines", json::array()}, {"sha256", "sha256:" + hash_sha256_hex(bytes.data(), bytes.size())},
                 {"total_lines", total_lines}, {"requested_start_line", start}, {"requested_end_line", end},
-                {"has_more", has_more}, {"next_start_line", has_more ? json(end + 1) : json(nullptr)}};
-            if (output.dump().size() > max_bytes) return common_adapter_limit_failure(
-                "tool.repository.read.output_limit", "repository.read line output exceeds the response limit",
-                "Reduce the requested line range or read a smaller portion of the file.");
+                {"returned_start_line", nullptr}, {"returned_end_line", nullptr},
+                {"has_more", false}, {"next_start_line", nullptr},
+                {"range_has_more", false}, {"complete", true}, {"stop_reason", "end_of_range"}};
+            // Parse and hash the same byte snapshot. Bound complete rows before
+            // publication; the cursor always follows the last returned row.
+            std::istringstream file(bytes);
+            std::string line;
+            int returned_end = start - 1;
+            bool bounded = false;
+            for (int number = 1; number <= end && std::getline(file, line); ++number) {
+                if (number < start) continue;
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                output["lines"].push_back({{"line", number}, {"text", line}});
+                output["returned_start_line"] = start;
+                output["returned_end_line"] = number;
+                const bool more = static_cast<size_t>(number) < total_lines;
+                output["has_more"] = more;
+                output["next_start_line"] = more ? json(number + 1) : json(nullptr);
+                output["range_has_more"] = number < end && more;
+                // Reserve the serialized incomplete-state metadata as well.
+                output["complete"] = false;
+                output["stop_reason"] = "response_byte_limit";
+                if (max_bytes && output.dump().size() > max_bytes) {
+                    output["lines"].erase(output["lines"].end() - 1);
+                    bounded = true;
+                    break;
+                }
+                returned_end = number;
+            }
+            if (bounded && returned_end < start) return common_adapter_limit_failure(
+                "tool.repository.read.line_limit", "a single source line exceeds the response byte limit",
+                "The selected line cannot fit as a complete row; inspect a different source view or narrower structured result.");
+            const bool returned = returned_end >= start;
+            const bool more = returned && static_cast<size_t>(returned_end) < total_lines;
+            output["returned_start_line"] = returned ? json(start) : json(nullptr);
+            output["returned_end_line"] = returned ? json(returned_end) : json(nullptr);
+            output["has_more"] = more;
+            output["next_start_line"] = more ? json(returned_end + 1) : json(nullptr);
+            output["range_has_more"] = bounded;
+            output["complete"] = !bounded;
+            output["stop_reason"] = bounded ? "response_byte_limit" : "end_of_range";
+            if (max_bytes && output.dump().size() > max_bytes) return common_adapter_limit_failure(
+                "tool.repository.read.output_limit", "repository.read metadata exceeds the response byte limit",
+                "The configured response limit cannot contain this source metadata.");
             return common_adapter_success_json(output);
         }, error);
     } else if (definition.executor_id == "builtin.repository.snapshot" && !bindings.repository_root.empty()) {

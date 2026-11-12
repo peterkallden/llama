@@ -118,6 +118,8 @@ bool workflow_graph(const json & item, common_plan_workflow_definition & definit
         transition.cost = source.value("cost", 1.0f);
         transition.optional = source.value("optional", false);
         transition.optional_availability = source.value("optional_availability", false);
+        transition.review_only = source.value("review_only", false);
+        transition.review_mutation_allowed = source.value("review_mutation_allowed", false);
         transition.failure_terminal_state = source.value("failure_terminal_state", std::string{});
         if (source.contains("handled_http_statuses")) {
             if (!source["handled_http_statuses"].is_array()) { error = "handled HTTP statuses must be an array"; return false; }
@@ -359,6 +361,9 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                     error = "workflow transition model_instruction exceeds its bounded text contract";
                     return false;
                 }
+                if (transition.review_mutation_allowed && transition.kind != common_plan_workflow_transition_kind::tool) {
+                    error = "review mutation authorization requires a tool transition"; return false;
+                }
                 if (transition.optional_availability && transition.kind != common_plan_workflow_transition_kind::tool) {
                     error = "optional availability requires a tool transition"; return false;
                 }
@@ -468,8 +473,19 @@ bool validate(const common_agent_bootstrap_package & package, std::string & erro
                 }
             }
             for (const auto & terminal : definition.terminal_states) {
-                if (std::any_of(definition.transitions.begin(), definition.transitions.end(), [&](const auto & transition) { return transition.from_state == terminal; })) {
+                if (std::any_of(definition.transitions.begin(), definition.transitions.end(), [&](const auto & transition) { return transition.from_state == terminal && !transition.review_only; })) {
                     error = "workflow terminal state has outgoing transition"; return false;
+                }
+            }
+            std::set<std::string> review_entries;
+            for (const auto & transition : definition.transitions) if (transition.review_only) {
+                if (transition.kind != common_plan_workflow_transition_kind::model_choice ||
+                        transition.choices.empty() ||
+                        std::find(definition.terminal_states.begin(), definition.terminal_states.end(),
+                            transition.from_state) == definition.terminal_states.end() ||
+                        !review_entries.insert(transition.from_state).second) {
+                    error = "workflow review entry requires one fixed-choice transition per terminal state";
+                    return false;
                 }
             }
             // A bounded workflow must have a possible route to a terminal
@@ -764,6 +780,8 @@ bool common_agent_package_to_json(const common_agent_bootstrap_package & package
                 if (!transition.tool_name.empty()) item["tool"] = transition.tool_name;
                 if (transition.model_supplies_arguments) item["model_supplies_arguments"] = true;
                 if (transition.optional_availability) item["optional_availability"] = true;
+                if (transition.review_only) item["review_only"] = true;
+                if (transition.review_mutation_allowed) item["review_mutation_allowed"] = true;
                 if (!transition.failure_terminal_state.empty()) {
                     item["failure_terminal_state"] = transition.failure_terminal_state;
                     item["handled_http_statuses"] = transition.handled_http_statuses;

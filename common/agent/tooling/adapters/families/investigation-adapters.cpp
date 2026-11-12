@@ -326,6 +326,12 @@ common_tool_execution_result execute_investigation_tool(
             return common_adapter_validation_failure("tool.investigation.case_invalid_arguments",
                 "case title, question, optional source fields, and time bounds have invalid types");
         }
+        const bool has_start = arguments.contains("window_start_ms");
+        const bool has_end = arguments.contains("window_end_ms");
+        if (has_start != has_end || (has_start &&
+                arguments.at("window_start_ms").get<int64_t>() >= arguments.at("window_end_ms").get<int64_t>()))
+            return common_adapter_validation_failure("tool.investigation.source_window_invalid",
+                "Optional time bounds must be supplied together, with start before end. Omit both to search without a time filter.");
         const auto source_id = arguments.value("source_id", std::string());
         const auto resource_uri = arguments.value("resource_uri", std::string());
         if (source_id.empty() && resource_uri.empty()) return common_adapter_validation_failure(
@@ -337,16 +343,17 @@ common_tool_execution_result execute_investigation_tool(
                 return common_adapter_execution_failure("tool.investigation.sources_unavailable",
                     std::move(error), "Configured investigation sources are unavailable.");
             }
-            if (!bindings.data_store->authorize_investigation_source(source_id, bindings.tool_scope, error))
-                return common_adapter_not_found_failure("tool.investigation.source_unavailable",
-                    std::move(error), "Choose a source currently authorized for this scope.");
             const bool source_exists = std::any_of(datasets.begin(), datasets.end(), [&](const auto & descriptor) {
                 return descriptor.ref.storage_mode == common_agent_dataset_storage_mode::virtual_ &&
                     descriptor.ref.source_provider == source_id;
             });
-            if (!source_exists) return common_adapter_not_found_failure(
-                "tool.investigation.source_unavailable", "case source is not configured",
-                "Choose a source available to the host.");
+            if (!source_exists) return common_adapter_validation_failure(
+                "tool.investigation.source_invalid", "source_id does not identify a configured investigation search source; dataset handles are not source IDs",
+                "The supplied source ID is invalid. Choose an exact authorized source ID from the tool contract or investigate.source.list.");
+            if (!bindings.data_store->authorize_investigation_source(source_id, bindings.tool_scope, error))
+                return common_adapter_failure("tool.investigation.source_denied", common_tool_failure_class::policy,
+                    false, "The selected source cannot be used in this scope. List currently authorized sources before choosing another.",
+                    std::move(error));
         }
         common_investigation_case_revision value;
         static std::atomic<uint64_t> sequence{1};
@@ -417,6 +424,38 @@ common_tool_execution_result execute_investigation_tool(
     if (!investigation_authorize_sources(bindings, value, error))
         return common_adapter_not_found_failure("tool.investigation.case_unavailable",
             "case source is no longer authorized", "The case is unavailable in the current scope.");
+    if (operation == "investigate.case.update_scope") {
+        if (!arguments.contains("expected_revision") || !arguments["expected_revision"].is_number_integer() ||
+                !arguments.contains("window_start_ms") || !arguments["window_start_ms"].is_number_integer() ||
+                !arguments.contains("window_end_ms") || !arguments["window_end_ms"].is_number_integer())
+            return common_adapter_validation_failure("tool.investigation.source_window_invalid",
+                "Case revision and both integer time bounds are required.");
+        const auto expected = arguments.at("expected_revision").get<uint64_t>();
+        const auto start = arguments.at("window_start_ms").get<int64_t>();
+        const auto end = arguments.at("window_end_ms").get<int64_t>();
+        if ((start || end) && start >= end)
+            return common_adapter_validation_failure("tool.investigation.source_window_invalid",
+                "Start must precede end; use zero for both bounds to remove the time filter.");
+        if (value.source_id.empty())
+            return common_adapter_validation_failure("tool.investigation.source_window_invalid",
+                "A saved search time scope requires an attached search connector.");
+        if (expected != value.revision)
+            return investigation_publication_failure(common_agent_publication_status::conflict,
+                "case revision changed before scope update");
+        if (start == value.window_start_ms && end == value.window_end_ms)
+            return common_adapter_success_json({{"case_id",value.case_id},{"revision",value.revision},{"scope_changed",false}});
+        value.window_start_ms = start;
+        value.window_end_ms = end;
+        for (auto & source : value.sources) if (source.kind == common_investigation_source_kind::search_connector) {
+            source.complete = false;
+            source.processing_status = "not_collected";
+        }
+        common_investigation_case_revision published;
+        if (!investigation_publish_revision(bindings,std::move(value),expected,published,error,publication_status))
+            return investigation_publication_failure(publication_status,std::move(error));
+        return common_adapter_success_json({{"case_id",published.case_id},{"revision",published.revision},
+            {"scope_changed",true}});
+    }
     if (operation == "investigate.source.attach") {
         if (!arguments.contains("expected_revision") || !arguments["expected_revision"].is_number_integer() ||
                 (arguments.contains("resource_uri") && !arguments["resource_uri"].is_string()) ||
@@ -445,10 +484,13 @@ common_tool_execution_result execute_investigation_tool(
                 return descriptor.ref.storage_mode == common_agent_dataset_storage_mode::virtual_ &&
                     descriptor.ref.source_provider == provider_id;
             });
-            if (!configured || !bindings.data_store->authorize_investigation_source(provider_id, bindings.tool_scope, error))
-                return common_adapter_not_found_failure("tool.investigation.source_unavailable",
-                    error.empty() ? "search source is not configured" : std::move(error),
-                    "Choose a search source currently authorized for this scope.");
+            if (!configured) return common_adapter_validation_failure("tool.investigation.source_invalid",
+                "provider_id does not identify a configured investigation search source; dataset handles are not source IDs",
+                "The supplied provider ID is invalid. Choose an exact authorized source ID from the tool contract or investigate.source.list.");
+            if (!bindings.data_store->authorize_investigation_source(provider_id, bindings.tool_scope, error))
+                return common_adapter_failure("tool.investigation.source_denied", common_tool_failure_class::policy,
+                    false, "The selected source cannot be used in this scope. List currently authorized sources before choosing another.",
+                    std::move(error));
             source.id = "provider-" + provider_id;
             source.kind = common_investigation_source_kind::search_connector;
             source.provider_id = provider_id;
@@ -476,12 +518,12 @@ common_tool_execution_result execute_investigation_tool(
                 return common_adapter_validation_failure("tool.investigation.source_window_invalid",
                     "search source time bounds must be supplied together as integers");
             if (value.source_id.empty()) {
-                if (!has_window_start || arguments.at("window_start_ms").get<int64_t>() >= arguments.at("window_end_ms").get<int64_t>())
+                if (has_window_start && arguments.at("window_start_ms").get<int64_t>() >= arguments.at("window_end_ms").get<int64_t>())
                     return common_adapter_validation_failure("tool.investigation.source_window_required",
-                        "attaching the first search connector requires a non-empty time window");
+                        "optional search time window must have start before end");
                 value.source_id = source.provider_id;
-                value.window_start_ms = arguments.at("window_start_ms").get<int64_t>();
-                value.window_end_ms = arguments.at("window_end_ms").get<int64_t>();
+                value.window_start_ms = arguments.value("window_start_ms", int64_t(0));
+                value.window_end_ms = arguments.value("window_end_ms", int64_t(0));
             } else if (has_window_start && (arguments.at("window_start_ms").get<int64_t>() != value.window_start_ms ||
                     arguments.at("window_end_ms").get<int64_t>() != value.window_end_ms)) {
                 return common_adapter_validation_failure("tool.investigation.source_window_mismatch",
@@ -918,7 +960,7 @@ common_tool_execution_result execute_investigation_tool(
             {"session_id", bindings.tool_scope.project_id.empty() ? bindings.tool_scope.session_id : std::string()}};
         size_t offset = 0;
         if (!investigation_page_offset(arguments.value("cursor", std::string()), value.revision, binding, offset))
-            return common_adapter_execution_failure("tool.investigation.cursor_invalid",
+            return common_adapter_validation_failure("tool.investigation.cursor_invalid",
                 "case item cursor does not match this case revision and filter",
                 "The page cursor is invalid or stale; reopen the case and start again.");
         json source;
@@ -966,10 +1008,14 @@ common_tool_execution_result execute_investigation_tool(
             else return common_adapter_validation_failure("tool.investigation.items_type_invalid",
                 "type must be sources, statements, comparisons, analyses, actors, actor_mentions, evidence_links, actor_groups, actor_relationships, association_reviews, entities, events, relations, claims, gaps or reports");
             if (collection) source = serialized.at(collection);
+            if (item_type == "sources") for (auto & item : source) {
+                if (item.value("kind",std::string{}) == "search_connector")
+                    item["collection_context"] = common_investigation_collection_context(value,item.value("provider_id",std::string{}));
+            }
             if (item_type == "association_reviews") std::reverse(source.begin(),source.end());
         }
         json items = json::array();
-        if (offset > source.size()) return common_adapter_execution_failure(
+        if (offset > source.size()) return common_adapter_validation_failure(
             "tool.investigation.cursor_invalid", "case item cursor offset exceeds the collection size",
             "The page cursor is invalid or stale; reopen the case and start again.");
         constexpr size_t max_page_bytes = 40 * 1024;
@@ -1058,12 +1104,15 @@ common_tool_execution_result execute_investigation_tool(
         markdown += "- Case: `" + safe_text(value.case_id) + "`\n- Frozen revision: `" + std::to_string(value.revision) + "`\n";
         if (!value.source_id.empty()) markdown += "- Primary search source: `" + safe_text(value.source_id) + "`\n";
         if (!value.sources.empty()) markdown += "- Selected sources: " + std::to_string(value.sources.size()) + "\n";
-        if (!value.source_id.empty()) markdown += "- Search time window (epoch ms): `" +
+        if (!value.source_id.empty() && (value.window_start_ms || value.window_end_ms)) markdown += "- Search time window (epoch ms): `" +
             std::to_string(value.window_start_ms) + "` to `" + std::to_string(value.window_end_ms) + "`\n";
+        if (!value.source_id.empty() && !value.window_start_ms && !value.window_end_ms)
+            markdown += "- Case time window: not specified. Individual acquisition records retain any temporary time filters. Observed event times do not establish exhaustive temporal coverage.\n";
         markdown += "\n";
         markdown += "## Investigation question\n\n" + safe_text(value.question) + "\n\n";
         markdown += "## Scope and coverage\n\n";
         std::vector<std::string> report_limitations = value.gaps;
+        markdown += "Retained evidence preserves its original acquisition scope. The current case time filter does not delete earlier evidence; consult acquisition records for query-specific coverage.\n\n";
         for (const auto & source : value.sources) {
             if (!common_investigation_source_complete(source))
                 report_limitations.push_back("Source " + source.id + " is incomplete or not fully processed (" + source.processing_status + ").");
@@ -1104,7 +1153,10 @@ common_tool_execution_result execute_investigation_tool(
         markdown += "## Timeline\n\n";
         if (ordered_events.empty()) markdown += "No source events are retained in this revision.\n\n";
         for (const auto * event : ordered_events) {
-            markdown += "- " + (event->time.has_event_time ? std::to_string(event->time.event_time_ms) : std::string("time unknown")) +
+            const auto utc = event->time.has_event_time ? common_investigation_format_time_utc(event->time.event_time_ms) : std::string{};
+            markdown += "- " + (event->time.has_event_time
+                ? (utc.empty() ? std::string("UTC conversion unavailable") : utc) +
+                    " (event_time_ms=" + std::to_string(event->time.event_time_ms) + ")" : std::string("time unknown")) +
                 " — " + safe_text(event->event_type) + " (`" + safe_text(event->id) + "`; document `" +
                 safe_text(event->source_document_id) + "`; outcome `" +
                 safe_text(event->outcome.empty() ? "unknown" : event->outcome) + "`" + (event->source_index.empty() ? std::string() : "; index `" + safe_text(event->source_index) + "`") +
@@ -1363,6 +1415,9 @@ common_tool_execution_result execute_investigation_tool(
             {"report_uri", published_report.report_uri}, {"markdown_uri", published_report.markdown_uri},
             {"source_manifest_uri", published_report.source_manifest_uri},
             {"content_fingerprint", published_report.content_fingerprint}, {"complete", published_report.complete},
+            {"report_status","saved"}, {"coverage_status",published_report.complete ? "no_recorded_gaps" : "limited"},
+            {"review_status","unreviewed"},
+            {"status_semantics","complete describes recorded evidence coverage, not whether this report was saved or reviewed"},
             {"limitations", published_report.limitations}, {"visualization_uris", [&]() {
                 json uris = json::array(); for (const auto & snapshot : attached_snapshots) uris.push_back(snapshot["uri"]); return uris;
             }()}});
@@ -1409,9 +1464,9 @@ common_tool_execution_result execute_investigation_tool(
                 return common_adapter_success_json(replay);
             }
         }
-        if (arguments.value("expected_revision", uint64_t(0)) != value.revision) {
-            return common_adapter_execution_failure("tool.investigation.revision_conflict",
-                "case revision changed before collection", "Reload the case before collecting more evidence.");
+        if (file_import && arguments.value("expected_revision", uint64_t(0)) != value.revision) {
+            return investigation_publication_failure(common_agent_publication_status::conflict,
+                "case revision changed before log import");
         }
         if (!bindings.resource_runtime.store) return common_adapter_execution_failure(
             "tool.investigation.evidence_store_unavailable", "resource store is unavailable",
@@ -1427,6 +1482,9 @@ common_tool_execution_result execute_investigation_tool(
         const auto dataset_uri = arguments.value("dataset", std::string());
         std::vector<common_investigation_relation_rule> configured_relation_profiles;
         json page, query;
+        std::string collection_query_fingerprint, collection_generation, collection_analysis_id;
+        json collection_binding;
+        size_t collection_offset = 0;
         common_investigation_log_page imported;
         std::string parser_fingerprint;
         json import_binding;
@@ -1556,8 +1614,38 @@ common_tool_execution_result execute_investigation_tool(
             }
             json selected = json::array();
             for (const auto & column : dataset.columns) selected.push_back(column.name);
-            json predicates = json::array({{{"field", arguments.value("identifier_field", std::string())},
-                {"operator", "="}, {"value", arguments.value("identifier_value", std::string())}}});
+            const bool has_identifier = arguments.contains("identifier_field");
+            if (has_identifier != arguments.contains("identifier_value"))
+                return common_adapter_validation_failure("tool.investigation.collect_invalid_arguments",
+                    "Supply both identifier_field and identifier_value, or omit both for bounded source discovery.");
+            json predicates = json::array();
+            if (has_identifier) {
+                if (!arguments["identifier_field"].is_string() || !arguments["identifier_value"].is_string() ||
+                        arguments["identifier_field"].get<std::string>().empty() || arguments["identifier_value"].get<std::string>().empty())
+                    return common_adapter_validation_failure("tool.investigation.collect_invalid_arguments",
+                        "The selected source field and exact value must be nonempty strings.");
+                const auto field = arguments.at("identifier_field").get<std::string>();
+                if (std::none_of(dataset.columns.begin(), dataset.columns.end(),
+                        [&](const auto & column) { return column.name == field; })) {
+                    json allowed = json::array();
+                    for (const auto & column : dataset.columns) allowed.push_back(column.name);
+                    return common_adapter_validation_failure("tool.investigation.collect_invalid_arguments",
+                        "identifier_field must name a column of the selected dataset; allowed columns: " + allowed.dump(),
+                        "The selected field is not present in this dataset. Choose an exact source column.");
+                }
+                predicates.push_back({{"field",field},{"operator","="},{"value",arguments.at("identifier_value")}});
+            }
+            const bool has_start = arguments.contains("window_start_ms");
+            const bool has_end = arguments.contains("window_end_ms");
+            if (has_start != has_end || (has_start &&
+                    (!arguments["window_start_ms"].is_number_integer() || !arguments["window_end_ms"].is_number_integer())))
+                return common_adapter_validation_failure("tool.investigation.source_window_invalid",
+                    "Temporary query time bounds must be supplied together as integers.");
+            const auto query_start = arguments.value("window_start_ms",value.window_start_ms);
+            const auto query_end = arguments.value("window_end_ms",value.window_end_ms);
+            if ((query_start || query_end) && query_start >= query_end)
+                return common_adapter_validation_failure("tool.investigation.source_window_invalid",
+                    "Temporary query start must precede end; omit bounds to inherit the case scope.");
             const auto has_column = [&](const std::string & name) {
                 return std::any_of(dataset.columns.begin(), dataset.columns.end(),
                     [&](const auto & column) { return column.name == name; });
@@ -1570,10 +1658,76 @@ common_tool_execution_result execute_investigation_tool(
             if (time_field.empty()) return common_adapter_validation_failure(
                 "tool.investigation.timestamp_unmapped",
                 "the configured source has no supported event-time field; collection cannot enforce this case window");
-            predicates.push_back({{"field", time_field}, {"operator", ">="}, {"value", value.window_start_ms}});
-            predicates.push_back({{"field", time_field}, {"operator", "<"}, {"value", value.window_end_ms}});
+            if (query_start || query_end) {
+                predicates.push_back({{"field", time_field}, {"operator", ">="}, {"value", query_start}});
+                predicates.push_back({{"field", time_field}, {"operator", "<"}, {"value", query_end}});
+            }
             query = {{"dataset", dataset_uri}, {"select", selected}, {"where", predicates},
-                {"limit", limit}, {"max_result_rows", limit}, {"max_scan_rows", limit}};
+                {"limit", limit}, {"max_result_rows", limit}, {"max_scan_rows", limit},
+                {"order_by", json::array({{{"field", time_field}, {"direction", "asc"}}})}};
+            const auto attached = std::find_if(value.sources.begin(), value.sources.end(), [&](const auto & source) {
+                return source.kind == common_investigation_source_kind::search_connector && source.provider_id == collection_source_id;
+            });
+            const auto identity = nlohmann::json{{"schema","investigation-query.v1"},{"case_id",value.case_id},
+                {"namespace",bindings.tool_scope.namespace_id},{"project",bindings.tool_scope.project_id},
+                {"session",bindings.tool_scope.project_id.empty() ? bindings.tool_scope.session_id : std::string{}},
+                {"source_revision",attached == value.sources.end() ? uint64_t(1) : attached->source_revision},
+                {"source_descriptor",nlohmann::json::parse(dataset.ref.source_request_json.empty() ? "{}" : dataset.ref.source_request_json)},
+                {"query",query}}.dump();
+            collection_query_fingerprint = "sha256:" + hash_sha256_hex(identity.data(),identity.size());
+            const auto cursor = arguments.value("cursor", std::string{});
+            const auto explicit_key = arguments.value("idempotency_key", std::string{});
+            if (explicit_key.size() > 128 || cursor.size() > 256)
+                return common_adapter_validation_failure("tool.investigation.collection_identity_invalid",
+                    "collection keys and cursors exceed the supported bounds");
+            collection_generation = explicit_key;
+            bool cursor_found = cursor.empty();
+            for (const auto & record : value.analyses) {
+                if (record.kind != "search_collection") continue;
+                const auto saved = json::parse(record.result_json,nullptr,false);
+                if (!saved.is_object()) continue;
+                if (cursor.empty() && !explicit_key.empty() && saved.value("collection_key",std::string{}) == explicit_key &&
+                        saved.value("query_fingerprint",std::string{}) != collection_query_fingerprint)
+                    return common_adapter_failure("tool.investigation.idempotency_conflict",common_tool_failure_class::conflict,
+                        false,"This collection key was already used for a different query.","collection idempotency payload mismatch");
+                if (!cursor.empty() && saved.value("next_cursor",std::string{}) == cursor) {
+                    if (record.parameters_fingerprint != collection_query_fingerprint ||
+                            (!explicit_key.empty() && explicit_key != saved.value("collection_key",std::string{})))
+                        return common_adapter_validation_failure("tool.investigation.cursor_invalid",
+                            "collection cursor belongs to another query, source version or scope");
+                    collection_offset = saved.value("next_offset",size_t(0));
+                    collection_generation = saved.value("collection_key",std::string{});
+                    cursor_found = collection_offset > saved.value("offset",size_t(0));
+                    break;
+                }
+            }
+            if (!cursor_found) return common_adapter_validation_failure("tool.investigation.cursor_invalid",
+                "collection cursor was not issued for a retained progressing page of this case");
+            collection_binding = {{"case_id",value.case_id},{"query",collection_query_fingerprint},
+                {"collection_key",collection_generation}};
+            const auto page_identity = collection_binding.dump() + "\n" + std::to_string(collection_offset);
+            collection_analysis_id = "analysis-" + hash_sha256_hex(page_identity.data(),page_identity.size()).substr(0,40);
+            const auto previous = std::find_if(value.analyses.begin(),value.analyses.end(),[&](const auto & record) {
+                return record.id == collection_analysis_id && record.kind == "search_collection";
+            });
+            if (previous != value.analyses.end()) {
+                auto replay = json::parse(previous->result_json,nullptr,false);
+                if (!replay.is_object() || previous->parameters_fingerprint != collection_query_fingerprint)
+                    return common_adapter_execution_failure("tool.investigation.collection_result_invalid",
+                        "saved collection receipt is invalid", "The retained collection receipt cannot be replayed.");
+                // Keep the original published revision: a replay is not a new
+                // publication and cannot authorize rebasing another workflow.
+                replay["reused"] = true; replay["current_revision"] = value.revision;
+                if (arguments.value("expected_revision",uint64_t(0)) == value.revision) replay["revision"] = value.revision;
+                return common_adapter_success_json(replay);
+            }
+            if (arguments.value("expected_revision",uint64_t(0)) != value.revision)
+                return investigation_publication_failure(common_agent_publication_status::conflict,
+                    "case revision changed before collection");
+            if (value.analyses.size() >= 1000) return common_adapter_limit_failure(
+                "tool.investigation.collection_capacity", "case analysis receipt capacity exhausted",
+                "The case cannot retain another collection checkpoint.");
+            query["offset"] = collection_offset;
             std::string response;
             if (!bindings.data_store->execute_scoped("data.query", query.dump(), bindings.tool_scope,
                     bindings.allow_network, response, error)) {
@@ -1586,8 +1740,17 @@ common_tool_execution_result execute_investigation_tool(
                 "tool.investigation.collect_invalid_result", "virtual dataset returned an invalid row page",
                 "The source result could not be normalized.");
         }
-        const bool query_complete = page.value("complete", false) &&
+        if (!file_import && (page["columns"].empty() || page["columns"].size() > 64 || page["rows"].size() > limit ||
+                !std::all_of(page["columns"].begin(),page["columns"].end(),[](const auto & column) { return column.is_string(); }) ||
+                !std::all_of(page["rows"].begin(),page["rows"].end(),[&](const auto & row) {
+                    return row.is_array() && row.size() == page["columns"].size();
+                }))) return common_adapter_execution_failure("tool.investigation.collect_invalid_result",
+                    "search page does not satisfy its bounded row contract", "The source returned an invalid evidence page; no checkpoint was published.");
+        const bool page_exhausted = page.value("complete", false) &&
             !page.value("scan_truncated", false) && !page.value("result_truncated", false);
+        // Offset pages are live queries, not a provider snapshot. Do not turn
+        // the last page into a claim of snapshot-consistent complete coverage.
+        const bool query_complete = page_exhausted && (file_import || collection_offset == 0);
         std::vector<std::string> columns;
         for (const auto & column : page["columns"]) if (column.is_string()) columns.push_back(column.get<std::string>());
         const auto first_column = [&](std::initializer_list<const char *> candidates) {
@@ -1619,6 +1782,8 @@ common_tool_execution_result execute_investigation_tool(
         for (const auto & event : value.events) existing_events.insert(event.id);
         std::vector<common_investigation_event> collected_events;
         std::vector<std::string> limitations;
+        if (!file_import && collection_offset > 0) limitations.push_back(
+            "Search pages use live offsets without a point-in-time snapshot; intervening source changes can affect coverage.");
         if (!file_import && (!page.value("complete", false) || page.value("scan_truncated", false) ||
                 page.value("result_truncated", false))) {
             limitations.push_back("source page is partial or truncated; case coverage does not represent a complete search");
@@ -1882,6 +2047,46 @@ common_tool_execution_result execute_investigation_tool(
             record.completeness = query_complete ? "complete" : "partial"; record.limitations = limitations;
             value.analyses.push_back(std::move(record));
         }
+        json collection_result;
+        if (!file_import) {
+            const size_t returned_rows = page["rows"].size();
+            const bool known_total = page.value("total_exact",false) && page.contains("total") && page["total"].is_number_integer() &&
+                (page["total"].is_number_unsigned() || page["total"].get<int64_t>() >= 0);
+            const size_t next_offset = collection_offset + returned_rows;
+            const std::string more = page_exhausted ? "no" :
+                (known_total && next_offset < page["total"].get<size_t>() ? "yes" : "unknown");
+            const bool can_advance = more != "no" && returned_rows > 0;
+            collection_result = {{"case_id",value.case_id},{"revision",value.revision+1},
+                {"published_revision",value.revision+1},{"collected_events",collected_events.size()},
+                {"complete",query_complete},{"limitations",limitations},{"raw_resource_uri",raw_descriptor.uri},
+                {"normalized_resource_uri",normalized_descriptor.uri},{"offset",collection_offset},
+                {"next_offset",can_advance ? json(next_offset) : json(nullptr)}, {"more_data",more},
+                {"next_cursor",can_advance ? investigation_page_cursor(value.revision+1,next_offset,collection_binding) : std::string{}},
+                {"exhausted",more == "no"},{"query_fingerprint",collection_query_fingerprint},
+                {"collection_key",collection_generation},{"reused",false},
+                {"query_parameters",[&]() {
+                    json parameters = {{"dataset",dataset_uri},{"limit",limit}};
+                    for (const char * field : {"identifier_field","identifier_value"})
+                        if (arguments.contains(field)) parameters[field] = arguments.at(field);
+                    // Freeze effective bounds, including inherited case bounds, for replay and provenance.
+                    for (const auto & predicate : query.at("where")) {
+                        if (predicate.at("operator") == ">=") parameters["window_start_ms"] = predicate.at("value");
+                        if (predicate.at("operator") == "<") parameters["window_end_ms"] = predicate.at("value");
+                    }
+                    if (!parameters.contains("window_start_ms")) {
+                        parameters["window_start_ms"] = 0;
+                        parameters["window_end_ms"] = 0;
+                    }
+                    return parameters;
+                }()},
+                {"pagination_consistency",collection_offset ? "unverified_live_offset" : "single_page"}};
+            common_investigation_analysis_record receipt;
+            receipt.id=collection_analysis_id; receipt.kind="search_collection";
+            receipt.algorithm_version="search-collection-v1"; receipt.published_revision=value.revision+1;
+            receipt.source_ids={collection_source_id}; receipt.parameters_fingerprint=collection_query_fingerprint;
+            receipt.result_json=collection_result.dump(); receipt.completeness=query_complete ? "complete" : "partial";
+            receipt.limitations=limitations; value.analyses.push_back(std::move(receipt));
+        }
         const uint64_t expected = value.revision++;
         common_investigation_case_revision published;
         const auto revision_uri = "investigation-case://" + value.case_id + "/revision/" + std::to_string(value.revision);
@@ -1889,13 +2094,7 @@ common_tool_execution_result execute_investigation_tool(
         if (publication_status != common_agent_publication_status::published)
             return investigation_publication_failure(publication_status, std::move(error));
         if (file_import) return common_adapter_success_json(import_result);
-        return common_adapter_success_json({{"case_id", published.case_id}, {"revision", published.revision},
-            {"collected_events", collected_events.size()}, {"complete", page.value("complete", false)},
-            {"limitations", limitations}, {"raw_resource_uri", raw_descriptor.uri},
-            {"normalized_resource_uri", normalized_descriptor.uri},
-            {"next_cursor", file_import && !imported.exhausted ? investigation_page_cursor(published.revision, imported.next_record, import_binding) : std::string()},
-            {"exhausted",file_import ? imported.exhausted : query_complete},
-            {"rejected_count",file_import ? imported.rejected_count : size_t(0)}});
+        return common_adapter_success_json(collection_result);
     }
     if (operation == "investigate.analyze") {
         const auto analysis = arguments.value("analysis", std::string());
@@ -1979,7 +2178,11 @@ common_tool_execution_result execute_investigation_tool(
             {"last_seen_ms", relation.last_seen_ms}, {"event_count", relation.event_count},
             {"evidence_refs", relation.evidence_event_ids}, {"classification", relation.confidence_label}});
         return common_adapter_success_json({{"case_revision", graph.case_revision}, {"nodes", nodes},
-            {"edges", edges}, {"truncated", graph.truncated}, {"limitations", graph.limitations}});
+            {"edges", edges}, {"truncated", graph.truncated}, {"limitations", graph.limitations},
+            {"coverage", {{"kind","selected_neighborhood"},
+                {"center_entity_id",arguments.value("center_entity_id",std::string{})},
+                {"case_relation_count",value.relations.size()}, {"returned_relation_count",edges.size()},
+                {"meaning","Case totals include relations outside this query; a smaller neighborhood is not itself truncation."}}}});
     }
     if (operation == "investigate.events") {
         for (const char * field : {"case_revision", "limit", "window_start_ms", "window_end_ms"}) {
@@ -2030,7 +2233,7 @@ common_tool_execution_result execute_investigation_tool(
             {"session_id", bindings.tool_scope.project_id.empty() ? bindings.tool_scope.session_id : std::string()}};
         size_t offset = 0;
         if (!investigation_page_offset(arguments.value("cursor", std::string()), value.revision, binding, offset))
-            return common_adapter_execution_failure("tool.investigation.cursor_invalid",
+            return common_adapter_validation_failure("tool.investigation.cursor_invalid",
                 "event cursor does not match this case revision and filter",
                 "The page cursor is invalid or stale; reopen the case and start again.");
         const size_t limit = arguments.value("limit", size_t(100));
@@ -2049,7 +2252,7 @@ common_tool_execution_result execute_investigation_tool(
                 return a->time.event_time_ms < b->time.event_time_ms;
             return a->id < b->id;
         });
-        if (offset > matched.size()) return common_adapter_execution_failure(
+        if (offset > matched.size()) return common_adapter_validation_failure(
             "tool.investigation.cursor_invalid", "event cursor offset exceeds the matching result set",
             "The page cursor is invalid or stale; reopen the case and start again.");
         json events = json::array();
@@ -2066,6 +2269,10 @@ common_tool_execution_result execute_investigation_tool(
                     {"collected_time_ms", event.time.collected_time_ms}, {"uncertainty_ms", event.time.uncertainty_ms},
                     {"has_event_time", event.time.has_event_time}}}, {"raw_resource_uri", event.raw_resource_uri},
                 {"normalized_resource_uri", event.normalized_resource_uri}, {"entity_ids", event.entity_ids}};
+            if (event.time.has_event_time) {
+                const auto utc = common_investigation_format_time_utc(event.time.event_time_ms);
+                if (!utc.empty()) row["time"]["event_time_utc"] = utc;
+            }
             const auto source = std::find_if(value.sources.begin(),value.sources.end(),[&](const auto & v) { return v.id == event.source_id; });
             if (source != value.sources.end()) row["source_resource_uri"] = source->representation_uri;
             const size_t row_bytes = row.dump().size();

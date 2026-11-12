@@ -85,6 +85,7 @@ struct common_agent_jsonl_turn_result {
     std::string failure_class;
     int event_count = 0;
     std::optional<common_agent_unverified_draft> unverified_draft;
+    std::optional<common_agent_review_progress> review_progress;
 };
 
 bool common_agent_jsonl_read_message(

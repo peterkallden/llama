@@ -155,6 +155,7 @@ add_library(${TARGET}
     synthesis-state.cpp synthesis-state.h
     review-checklist.cpp review-checklist.h
     method-phases.cpp method-phases.h
+    continuation-control.cpp continuation-control.h
     learning/memory-learning.cpp learning/memory-learning.h
     adaptation/learning-observation.cpp adaptation/learning-observation.h
     adaptation/learning-case.cpp adaptation/learning-case.h
@@ -232,6 +233,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/experiment/flydelta-outcome-guidance.cpp adaptation/flydelta/experiment/flydelta-outcome-guidance.h
     adaptation/flydelta/experiment/flydelta-guidance-qualification.cpp adaptation/flydelta/experiment/flydelta-guidance-qualification.h
     prediction/outcome-guidance.cpp prediction/outcome-guidance.h
+    investigation-context.cpp investigation-context.h
     investigation-prioritization.cpp investigation-contracts.h
     adaptation/flydelta/flydelta-decision-margin.cpp adaptation/flydelta/flydelta-decision-margin.h
     adaptation/flydelta/flydelta-deep-search.cpp adaptation/flydelta/flydelta-deep-search.h

@@ -47,6 +47,7 @@ struct common_reflection_result {
     // Empty preserves compatibility with existing reviewers.
     std::string task_outcome; // satisfied, remaining, blocked
     std::vector<common_agent_method_phase_review> phase_reviews;
+    std::vector<common_agent_review_part> parts;
 };
 
 class common_reflection_engine {

@@ -528,7 +528,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
             <div class="message" :class="[message.role, { 'agent-error': isAgentError(message) }]"><span class="message-role">{{ message.role === "user" ? "You" : "Agent" }}</span><div class="message-body">{{ message.content || (message.pending ? "..." : "") }}</div></div>
             <template v-if="message.role === 'assistant'">
               <section v-if="message.unverifiedDraft" class="unverified-draft" aria-label="Unapproved draft">
-                <strong>Ej godkänt utkast</strong>
+                <strong>{{ message.reviewProgress?.paused ? 'Arbete sparat · granskning pausad' : 'Ej godkänt utkast' }}</strong>
                 <p>Granskningen är inte klar. Texten kan innehålla kvarvarande brister.</p>
                 <p>{{ message.unverifiedDraft.stop_reason }}</p>
                 <ul v-if="message.unverifiedDraft.issues.length">
@@ -542,7 +542,22 @@ function isArtifactEvent(event: Record<string, unknown>) {
                 <ContextGraph :visualization="graph.visualization" :tool-name="graph.event.tool_name ?? graph.event.detail ?? ''"
                   :tools="session.tools" :call-tool="session.callReadOnlyTool" />
               </section>
-              <ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" :call-tool="session.callReadOnlyTool" @edit="editReport" @inspect="inspection = $event" />
+              <section v-if="message.reviewProgress" class="review-progress" aria-label="Review progress">
+                <strong>{{ message.reviewProgress.blocked_reason ? 'Work blocked · unfinished' : message.reviewProgress.accepted ? 'Requested outcome reviewed' : 'Review progress' }}</strong>
+                <p>Assessments apply only to the quoted text and its saved evidence. Other parts remain unreviewed.</p>
+                <p v-if="message.reviewProgress.blocked_reason">{{ message.reviewProgress.blocked_reason }}</p>
+                <ul v-if="message.reviewProgress.parts.length">
+                  <li v-for="part in message.reviewProgress.parts" :key="part.observation_id + part.excerpt">
+                    <strong>{{ part.status }}</strong> · {{ part.reason }}<blockquote>{{ part.excerpt }}</blockquote>
+                  </li>
+                </ul>
+                <ul v-if="message.reviewProgress.remaining.length"><li v-for="issue in message.reviewProgress.remaining" :key="issue.id">Remaining: {{ issue.description }} {{ issue.correction }}</li></ul>
+                <ul v-if="message.reviewProgress.follow_up?.length"><li v-for="note in message.reviewProgress.follow_up" :key="note">Possible follow-up: {{ note }}</li></ul>
+                <p v-if="message.reviewProgress.paused">You can continue the remaining review or request more evidence in a later turn.</p>
+                <button v-if="message.reviewProgress.paused" type="button" :disabled="session.busy"
+                  @click="submitMessage('Continue the unfinished work from plan ' + message.reviewProgress.plan_id + '. Preserve saved report revisions and completed operations. Review the outstanding issues and retrieve more evidence only where needed.', false)">Continue remaining work</button>
+              </section>
+              <ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :review-progress="message.reviewProgress" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" :call-tool="session.callReadOnlyTool" @edit="editReport" @inspect="inspection = $event" />
             </template>
           </div>
           <ReportCard v-for="report in orphanReports" :key="report.uri" :uri="report.uri" :name="report.name" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" :call-tool="session.callReadOnlyTool" @edit="editReport" @inspect="inspection = $event" />

@@ -24,6 +24,29 @@ const char * common_plan_operation_kind_name(common_plan_operation_kind kind) {
     } return "unknown";
 }
 
+bool common_plan_workflow_control_observation(const common_plan_state & plan, const common_plan_observation & observation) {
+    if (!plan.workflow_definition || plan.workflow_definition->transitions.empty()) return false;
+    for (const auto * source : {"workflow_arguments", "workflow_verification", "workflow_choice",
+            "workflow_grounding_policy", "workflow_terminal_choice", "artifact_continuation",
+            "workflow_handoff", "workflow_continuation_resolution", "response_review"})
+        if (observation.source == source) return true;
+    return false;
+}
+
+common_plan_storage_capacity common_plan_remaining_capacity(const common_plan_state & plan,
+        const common_plan_policy_config & config) {
+    size_t observations = 0, controls = 0;
+    for (const auto & observation : plan.observations) {
+        if (observation.source == "resource_chunk_planned" || observation.source == "resource_chunk" ||
+                observation.source == "resource_chunk_unresolved") continue;
+        if (common_plan_workflow_control_observation(plan, observation)) ++controls;
+        else ++observations;
+    }
+    const auto remaining = [](size_t used, size_t maximum) { return used < maximum ? maximum - used : 0; };
+    return {remaining(plan.steps.size(),config.max_steps),remaining(observations,config.max_observations),
+        remaining(controls,config.max_workflow_control_observations)};
+}
+
 common_plan_policy::common_plan_policy(common_plan_policy_config config) : config(config) {}
 
 static const common_plan_step * find_step(const common_plan_state & plan, const std::string & id) {
@@ -284,12 +307,15 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
         const bool chunk = is_chunk(*op.observation);
         if (chunk && !op.host_authorized) return deny("resource chunk observations are host-authorized only");
         const size_t chunk_count = std::count_if(plan.observations.begin(), plan.observations.end(), is_chunk);
+        const bool control = common_plan_workflow_control_observation(plan, *op.observation);
+        const auto capacity = common_plan_remaining_capacity(plan, config);
         if ((chunk && chunk_count >= config.max_resource_chunk_observations) ||
-                (!chunk && plan.observations.size() - chunk_count >= config.max_observations))
+                (!chunk && (control ? capacity.workflow_control == 0 : capacity.observations == 0)))
             return deny("invalid or excessive observation");
     }
     if (op.kind == common_plan_operation_kind::record_observation && op.observation && !op.host_authorized &&
             (op.observation->source == "workflow_verification" || op.observation->source == "workflow_arguments" ||
+             op.observation->source == "workflow_choice" ||
              op.observation->source == "workflow_handoff" || op.observation->source == "workflow_grounding_policy" ||
              op.observation->source == "response_review" || op.observation->source == "declared_claim" || op.observation->source == "artifact_snapshot" ||
              op.observation->source == "artifact_section" || op.observation->source == "artifact_publication" ||

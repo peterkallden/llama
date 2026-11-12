@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent/context/conversation-context.h"
+#include "agent/protocol/agent-response.h"
 #include "resource/resource-contract.h"
 #include "tools/agent/resource/agent-resource-store.h"
 
@@ -22,11 +23,18 @@ public:
     // from model conversation segments and compaction checkpoints.
     bool append_unverified_draft(const std::string & request_id,const std::string & turn_id,
         const nlohmann::ordered_json & draft,std::string & error);
+    bool append_review_progress(const std::string & request_id,const std::string & turn_id,
+        const nlohmann::ordered_json & progress,std::string & error);
+    // Persist a validated blocked outcome as context, separately from an answer.
+    bool append_blocked_outcome(const std::string & request_id, const std::string & turn_id,
+        const common_agent_review_progress & progress, const std::string & plan_id, std::string & error);
     bool save_checkpoint(common_agent_context_checkpoint & checkpoint, std::string & error);
     bool begin_new_epoch(std::string & error);
     bool persistent() const { return store != nullptr && persist; }
 
 private:
+    bool append_review_record(const std::string &,const std::string &,const std::string &,
+        const nlohmann::ordered_json &,std::string &);
     bool list_internal(std::vector<agent_resource_descriptor> & resources, std::string & error) const;
     bool put_internal(const std::string & name, const std::string & key,
             const nlohmann::ordered_json & payload, agent_resource_descriptor & out,

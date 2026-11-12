@@ -76,6 +76,10 @@ int main() {
             response.set_content(R"({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"open! memory.search\nquery: project status"}}]})", "application/json");
             return;
         }
+        if (prompt == "truncated-schema") {
+            response.set_content(R"({"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"{\"value\":"}}]})", "application/json");
+            return;
+        }
         if (prompt == "missing-choice") { response.set_content("{}", "application/json"); return; }
         if (prompt == "malformed-json") { response.set_content("{broken", "application/json"); return; }
         if (prompt == "slow-response") std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -90,6 +94,15 @@ int main() {
             return;
         }
         if (body.contains("response_format")) {
+            if (prompt == "alternative-stop" || prompt == "alternative-repair" || prompt == "alternative-invalid") {
+                const json value = prompt == "alternative-repair"
+                    ? json{{"action", "repair"}, {"retry", json::array({"failed-step"})}}
+                    : json{{"action", "stop"}, {"retry", prompt == "alternative-invalid"
+                        ? json::array({"failed-step"}) : json::array()}};
+                response.set_content(json{{"choices", json::array({{{"finish_reason", "stop"},
+                    {"message", {{"role", "assistant"}, {"content", json{{"value", value}}.dump()}}}}})}}.dump(), "application/json");
+                return;
+            }
             if (prompt == "scalar-schema" || prompt == "scalar-schema-invalid") {
                 const auto value = prompt == "scalar-schema" ? "openalex.listWorks" : "not.allowed";
                 response.set_content(json{{"choices", json::array({{{"finish_reason", "stop"},
@@ -381,6 +394,40 @@ int main() {
     assert(result.status == common_agent_generation_status::errored);
     assert(result.error_message.find("rejected by requested JSON schema") != std::string::npos);
     assert(result.output_schema_rejected);
+
+    // Complete object alternatives must survive the HTTP envelope, including
+    // the prohibition on scheduling work while declaring a bounded stop.
+    request.json_schema = R"({"type":"object","oneOf":[{"type":"object","additionalProperties":false,"required":["action","retry"],"properties":{"action":{"const":"stop"},"retry":{"type":"array","maxItems":0}}},{"type":"object","additionalProperties":false,"required":["action","retry"],"properties":{"action":{"const":"repair"},"retry":{"type":"array","minItems":1,"items":{"enum":["failed-step"]}}}}]})";
+    for (const auto * prompt : {"alternative-stop", "alternative-repair"}) {
+        request.messages.front().content = prompt;
+        assert(schema_inference->generate(request, result));
+        assert(result.status == common_agent_generation_status::completed);
+        const auto value = json::parse(result.content);
+        assert(!value.contains("value"));
+        assert(value["action"] == (std::string(prompt) == "alternative-stop" ? "stop" : "repair"));
+        std::lock_guard<std::mutex> lock(seen_mutex);
+        const auto & wire = seen["response_format"]["json_schema"]["schema"];
+        assert(wire["type"] == "object" && !wire.contains("oneOf"));
+        assert(wire["properties"]["value"] == json::parse(request.json_schema));
+    }
+    request.messages.front().content = "alternative-invalid";
+    assert(schema_inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::errored && result.output_schema_rejected);
+    assert(result.error_message.find("oneOf") != std::string::npos);
+    // Luna uses non-strict transport; local branch validation still applies.
+    request.messages.front().content = "alternative-stop";
+    assert(nonstrict_inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::completed);
+    request.messages.front().content = "alternative-invalid";
+    assert(nonstrict_inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::errored && result.output_schema_rejected);
+
+    request.messages.front().content = "truncated-schema";
+    assert(schema_inference->generate(request, result));
+    assert(result.status == common_agent_generation_status::errored);
+    assert(result.stop_reason == common_agent_generation_stop_reason::limit);
+    assert(!result.output_schema_rejected);
+    assert(result.error_message.find("truncated") != std::string::npos);
 
     selection.supports_json_schema = false;
     auto text_only = make_agent_http_inference(selection);

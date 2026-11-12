@@ -162,6 +162,40 @@ and authorized verification.
 
 ### Development execution and recovery boundaries
 
+The existing runtime uses a shared `continuation-context.v1` projection for
+reflection and continuation planning. It exposes the remaining execution rounds,
+tool calls, plan revisions and new-step slots, together with the latest host
+failure for each unresolved operation. Failure data is untrusted context; it
+does not authorize a tool, route transition or relaxation of a workflow check.
+Technical recovery actions distinguish argument repair, source inspection,
+explicitly retryable execution and blocked operations. An unchanged retry needs
+an explicit host declaration and is bounded to one retry per failed execution
+identity. Missing declarations on old saved review records retain their legacy
+review interpretation; new unchanged method retries require explicit evidence.
+Dispatched failures retain a fingerprint of the actual call, so a changed call
+does not inherit an earlier call's retry count. Older failures without a
+fingerprint are handled conservatively. Replacing or adding a step cannot give
+an unchanged failed call a fresh identity to bypass the retry bound.
+
+Both successful and failed dispatched calls consume tool budget. Before applying
+reflection work, the host checks the proposed slice against the remaining
+budget. With no execution round left it does not invoke a continuation planner
+or reset failed steps. The active plan and its unresolved requirements remain
+saved, and the turn reports a limit rather than an accepted answer. Existing
+mandatory tool work is also retained if the tool budget runs out before dispatch.
+host-authorized research escalation keeps its own policy; this helper does not
+extend configured limits. Ordinary planning, phased methods and reflection of
+declared workflows use the same admission check, with route and verification
+checks still applied by their existing owners.
+
+Repository text reads return whole-row pages within their response byte limit.
+`requested_*` fields describe the requested interval, `returned_*` the actual
+page. `range_has_more` describes unfinished data in that interval; `has_more` and
+`next_start_line` describe remaining data in the file. `complete` applies to the
+requested interval. An oversized single row produces a limit error instead of
+an empty successful page or a non-advancing cursor. The hash and rows are derived
+from the same byte snapshot; callers should check the hash across pages.
+
 Route selection exposes each candidate's authorized operation families. A blueprint
 can guide research only when the host also exposes the corresponding tools;
 listed tools do not grant command execution or workspace modification authority.
@@ -1250,3 +1284,271 @@ through existing assurance actions. A rejected draft cannot become accepted
 because the review counter expired. No review or execution budget defaults are
 increased. See the linked implementation note for exact lifecycle semantics,
 source locations and the authored, currently unrun verification cases.
+
+
+### Evidence review after a terminal workflow state
+
+A terminal graph state may declare one fixed `model_choice` transition with
+`review_only: true`. Normal graph traversal ignores this transition. The host
+may invoke it for a negative answer review while the task plan is still active.
+Accepted completed plans remain closed. The reachable review subgraph uses
+available, authorized reads by default. A tool transition may explicitly declare
+`review_mutation_allowed: true` to repair unfinished work within the existing
+route. This host-owned opt-in is retained by package, SQLite and Cozo codecs;
+it does not grant tool permissions or bypass policy, schema, revision or budget
+checks. Each generated mutation must match its exact declared transition and tool.
+Artifact composition remains excluded from this review mechanism. Subsequent choices retain the unresolved review
+checklist from the existing `response_review` observation, including after resume.
+
+`assurance_action: revise_plan` with a descriptive `next_action` delegates that
+text as repair guidance. It does not count as an executable repair by itself.
+The existing execution, tool, plan revision and storage budgets govern admitted
+work. An answer-review round is refunded only after executable repair is admitted;
+a fresh verdict is still required after the additional evidence.
+
+The investigation package v10 uses this entry for additional resource ranges,
+retained relations and event pages. Empty case lists have an explicit choice
+between source discovery for a new investigation and clarification. The existing
+case path is available only when the observed list contains a case identity.
+
+### Resource IO and model-visible text
+
+A bounded `resource.read` result is retained intact up to the existing durable
+result ceiling. Prompt rendering may show a shorter UTF-8 prefix. The projection
+then carries two different ranges: `source_read_range` describes the tool's IO,
+while `model_content_range` describes exactly the bytes shown in that projection.
+`returned_content_complete: false` requires a read from its `next_offset` when the
+remaining text is needed, even if the earlier tool call exhausted the resource.
+This projection changes no stored content, resource identity, or source position.
+An observation omitted entirely by the prompt budget is not inspected evidence.
+
+Investigation graph responses identify their coverage as a selected neighborhood.
+Case-wide relation counts must not be treated as the expected size of a centered
+expansion; additional inspection depends on the task and review need.
+
+
+Deferred plan arguments and bounded recovery
+-------------------------------------------
+
+A model may reference an earlier step with `$alias.field`, including integer,
+boolean and structured inputs. The planner preserves a deferred binding rather
+than inventing a concrete value. Parsing checks the producer and adds a dependency;
+execution resolves the observed output and validates its actual type and bounds
+against the registered tool contract. Argument-repair JSON uses the same public
+reference syntax. Internal binding objects are not the model-facing repair format.
+
+Tools can declare `x-agent-pagination` in their model input schema, with `cursor`,
+`next_cursor` and `identity_fields`. Workflow argument selection validates a supplied
+cursor against successful observations of the same tool and query identity. The
+first page omits the cursor. A rejected token gets one bounded argument-selection
+repair; it does not silently restart acquisition or change the query.
+
+An omitted review blocker remains unresolved. Acceptance requires explicit
+resolution of every retained blocker. Argument validation failures may be repaired
+by replacing the failed step with a corrected call; unchanged retry eligibility
+remains governed by the host continuation policy. Investigation repairs reuse the
+verified case baseline and host argument bindings, including revision fields.
+
+### Argument budgets and bounded progress recovery
+
+Operation-name selection and argument generation use separate output budgets.
+Workflow argument demand follows the selected contract, bounded by
+`planner_n_predict` (or the general generation limit when unset) and the existing
+context allocator. Without a configured limit, the bounded fallback ceiling is
+2048 tokens. Remote token estimates remain conservative estimates. One
+regeneration can use the remaining configured output allowance after truncation;
+schema repair uses the same two-attempt bound for JSON and DSL. A remote
+`finish_reason=length` on a structured response is reported as output truncation
+before schema validation and is never executed as a complete action.
+
+A host tool may opt into no-progress recovery with input-schema metadata
+`"x-agent-progress": {"changed": "/scope_changed"}`. The JSON pointer addresses
+a boolean in the successful result payload. Only an explicit `false` in an
+untruncated successful observation blocks an identical call. Execution arguments
+come from the saved `workflow_arguments` record when present; revision and other
+identity fields participate in the comparison. A different value or revision
+remains eligible. This guard is not inferred from prose or from ordinary repeated
+reads, and it uses retained plan observations after resume.
+
+When such an action follows a model choice, the host reconsiders that choice once
+with the no-progress observation and remaining declared choices. It never marks
+pending work complete or activates a final answer on this basis. Recent bounded
+completed results accompany refreshed observations so the model can recognize
+already satisfied changes. Investigation workflows consult the current case
+scope before requesting another scope update.
+
+Empty results used internally to continue a bounded slice remain valid. If the
+outer runtime ultimately stops at its budget without a verified answer, it
+returns an explicit incomplete status with the saved plan and progress, retaining
+its continuation checkpoint. The web client must not receive a successful empty
+answer for that outcome.
+
+### Model arguments and canonical workflow calls
+
+Workflow entry, continuation and reflection use the same resource normalization
+as ordinary runtime calls. The model-facing `resource.read` and
+`resource.inspect` contracts use `id`; the execution contracts use `uri`.
+An already-bound URI removes the model's identity requirement, while optional
+read position and size remain available. The host never asks the model to
+repair a field introduced only by workflow dataflow.
+
+Model-owned fields are checked against the projected contract separately from
+the completed call. Resource handles and canonical references are resolved
+before host-binding comparisons; equivalent references are accepted and
+conflicting aliases or host bindings are rejected. The authorized tool view
+validates the complete canonical call, retaining its execution schema and
+authorization checks. Schema or model-reference correction has the existing
+bounded retry; it cannot change a host-bound resource.
+When only a model projection is available, a missing execution view is reported
+as a host integration error before requesting resource arguments from the model.
+
+Reflection can resolve a resource binding from a completed transition's retained
+observation after a plan-store reopen. The resource URI remains host-owned,
+while the model can request a bounded offset against that same resource. This
+does not extend the execution budget or establish that a report was verified.
+
+### Report scope repair
+
+The investigation report-composition workflow v12 lets the model compare a
+requested saved case window with current case scope before composing a report.
+Its optional scope update preserves existing evidence, refreshes the current
+case revision and returns to preparation. A negative answer review can select
+the same preparation path to repair an omitted update or refresh a stale report.
+Only the scope update and report composition transitions opt into review
+mutations. Evidence reads remain available for genuine evidence gaps; they do
+not substitute for an unfinished requested change. Existing continuation and
+no-change guards still bound the work.
+
+During review repair, an identical already-successful read in the active route
+is reported as `workflow.no_progress`. The existing bounded choice reconsideration
+can select another declared action. A changed byte offset, cursor or other
+argument remains eligible. A completed mutation resets this read comparison;
+ordinary reads outside review and reads in a new route segment are unaffected.
+This guard does not claim that an external source can never change; an explicit
+refresh is new work and must be represented by its authorized operation.
+
+### Partial report review and bounded continuation
+
+Report storage, evidence coverage, and review are independent facts. An
+`investigate.report.compose` result reports `report_status: saved`,
+`coverage_status: limited | no_recorded_gaps`, and `review_status: unreviewed`.
+The legacy `complete` flag continues to describe recorded coverage gaps. It
+never proves review acceptance or failure to save a report. A report update
+using retained material can satisfy its task with explicitly qualified
+coverage. Requested acquisition and unsupported conclusions remain blocking.
+
+Reflection can return at most eight optional `parts` assessments. Each identifies
+an issued `observation_id`, an exact `excerpt` (at most 512 bytes), a `status`
+(`reviewed`, `requires_work`, or `unreviewed`), a `reason`, and supporting
+`evidence_ids`. DSL uses a `part observation_id="e1" excerpt="..." status="reviewed"
+reason="..." evidence_ids=["e2"]` line. The host requires a completed successful
+resource content read, matches the literal excerpt, validates evidence references,
+and supplies the resource URI and content fingerprint itself. This is a model
+assessment of that excerpt, not factual certification, approval of unseen text,
+or proof of exhaustive coverage. Blocking defects still belong in `issues`;
+optional future work and accurately disclosed limitations belong in advisory
+notes. No excerpt verdict clears an unresolved blocker.
+
+The existing review checklist and plan observation journal retain these
+assessments with draft and evidence fingerprints. Omitted assessments are reused
+only while the exact resource read and its supporting evidence still match their
+host fingerprints. A chat wording change alone does not invalidate an unchanged
+report excerpt; changed resource content or supporting records require reassessment.
+The response exposes `review_progress` (`review-progress.v1`) with `accepted`,
+`paused`, `parts`, `remaining`, and `follow_up`. Acceptance refers to the requested
+outcome; quoted parts remain independently scoped. The web client presents these
+alongside the saved revision and preserves the metadata across history reloads.
+Private display records use the existing conversation resource store and are
+excluded from model-visible accepted conversation history.
+
+A budget stop preserves `ok: false` and the unapproved draft while presenting a
+paused review in the UI, with a user-selected continuation action. It does not
+approve an answer or discard outstanding mandatory operations. Capacity
+preflight uses the actual plan policy, and insufficient durable step capacity is
+reported as a limit instead of a generic execution failure.
+
+On a later turn, the ordinary model plan selector may choose a compatible
+unfinished review, including an exhausted or execution-completed plan in the
+same namespace, project and chat. The host creates a new route/plan where needed,
+retaining a version-bound `prior_work_checkpoint` observation referencing the
+source plan, its bounded context, evidence fingerprint and last review. The
+source journal remains unchanged. Current tool authorization and route selection
+apply afresh; old steps are not copied or marked executed. Reads and any further
+mutations must pass the current contracts. Earlier reports remain immutable.
+Once linked successor work exists, automatic selection offers that work rather
+than repeatedly offering its parent. This mechanism does not automatically
+continue after a budget stop: a new user turn supplies the next bounded run.
+
+Prepared regression coverage is in `test-agent-synthesis-state`,
+`test-reflection-json`, `test-agent-context-management`,
+`test-agent-continuation-control`, and the continuation group of
+`test-agent-flexible-workflow`. Web session contracts cover a terminal SSE
+failure followed by paused HTTP progress and history restoration. These checks
+must be built/run separately; the presence of the contract does not establish
+that Luna makes the intended review decisions. The model scenario is: update a
+saved case window and report, retain disclosed coverage gaps, verify that the
+update is recognized, then exhaust a bounded review and explicitly continue it
+in a later user turn without repeating the saved scope mutation.
+
+### Reflection follow-up text and blocked outcomes
+
+The reflection `next_action` field describes one unfinished work need and permits
+up to 1024 Unicode code points in both the native schema and the JSON/DSL parser.
+The shared context allocator and configured generation limit still bound the
+complete request. `revision_guidance` carries detailed corrections; `issues`
+carries blocking defects. Avoid repeating that information in `next_action`.
+Nonempty legacy `next_action` text retains its `set_next_action` operation;
+acceptance with unresolved operations still requires clarification.
+
+When a failed mandatory operation has no supported recovery, a native review can
+return `decision: revise`, `assurance_action: fail_bounded`, and
+`task_outcome: blocked`, with the reason in `revision_guidance` or `issues`.
+It does not need a retry or replacement. `fail_bounded` cannot also mutate or
+execute plan steps. A review requesting actual repair still requires a supported
+corrected call or eligible retry. Existing host-bound argument-repair contracts
+remain dedicated correction requests. DSL restricted failure review retains its
+existing `reflect abort` stop alternative.
+
+The runtime retains the blocked verdict and correction guidance in the existing
+review journal, includes the reason in the failed result, and preserves failed
+mandatory work. A model-declared blocked result is an execution failure, rather
+than an invented host budget pause. It never becomes an accepted report or a
+completed tool operation. When regeneration also fails, diagnostics retain the
+bounded validation errors from both attempts so a later schema error cannot
+hide the first semantic rejection.
+
+
+Blocked collection and review outcomes use the existing validation and review contracts:
+
+- `investigate.collect.identifier_field` is linked to its `dataset` by
+  `x-agent-column-of`. Model projection exposes known logical columns, and the
+  collection adapter validates membership before querying the source. Invalid
+  fields are argument validation failures and use the existing bounded argument
+  repair path. No identity-field alias is inferred by the host.
+- A `fail_bounded` response cannot schedule work or complete unfinished steps.
+  An already completed host step may be repeated in legacy completion
+  bookkeeping; the host removes that redundant operation before execution.
+  Native failure-review schemas separate stopped and continuing responses.
+  Their root declares an object and preserves complete alternatives for local
+  grammar generation. HTTP inference transports non-tool root alternatives in
+  its existing `value` envelope, validates the complete selected alternative,
+  and unwraps the result before reflection parsing. Non-strict provider output
+  still requires local validation; a stopped response cannot also schedule work.
+- A validated stop carries optional `review_progress.blocked_reason` through the
+  existing result, JSONL and display-only history record. It remains `ok: false`,
+  `accepted: false` and `paused: false`. The UI shows unfinished blocked work
+  without treating it as an infrastructure failure or accepted report. Invalid
+  model responses still use the ordinary error path.
+- A validated blocked outcome is retained in conversation context as an
+  explicitly unfinished host review, with a reference to its plan when one
+  exists. A later turn may choose a new plan or resume prior work with that
+  context; a retry of the same request excludes its own earlier outcome and
+  may save an ordinary successful response. The assessment remains untrusted
+  context and does not manufacture a completed operation or resource identity.
+- Entry-tool selection presents the active workflow's entry instructions next
+  to each corresponding authorized candidate before generating arguments.
+  Selecting an existing record still requires an established record identity;
+  the model may choose discovery or creation when the workflow allows it.
+
+These contracts do not require a time interval or a particular entity type.
+The model selects an appropriate column from the configured source schema.

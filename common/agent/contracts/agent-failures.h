@@ -34,4 +34,6 @@ struct common_agent_failure {
     std::string repair_context_json;
     // Zero means that no HTTP response was received.
     int http_status = 0;
+    // Hash of the actual dispatched call; never contains argument values.
+    std::string call_fingerprint;
 };

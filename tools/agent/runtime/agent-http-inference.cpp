@@ -115,15 +115,19 @@ bool external_tool_name(const std::string & name, std::string & external) {
 // authorized tool as a root-level oneOf branch. Keep that internal contract,
 // but project it into a supported flat object for HTTP providers. The host
 // still validates the returned tool/args pair against the selected tool's
-// original schema after generation.
+// original schema after generation. Other root alternatives use the value
+// envelope without projecting away their branch-specific constraints.
 bool normalize_response_schema(const json & input, json & output, bool & wrapped_value) {
     wrapped_value = false;
-    if (input.is_object() && input.contains("type") && input["type"].is_string() &&
-            input["type"] != "object") {
+    const auto wrap_value = [&]() {
         output = {{"type", "object"}, {"additionalProperties", false},
             {"required", json::array({"value"})}, {"properties", {{"value", input}}}};
         wrapped_value = true;
         return true;
+    };
+    if (input.is_object() && input.contains("type") && input["type"].is_string() &&
+            input["type"] != "object") {
+        return wrap_value();
     }
     if (!input.is_object() || !input.contains("oneOf")) {
         output = input;
@@ -135,12 +139,15 @@ bool normalize_response_schema(const json & input, json & output, bool & wrapped
     json tool_names = json::array();
     json argument_schemas = json::array();
     for (const auto & branch : branches) {
-        if (!branch.is_object() || !branch.contains("properties") || !branch["properties"].is_object()) return false;
+        if (!branch.is_object()) return false;
+        // Non-tool alternatives (for example, reflection stop vs. repair)
+        // retain their complete constraints inside the existing value envelope.
+        if (!branch.contains("properties") || !branch["properties"].is_object()) return wrap_value();
         const auto & properties = branch["properties"];
         if (!properties.contains("tool") || !properties["tool"].is_object() ||
                 !properties["tool"].contains("enum") || !properties["tool"]["enum"].is_array() ||
                 properties["tool"]["enum"].size() != 1 || !properties["tool"]["enum"][0].is_string() ||
-                !properties.contains("args") || !properties["args"].is_object()) return false;
+                !properties.contains("args") || !properties["args"].is_object()) return wrap_value();
         tool_names.push_back(properties["tool"]["enum"][0]);
         argument_schemas.push_back(properties["args"]);
     }
@@ -256,8 +263,8 @@ public:
                 if (!normalize_response_schema(schema, response_schema, wrapped_response_value))
                     return fail("HTTP inference cannot map the requested JSON schema to the provider's object-root contract");
                 if (wrapped_response_value) {
-                    // The internal contract can request a scalar. The provider
-                    // receives an object, so clarify how to represent that value.
+                    // Scalars and alternative object contracts use the same
+                    // transport envelope; consumers receive the unwrapped value.
                     auto & wire_messages = body["messages"];
                     const auto position = wire_messages.empty() ? wire_messages.end() : wire_messages.end() - 1;
                     wire_messages.insert(position,
@@ -441,6 +448,12 @@ public:
         if (finish == "content_filter") return fail("HTTP inference response was blocked by the remote content filter");
         if (finish != "stop" && finish != "length" && finish != "tool_calls")
             return fail("HTTP inference response has an unsupported finish_reason");
+        // A length-limited structured payload is incomplete, even if its prefix
+        // happens to parse. Preserve the cause before schema validation replaces it.
+        if (finish == "length" && !request.json_schema.empty()) {
+            result.stop_reason = common_agent_generation_stop_reason::limit;
+            return fail("HTTP inference structured response was truncated at the output token limit");
+        }
         if (!request.json_schema.empty() && (!assistant.tool_calls.empty() || result.content.empty()))
             return fail("HTTP inference response rejected by requested JSON schema: expected JSON content without tool calls");
         if (!request.json_schema.empty()) {

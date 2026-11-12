@@ -17,6 +17,8 @@ inline const char * common_agent_conversation_role_name(common_agent_conversatio
 struct common_agent_conversation_segment {
     std::string resource_uri;
     std::string request_id;
+    // Optional originating user request for host-generated context records.
+    std::string origin_request_id;
     std::string turn_id;
     std::string content_hash;
     uint64_t sequence = 0;
@@ -25,6 +27,11 @@ struct common_agent_conversation_segment {
     std::string content;
     std::vector<std::string> evidence_refs;
 };
+
+inline bool common_agent_conversation_same_request(
+        const common_agent_conversation_segment & segment, const std::string & request_id) {
+    return segment.request_id == request_id || segment.origin_request_id == request_id;
+}
 
 struct common_agent_context_checkpoint {
     uint32_t schema_version = 1;
@@ -98,6 +105,7 @@ inline std::string common_agent_context_fingerprint(const std::vector<common_age
     for (const auto & segment : segments) {
         add(segment.resource_uri);
         add(segment.request_id);
+        if (!segment.origin_request_id.empty()) add(segment.origin_request_id);
         add(segment.content_hash);
         add(std::to_string(segment.sequence));
     }

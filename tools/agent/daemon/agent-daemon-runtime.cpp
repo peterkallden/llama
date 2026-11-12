@@ -1536,6 +1536,24 @@ bool resolve_agent_daemon_tooling(
         tooling.tool_view = shared_view.get();
         tooling.owned_resources.push_back(std::static_pointer_cast<void>(shared_view));
     }
+    if (data_store != nullptr) {
+        common_agent_scope scope;
+        scope.namespace_id = request.namespace_id; scope.session_id = request.session_id;
+        scope.project_id = request.project_id; scope.memory_scope = common_memory_scope::session;
+        scope.plan_scope = common_plan_scope::turn;
+        agent_resource_read_authority authority;
+        authority.namespace_id = request.namespace_id; authority.session_id = request.session_id;
+        authority.project_id = request.project_id; authority.turn_id = request.turn_id;
+        tooling.investigation_context_reader = [data_store, resource_store, scope, authority](
+                const common_investigation_context_binding & binding,
+                nlohmann::ordered_json & projection, std::string & read_error) mutable {
+            common_investigation_case_revision current;
+            authority.now = static_cast<int64_t>(std::time(nullptr));
+            return data_store->get_investigation_case(binding.case_id, scope, current, read_error) &&
+                common_investigation_authorize_sources(current, scope, *data_store, resource_store, authority, read_error) &&
+                common_investigation_project_context(current, binding, projection, read_error);
+        };
+    }
     if (request.investigation_context) {
         if (data_store == nullptr) {
             error = "investigation context is unavailable because the host data store is not configured";
@@ -1563,7 +1581,7 @@ bool resolve_agent_daemon_tooling(
                 resource_store, authority, error)) return false;
         nlohmann::ordered_json projection;
         if (!common_investigation_project_context(case_value, binding, projection, error)) return false;
-        auto rendered = projection.dump(2);
+        auto rendered = projection.dump();
         constexpr size_t max_context_bytes = 16 * 1024;
         if (rendered.size() > max_context_bytes) {
             error = "selected investigation context exceeds the host limit; select fewer evidence references";

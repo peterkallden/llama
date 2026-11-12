@@ -38,6 +38,11 @@ int main() {
     assert(operations[1].step->depends_on == std::vector<std::string>{"first"});
     assert(operations[2].step->depends_on == std::vector<std::string>({"first", "second"}));
 
+    const auto forward_binding = R"({"goal":"inspect","steps":[{"tool":"record.inspect","args":{"revision":{"$from_step":"step_2","$json_pointer":"/revision"}}},{"tool":"record.create","args":{}}]})";
+    assert(!common_plan_parse_proposal_json(forward_binding,plan,operations,error));
+    const auto extra_binding_field = R"({"goal":"inspect","steps":[{"tool":"record.create","args":{}},{"tool":"record.inspect","args":{"revision":{"$from_step":"step_1","$json_pointer":"/revision","value":1}}}]})";
+    assert(!common_plan_parse_proposal_json(extra_binding_field,plan,operations,error));
+
     const auto shorthand_binding = R"({"goal":"aggregate a document table","steps":[{"id":"table","tool":"document.table","args":{"resource":"r1","table":"Budget summary"}},{"id":"sum","after":["table"],"tool":"data.aggregate","args":{"dataset":"$table.dataset","measures":[{"function":"sum","column":"amount"}]}}]})";
     assert(common_plan_parse_proposal_json(shorthand_binding, plan, operations, error));
     const auto shorthand_args = nlohmann::json::parse(operations[1].step->tool_call->arguments_json, nullptr, false);

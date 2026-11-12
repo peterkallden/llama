@@ -227,12 +227,12 @@ static void check_planner_prompt_contracts() {
     common_plan_state evidence_plan;
     evidence_plan.goal = "Report the observed result";
     evidence_plan.observations.push_back({"tool:sample:dataset.schema", "dataset.schema",
-        "{\"value\":\"" + std::string(800, 'y') + "\"}", 1.0f});
+        "{\"value\":\"" + std::string(8000, 'y') + "\"}", 1.0f});
     planner_prompt_inference small_draft, large_draft;
     // Enough for the mandatory prompt and output reservation, but not for the
     // full optional tool observation. A 500-token context correctly fails
     // before inference because it cannot fit even the mandatory draft frame.
-    small_draft.capacity = 1000;
+    small_draft.capacity = 1500;
     large_draft.capacity = 10000;
     small_draft.replies = {"OK"};
     large_draft.replies = {"OK"};
@@ -472,6 +472,81 @@ static void check_method_recovery_contracts() {
         "reasoning objective was rejected by the model-facing schema: "+error);
 }
 
+static void check_nonretryable_argument_repair() {
+    common_agent_request request;request.tool_output_format=common_agent_tool_output_format::native;
+    request.prompt="Inspect retained relations";
+    common_investigation_context_binding selected;selected.case_id="case";selected.revision=2;
+    request.investigation_context=selected;
+    common_plan_state plan;plan.id="repair-case";
+    common_plan_step failed{"inspect","Inspect","Inspect relations"};
+    failed.status=common_plan_step_status::failed;
+    failed.tool_call=common_plan_tool_call{"investigate.case.items",
+        R"({"case_id":"case","case_revision":2,"type":"relations","cursor":"invented"})"};
+    plan.steps={failed};
+    plan.observations.push_back({"tool:inspect:investigate.case.items","investigate.case.items",
+        R"({"ok":false,"failure":{"code":"tool.investigation.cursor_invalid","class":"validation","retryable":false,"summary":"Invalid cursor; restart without cursor"}})",1.0f});
+    common_chat_tool tool{"investigate.case.items","Read retained items",
+        R"({"type":"object","additionalProperties":false,"required":["case_id","case_revision","type"],"properties":{"case_id":{"type":"string"},"case_revision":{"type":"integer"},"type":{"type":"string"},"cursor":{"type":"string"}}})"};
+    planner_prompt_inference model;
+    model.replies={R"({"decision":"revise","replace_steps":[{"tool":"investigate.case.items","args":{"type":"relations"}}]})"};
+    common_agent_generation_config config;std::string error;
+    const auto repair=make_llama_cli_reflection_engine(model,config,{tool})->evaluate_result(request,plan,"",error);
+    require(error.empty() && repair.proposed_plan_operations.size()==1,
+        "non-retryable argument error blocked a corrected replacement: "+error);
+    const auto arguments=nlohmann::ordered_json::parse(repair.proposed_plan_operations.front().step->tool_call->arguments_json);
+    require(arguments["case_id"]=="case" && arguments["case_revision"]==2 && !arguments.contains("cursor"),
+        "reflection failed to restore its verified baseline or retained an invalid cursor");
+    std::string normalized;
+    require(common_schema_normalize_and_validate_object(model.replies.front(),model.requests.front().json_schema,normalized,error),
+        "repair transport demanded host-bound case fields: "+error);
+    request.investigation_context.reset();
+    request.prompt = "Continue using the configured source logs";
+    failed.id = "create";
+    failed.tool_call = common_plan_tool_call{"investigate.case.create", R"({"title":"Case","question":"Inspect","source_id":"d1"})"};
+    plan.steps = {failed};
+    plan.observations = {{"tool:create:investigate.case.create", "investigate.case.create",
+        R"({"ok":false,"failure":{"code":"tool.investigation.source_invalid","class":"validation","retryable":false,"summary":"Choose a configured source ID; d1 is a dataset handle"}})", 1.0f}};
+    common_chat_tool create{"investigate.case.create", "Create",
+        R"({"type":"object","additionalProperties":false,"required":["title","question","source_id"],"properties":{"title":{"type":"string"},"question":{"type":"string"},"source_id":{"type":"string","enum":["logs"]}}})"};
+    planner_prompt_inference source_model;
+    source_model.replies = {R"({"decision":"revise","replace_steps":[{"tool":"investigate.case.create","args":{"title":"Case","question":"Inspect","source_id":"logs"}}]})"};
+    const auto corrected = make_llama_cli_reflection_engine(source_model, config, {create})->evaluate_result(request, plan, "", error);
+    require(error.empty() && corrected.proposed_plan_operations.size() == 1 &&
+        nlohmann::ordered_json::parse(corrected.proposed_plan_operations.front().step->tool_call->arguments_json)["source_id"] == "logs",
+        "invalid source identity did not enter the existing argument repair path: " + error);
+}
+
+static void check_deferred_plan_arguments() {
+    common_agent_generation_config config; config.n_predict=512;config.planner_n_predict=512;
+    common_agent_request request;request.namespace_id="test";request.session_id="deferred";
+    request.prompt="Create a record and inspect its revision";
+    request.tool_output_format=common_agent_tool_output_format::native;
+    common_chat_tool create{"record.create","Create",R"({"type":"object","additionalProperties":false,"properties":{}})"};
+    common_chat_tool inspect{"record.inspect","Inspect",
+        R"({"type":"object","additionalProperties":false,"required":["revision","limit"],"properties":{"revision":{"type":"integer","minimum":1},"limit":{"type":"integer","minimum":1}}})"};
+    for (const bool repair : {false,true}) {
+        planner_prompt_inference model;
+        model.replies={std::string(R"({"goal":"Inspect revision","steps":[{"tool":"record.create","args":{},"as":"created"},{"tool":"record.inspect","args":{"revision":"$created.revision","limit":)")+
+            (repair?"0":"1")+"}}]}"};
+        if (repair) model.replies.push_back(R"({"args":{"revision":"$created.revision","limit":1}})");
+        std::string error;
+        const auto proposal=make_llama_cli_planner(model,config,{create,inspect})->create_plan_result(request,error);
+        require(error.empty() && proposal.operations.size()>=2 && model.requests.size()==(repair?2u:1u),
+            "integer output reference failed planning or bounded repair: "+error);
+        const auto args=nlohmann::ordered_json::parse(proposal.operations[1].step->tool_call->arguments_json);
+        require(args["revision"].is_object() && args["revision"]["$json_pointer"]=="/revision",
+            "planner replaced an unresolved integer with an invented concrete value");
+        if (repair) {
+            require(model.requests.back().messages.back().content.find("$created")!=std::string::npos,
+                "argument repair lost the producer alias needed for a deferred value");
+            std::string normalized;
+            require(common_schema_normalize_and_validate_object(model.replies.back(),
+                model.requests.back().json_schema,normalized,error),
+                "repair transport schema rejected a legitimate integer reference: "+error);
+        }
+    }
+}
+
 static void check_method_handoff_contracts() {
     common_agent_generation_config config;config.n_predict=512;config.planner_n_predict=512;
     common_agent_request request;
@@ -582,7 +657,69 @@ static void check_method_handoff_contracts() {
     }
 }
 
+static void check_blocked_reflection_contract() {
+    common_agent_request request;request.tool_output_format=common_agent_tool_output_format::native;
+    request.prompt="Inspect the selected source";
+    common_plan_state plan;plan.id="blocked-source";
+    common_plan_step failed{"fetch","Fetch","Inspect source"};
+    failed.mode=common_plan_step_mode::tool;failed.status=common_plan_step_status::failed;
+    failed.tool_call=common_plan_tool_call{"web.fetch","{}"};plan.steps={failed};
+    plan.observations.push_back({"tool:fetch:web.fetch","web.fetch",
+        R"({"ok":false,"failure":{"code":"source.unavailable","class":"execution","retryable":false,"safe_summary":"Source unavailable"}})",1.0f});
+    common_chat_tool tool{"web.fetch","Fetch selected source",R"({"type":"object","properties":{},"additionalProperties":false})"};
+    common_agent_generation_config config;std::string error,normalized;
+    const std::string blocked=R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"blocked","revision_guidance":["The source is unavailable; retain the case and unfinished inspection."],"next_action":""})";
+    planner_prompt_inference model;model.replies={blocked};
+    const auto review=make_llama_cli_reflection_engine(model,config,{tool})->evaluate_result(request,plan,"",error);
+    require(error.empty() && model.requests.size()==1 && review.task_outcome=="blocked" &&
+        review.next_action==common_agent_reflection_next_action::fail_bounded && review.proposed_plan_operations.empty(),
+        "bounded blocked verdict required an impossible retry: "+error);
+    const auto blocked_schema = nlohmann::ordered_json::parse(model.requests.front().json_schema);
+    require(blocked_schema.value("type", std::string{}) == "object" && blocked_schema.contains("oneOf"),
+        "blocked reflection lost its object root or complete stop/repair alternatives");
+    require(common_schema_normalize_and_validate_object(blocked,model.requests.front().json_schema,normalized,error),error);
+    auto longer=nlohmann::ordered_json::parse(blocked);
+    longer["assurance_action"]="revise_plan";longer["task_outcome"]="remaining";
+    longer["next_action"]=std::string(1024,'x');
+    require(common_schema_normalize_and_validate_object(longer.dump(),model.requests.front().json_schema,normalized,error),
+        "reflection transport kept the old next_action bound: "+error);
+    longer["next_action"]=std::string(1025,'x');
+    require(!common_schema_normalize_and_validate_object(longer.dump(),model.requests.front().json_schema,normalized,error),
+        "reflection transport lost its bounded next_action contract");
+    common_plan_step completed{"created","Create case","Retain the host-created case"};
+    completed.status=common_plan_step_status::completed;plan.steps.push_back(completed);
+    auto bookkeeping=nlohmann::ordered_json::parse(blocked);bookkeeping["complete"]={completed.id};
+    planner_prompt_inference repeated;repeated.replies={bookkeeping.dump()};
+    const auto stopped=make_llama_cli_reflection_engine(repeated,config,{tool})->evaluate_result(request,plan,"",error);
+    require(error.empty() && repeated.requests.size()==1 && stopped.proposed_plan_operations.empty(),
+        "redundant verified completion prevented a blocked stop: "+error);
+    require(common_schema_normalize_and_validate_object(bookkeeping.dump(),repeated.requests.front().json_schema,normalized,error),
+        "blocked transport rejected already completed bookkeeping: "+error);
+    bookkeeping["complete"]={failed.id};
+    require(!common_schema_normalize_and_validate_object(bookkeeping.dump(),repeated.requests.front().json_schema,normalized,error),
+        "blocked transport allowed completion of failed work");
+    bookkeeping.erase("complete");bookkeeping["retry"]={failed.id};
+    require(!common_schema_normalize_and_validate_object(bookkeeping.dump(),repeated.requests.front().json_schema,normalized,error),
+        "blocked transport allowed simultaneous execution");
+    planner_prompt_inference repair;
+    repair.replies={R"({"decision":"revise","assurance_action":"revise_plan","task_outcome":"blocked","next_action":"Look for recovery"})",blocked};
+    const auto recovered=make_llama_cli_reflection_engine(repair,config,{tool})->evaluate_result(request,plan,"",error);
+    require(error.empty() && repair.requests.size()==2 &&
+        recovered.next_action==common_agent_reflection_next_action::fail_bounded &&
+        repair.requests.back().messages.back().content.find("use fail_bounded with task_outcome blocked")!=std::string::npos,
+        "semantic repair failure did not explain the bounded stop alternative: "+error);
+    planner_prompt_inference invalid;
+    invalid.replies={repair.replies.front(),
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"blocked","next_action":42})"};
+    make_llama_cli_reflection_engine(invalid,config,{tool})->evaluate_result(request,plan,"",error);
+    require(error.find("eligible retry")!=std::string::npos && error.find("next_action must be a string")!=std::string::npos,
+        "later schema failure hid the original semantic rejection: "+error);
+}
+
 int main() {
+    check_blocked_reflection_contract();
+    check_nonretryable_argument_repair();
+    check_deferred_plan_arguments();
     check_method_handoff_contracts();
     check_method_recovery_contracts();
     check_schema_rejection_recovery();
@@ -641,8 +778,9 @@ int main() {
         }
         require(selected.action->arguments_json.find("case-bound") != std::string::npos,
             "two-stage selection lost the host-bound case");
-        require(choice.options.n_predict == arguments.options.n_predict,
-            "two-stage selection silently changed the response reservation");
+        require(choice.options.n_predict == 128 && arguments.options.n_predict > choice.options.n_predict &&
+                arguments.options.n_predict <= 2048,
+            "two-stage selection did not retain separate bounded choice and argument reservations");
         planner_prompt_inference context_only;
         context_only.replies = {read.name, "open! investigate.case.open"};
         const auto context_selected = select_agent_planning_workflow_action(context_only, config, request,
@@ -864,6 +1002,7 @@ int main() {
             "reflection lost a composite-ID failure or presented it as completed evidence");
         auto retryable_failure = nlohmann::ordered_json::parse(plan.observations.front().summary);
         retryable_failure["failure"]["retryable"] = true;
+        retryable_failure["failure"]["class"] = "execution"; // Transient execution, not missing input.
         plan.observations.front().summary = retryable_failure.dump();
         planner_prompt_inference retryable;
         retryable.replies = {"reflect abort"};
@@ -1027,6 +1166,9 @@ int main() {
     require(run_agent_chat_runtime(execution, result, error), error.c_str());
     require(result.response == "OK", "ordinary answer lost");
     require(inference.requests.size() == 2 && inference.requests.back().tools.empty(), "ordinary chat exposed schemas");
+    require(inference.requests.front().messages.front().content.find(
+        "uncertainty alone does not make the supplied conversation sufficient") != std::string::npos,
+        "family selection did not explain that uncertain source availability requires inspection");
     inference.requests.clear();
     execution.request = request;
     execution.request.prompt.clear();

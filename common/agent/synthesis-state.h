@@ -27,6 +27,7 @@ struct common_agent_review_checklist {
     std::string draft_fingerprint, evidence_fingerprint;
     std::vector<common_agent_review_item> blocking;
     std::vector<std::string> advisory;
+    std::vector<common_agent_review_part> parts;
 };
 
 common_agent_synthesis_state common_agent_resolve_synthesis_state(const common_plan_state &,

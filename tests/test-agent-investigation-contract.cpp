@@ -30,6 +30,13 @@ common_investigation_case_revision sample() {
 }
 
 int main() {
+    check(common_investigation_format_time_utc(1792569600000LL) == "2026-10-21T08:00:00.000Z",
+        "UTC presentation must match the retained timestamp without timezone or model arithmetic");
+    check(common_investigation_format_time_utc(-1) == "1969-12-31T23:59:59.999Z" &&
+        common_investigation_format_time_utc(1234) == "1970-01-01T00:00:01.234Z",
+        "UTC presentation lost millisecond precision or mishandled negative epochs");
+    check(common_investigation_format_time_utc(253402300800000LL).empty(),
+        "unrepresentable UTC presentation must not fabricate a valid date");
     std::string error;
     auto value = sample();
     value.events[0].source_index = "logs-2026.10";

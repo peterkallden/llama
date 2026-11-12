@@ -1,5 +1,6 @@
 #include "agent/tooling/contracts/tool-budget.h"
 #include "agent/tooling/adapters/families/graph-adapters.h"
+#include "agent/investigation-context.h"
 #include "agent-cli-host-adapter.h"
 #include "../openapi/agent-openapi-http.h"
 #include "../openapi/agent-openapi-catalog.h"
@@ -248,6 +249,8 @@ bool resolve_agent_host_tool_selection(
             return false;
         }
     }
+    common_agent_data_store * inventory_store = request.data_store != nullptr
+        ? request.data_store : selection.owned_data_store.get();
 
     common_tool_catalog tool_catalog;
     std::unique_ptr<native_agent_tool_provider> native_provider;
@@ -316,8 +319,6 @@ bool resolve_agent_host_tool_selection(
                     definition.executor_id == "builtin.statistics.outliers" ||
                     definition.executor_id == "builtin.statistics.value_counts";
             });
-        common_agent_data_store * inventory_store = request.data_store != nullptr
-            ? request.data_store : selection.owned_data_store.get();
         if (exposes_dataset_tools && inventory_store != nullptr) {
             const auto resource_runtime = selection.tooling.resource_runtime;
             selection.tooling.grounding_dataset_reader = [inventory_store, resource_runtime](
@@ -1252,6 +1253,31 @@ bool resolve_agent_host_tool_selection(
         }
         selection.tooling.tools = selection.tool_view->chat_tools();
         selection.tooling.app_tools = selection.tool_view->app_tools();
+        if (inventory_store != nullptr) {
+            const bool needs_sources = std::any_of(selection.tooling.tools.begin(), selection.tooling.tools.end(),
+                [](const auto & tool) {
+                    const auto schema = json::parse(tool.parameters, nullptr, false);
+                    if (!schema.is_object()) return false;
+                    const auto properties = schema.value("properties", json::object());
+                    return properties.is_object() && std::any_of(properties.begin(), properties.end(), [](const auto & property) {
+                        return property.is_object() && property.value("x-agent-source-kind", std::string{}) == "investigation_search";
+                    });
+                });
+            if (needs_sources) {
+                std::vector<common_agent_dataset_descriptor> descriptors;
+                if (!inventory_store->list_dataset_descriptors(descriptors, error)) return false;
+                std::set<std::string> authorized;
+                for (const auto & descriptor : descriptors) {
+                    if (descriptor.ref.storage_mode != common_agent_dataset_storage_mode::virtual_ ||
+                            descriptor.ref.source_provider.empty()) continue;
+                    std::string authorization_error;
+                    if (inventory_store->authorize_investigation_source(descriptor.ref.source_provider,
+                            resolved_tool_context.scope, authorization_error)) authorized.insert(descriptor.ref.source_provider);
+                }
+                if (!common_agent_project_investigation_source_choices(selection.tooling.tools,
+                        std::vector<std::string>(authorized.begin(), authorized.end()), error)) return false;
+            }
+        }
         for (const auto & tool : selection.tooling.tools) {
             auto families = selection.tool_view->additional_tool_families(tool.name);
             if (!families.empty()) selection.tooling.additional_tool_families.emplace(tool.name, std::move(families));

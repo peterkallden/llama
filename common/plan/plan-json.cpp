@@ -422,6 +422,35 @@ bool parse_compact(const json & input, common_plan_state & plan, std::vector<com
             const auto & previous = operations.back();
             if (previous.step) step.depends_on = {previous.step->id};
         }
+        // Deferred values require a real preceding producer and a dependency
+        // edge. Validate the internal binding too, not only public shorthand.
+        const auto bind_dependencies = [&](const auto & self, const json & value, size_t depth) -> bool {
+            if (depth>16) { error="plan binding nesting is too deep"; return false; }
+            if (value.is_object() && (value.contains("$from_step") || value.contains("$json_pointer"))) {
+                if (value.size()!=2 || !value.contains("$from_step") || !value["$from_step"].is_string() ||
+                        !value.contains("$json_pointer") || !value["$json_pointer"].is_string()) {
+                    error="plan binding requires only string $from_step and $json_pointer"; return false;
+                }
+                const auto id=value["$from_step"].get<std::string>();
+                const auto pointer=value["$json_pointer"].get<std::string>();
+                if (id.empty() || id==step.id || id.size()>64 || pointer.size()>256 || (!pointer.empty() && pointer.front()!='/') ||
+                        (std::none_of(operations.begin(),operations.end(),[&](const auto & op) {
+                            return op.step && op.step->id==id;
+                        }) && std::none_of(plan.steps.begin(),plan.steps.end(),[&](const auto & previous) {
+                            return previous.id==id && previous.status==common_plan_step_status::completed;
+                        }))) {
+                    error="plan binding requires a preceding producer and a bounded JSON pointer"; return false;
+                }
+                if (std::find(step.depends_on.begin(),step.depends_on.end(),id)==step.depends_on.end())
+                    step.depends_on.push_back(id);
+                return true;
+            }
+            if (value.is_structured()) for (const auto & item : value)
+                if (!self(self,item,depth+1)) return false;
+            return true;
+        };
+        if (step.tool_call && !bind_dependencies(bind_dependencies,
+                json::parse(step.tool_call->arguments_json),0)) return false;
         if (source.is_object() && source.contains("as")) {
             if (!source["as"].is_string() || source["as"].get<std::string>().empty() || source["as"].get<std::string>().size() > 64) {
                 error = "step alias must be a non-empty string of at most 64 characters";
@@ -733,4 +762,30 @@ bool common_plan_parse_proposal_json(const std::string & text, common_plan_state
         error = "plan JSON validation error: " + std::string(exception.what());
         return false;
     }
+}
+
+
+nlohmann::ordered_json common_plan_deferred_arguments_schema(const json & schema, bool canonical) {
+    if (!schema.is_object()) return schema;
+    auto projected = schema;
+    if (projected.contains("properties") && projected["properties"].is_object()) {
+        for (auto & property : projected["properties"].items()) {
+            auto literal = common_plan_deferred_arguments_schema(property.value(), canonical);
+            const json reference = canonical
+                ? json{{"type","object"},{"additionalProperties",false},
+                    {"required",json::array({"$from_step","$json_pointer"})},
+                    {"properties",{{"$from_step",{{"type","string"},{"minLength",1},{"maxLength",64}}},
+                        {"$json_pointer",{{"type","string"},{"maxLength",256}}}}}}
+                : json{{"type","string"},{"minLength",2},{"maxLength",322},
+                    {"pattern",R"(^\$[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+(\[[0-9]+\])*)*$)"},
+                    {"description","Output reference to an earlier step, e.g. $created.revision. The host resolves and validates the concrete value before execution."}};
+            property.value() = {{"anyOf",json::array({literal,reference})}};
+        }
+    }
+    if (projected.contains("items") && projected["items"].is_object())
+        projected["items"] = common_plan_deferred_arguments_schema(projected["items"],canonical);
+    for (const auto * key : {"anyOf","oneOf","allOf"})
+        if (projected.contains(key) && projected[key].is_array())
+            for (auto & branch : projected[key]) branch = common_plan_deferred_arguments_schema(branch,canonical);
+    return projected;
 }

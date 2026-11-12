@@ -205,6 +205,9 @@ int main() {
         std::find(item_types.begin(), item_types.end(), "sources") != item_types.end() &&
         std::find(item_types.begin(), item_types.end(), "statements") != item_types.end());
     const auto * investigation_collect = catalog.find_definition("investigate.collect");
+    assert(investigation_collect);
+    const auto collect_schema = nlohmann::json::parse(investigation_collect->input_schema_json);
+    assert(collect_schema["properties"]["identifier_field"]["x-agent-column-of"] == "dataset");
     const auto * visualization_create = catalog.find_definition("visualize.create");
     assert(investigation_collect && investigation_collect->risk_class == common_tool_risk_class::artifact_write &&
         investigation_collect->requires_confirmation);
@@ -364,7 +367,7 @@ int main() {
     assert(compact_read_again == compact_read);
     assert(compact_read.find("id (required, string)") != std::string::npos);
     assert(compact_read.find("representation (optional, text|bytes)") != std::string::npos);
-    assert(compact_read.find("max_bytes (optional, integer[1..32768])") != std::string::npos);
+    assert(compact_read.find("max_bytes (optional, integer[1..10485760])") != std::string::npos);
     const auto * openapi_connect = catalog.find_definition("openapi.connect");
     assert(openapi_connect != nullptr);
     const auto openapi_contract = common_render_compact_tool_description(

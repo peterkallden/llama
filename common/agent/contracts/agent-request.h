@@ -1,5 +1,6 @@
 #pragma once
 #include "agent/synthesis-state.h"
+#include "agent/continuation-control.h"
 
 #include "agent/agent-continuation.h"
 #include "agent/agent-generation.h"
@@ -132,6 +133,10 @@ using common_agent_workflow_continuation_provider = std::function<bool(
     common_agent_workflow_continuation & continuation_steps,
     std::string & error)>;
 
+// Ephemeral host invocation of a declared review-only graph entry. Tool
+// outputs and model arguments never select this execution phase.
+inline constexpr char common_agent_workflow_review_source[] = "workflow_review";
+
 struct common_agent_request {
     std::vector<common_chat_msg> messages;
     common_memory_scope memory_scope = common_memory_scope::session;
@@ -141,6 +146,7 @@ struct common_agent_request {
     std::string project_id;
     std::string turn_id;
     std::optional<std::string> plan_id;
+    std::optional<common_plan_observation> prior_work_checkpoint;
     // Ephemeral host-issued repair handles -> failed step IDs. Only a
     // continuation planner receives these; clients cannot select targets.
     std::vector<std::pair<std::string, std::string>> plan_repair_targets;
@@ -149,6 +155,8 @@ struct common_agent_request {
     // Remaining durable add_step capacity for this method continuation.
     // Absent for ordinary planning and workflow proposals.
     std::optional<size_t> method_remaining_new_steps;
+    // Set by runtime before reflection/continuation, never by model output.
+    std::optional<common_agent_continuation_budget> continuation_budget;
     // Host-owned research binding. When present, the workspace is a draft
     // based on a published revision; model input cannot select its identity.
     std::optional<common_agent_research_draft_ref> research_draft;
@@ -182,6 +190,10 @@ struct common_agent_request {
     bool yield_after_plan_creation = false;
     // Reference-only case context; the host resolves it under current scope.
     std::optional<common_investigation_context_binding> investigation_context;
+    // Current scoped projection, kept separate from user text and history.
+    std::string investigation_context_json;
+    std::function<bool(const common_investigation_context_binding &,
+        nlohmann::ordered_json &, std::string &)> investigation_context_reader;
     // Host-resolved kinds for explicitly selected and authorized case sources.
     // Absent means unknown; inventory alone must not imply a source selection.
     std::optional<std::vector<common_investigation_source_kind>> investigation_source_kinds;

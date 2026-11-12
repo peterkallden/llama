@@ -264,6 +264,12 @@ struct common_plan_workflow_transition {
     // recorded limitation. Empty fields preserve ordinary failure semantics.
     std::string failure_terminal_state;
     std::vector<int> handled_http_statuses;
+    // An explicit, host-invoked review entry from a terminal graph state.
+    // Normal execution never traverses it; accepted completed plans stay closed.
+    bool review_only = false;
+    // Host opt-in for this exact tool transition to repair unfinished work
+    // after answer review. It grants no additional tool or route authority.
+    bool review_mutation_allowed = false;
 };
 
 // A declared handoff from a completed workflow observation to another

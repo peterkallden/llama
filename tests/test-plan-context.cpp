@@ -269,5 +269,21 @@ int main() {
     require(bounded_step.size() <= accent + 1 &&
         nlohmann::json(bounded_step).dump().size() > 0,
         "bounded step context contains incomplete UTF-8");
+
+    common_plan_state reading;reading.id="resource-reading";
+    const std::string content=std::string(1200,'a')+" ö "+std::string(3000,'z');
+    const nlohmann::ordered_json payload={{"ok",true},{"result",{{"resource",{{"uri","agent-resource://report"},{"sha256","known"},{"mime_type","text/plain"}}},
+        {"representation","text"},{"content",content},{"range",{{"offset",0},{"bytes_read",content.size()},{"remaining_bytes",0},{"has_more",false},{"resource_has_more",false}}}}}};
+    reading.observations.push_back({"tool:read:resource.read","resource.read",payload.dump(),1.0f});
+    const auto excerpt=common_plan_render_tool_observations(reading,{1800});
+    require(excerpt.find("returned_content_complete")!=std::string::npos &&
+        excerpt.find("source_read_range")!=std::string::npos && excerpt.find("next_offset")!=std::string::npos &&
+        excerpt.find("returned_content_complete\":false")!=std::string::npos,
+        "shortened resource text lost its separate model-visible byte position");
+    const auto complete=common_plan_render_tool_observations(reading,{12000});
+    require(complete.find("returned_content_complete\":true")!=std::string::npos &&
+        complete.find(std::string(2000,'z'))!=std::string::npos,
+        "available model context still discarded the complete retained text");
+    require(reading.observations.front().summary==payload.dump(),"presentation changed durable resource evidence");
     return 0;
 }

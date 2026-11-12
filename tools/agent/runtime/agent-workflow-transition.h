@@ -33,7 +33,8 @@ common_agent_workflow_continuation_provider make_agent_workflow_graph_continuati
 const common_plan_workflow_transition * common_agent_workflow_next_transition(
         const common_plan_workflow_definition & definition,
         const std::string & state,
-        const std::vector<std::string> * allowed_tools = nullptr);
+        const std::vector<std::string> * allowed_tools = nullptr,
+        bool review = false);
 
 // Returns true when a workflow's static transition arguments fully satisfy the
 // selected tool schema.  Returns false with an empty error when model-owned
@@ -48,3 +49,10 @@ bool common_agent_workflow_static_tool_arguments(
 // This is provenance; it never marks the phase complete or authorizes a tool.
 void common_agent_workflow_apply_blueprint_phase(const common_plan_state &,
     const common_plan_workflow_transition &, common_plan_step &);
+
+// Check the deterministic operation prefix up to the next model decision.
+// Availability filtering does not choose a semantic route for the model.
+bool common_agent_workflow_path_eligible(const common_agent_request &,
+    const common_plan_workflow_definition &, const std::string & state,
+    const std::vector<std::string> & allowed_tools, const std::vector<common_chat_tool> &,
+    std::string & error);

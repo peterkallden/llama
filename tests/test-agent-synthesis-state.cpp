@@ -1,6 +1,8 @@
 #include "agent/synthesis-state.h"
 #include "agent/review-checklist.h"
 #include "agent/protocol/agent-jsonl.h"
+#include "agent/thinking/reflection-references.h"
+#include "agent/thinking/reflection-json.h"
 #include "pocs/agent/smoke/support/synthesis-review-scenario.h"
 
 using json=nlohmann::ordered_json;
@@ -41,6 +43,16 @@ int main() {
     std::string error;
     require(!common_agent_advance_review_checklist(restored,review,plan,"draft",next,error),
         "accept silently discarded an unaccounted blocker");
+    review.decision=common_reflection_decision::revise;
+    review.next_action=common_agent_reflection_next_action::revise_plan;
+    require(common_agent_advance_review_checklist(restored,review,plan,"draft",next,error) &&
+        next.blocking.size()==1 && next.blocking.front().id=="review-1-1",
+        "plan repair lost an omitted prior blocker");
+    review.structured_review=false;
+    require(common_agent_advance_review_checklist(restored,review,plan,"draft",next,error) &&
+        next.blocking.size()==1,"legacy plan repair discarded its prior blocker");
+    review.structured_review=true;review.decision=common_reflection_decision::accept;
+    review.next_action=common_agent_reflection_next_action::accept;
     review.resolved_issue_ids={"invented"};
     require(!common_agent_advance_review_checklist(restored,review,plan,"draft",next,error),"invented issue identity was accepted");
     review.resolved_issue_ids={"review-1-1"};review.advisory_notes={"Change the heading"};
@@ -85,6 +97,64 @@ int main() {
     require(common_agent_review_step_allows_retry(failed_plan,"lookup") &&
         common_agent_advance_review_checklist(empty_checklist,retry,failed_plan,"draft",next,error),
         "latest retryable host failure did not supersede previous failure");
+    // Partial review is bound to exact inspected text, never to an entire
+    // report merely because it was saved or because some excerpts passed.
+    common_plan_state report_plan;report_plan.id="report-review";
+    common_plan_step inspected;inspected.id="read-report";inspected.status=common_plan_step_status::completed;
+    inspected.tool_call=common_plan_tool_call{"resource.read",R"({"uri":"resource://report-r3"})"};
+    report_plan.steps.push_back(inspected);
+    report_plan.observations.push_back({"tool:read-report:resource.read","resource.read",
+        R"({"ok":true,"result":{"resource":{"uri":"resource://report-r3"},"content":"Timeline: authentication observed. Coverage remains limited."}})",1.0f});
+    common_reflection_result partial;partial.structured_review=true;partial.task_outcome="satisfied";
+    partial.parts.push_back({"tool:read-report:resource.read","Timeline: authentication observed.","reviewed",
+        "Matches the saved observation",{"tool:read-report:resource.read"},"resource://invented","invented"});
+    partial.parts.push_back({"tool:read-report:resource.read","Coverage remains limited.","requires_work",
+        "Additional collection is optional for this report-update request",{}});
+    common_agent_review_checklist progress;
+    require(common_agent_advance_review_checklist({},partial,report_plan,"saved report",progress,error) &&
+        progress.parts.size()==2 && progress.parts.front().resource_uri=="resource://report-r3" &&
+        progress.parts.front().content_fingerprint!="invented" && progress.blocking.empty(),
+        "qualified coverage blocked a saved update or model-supplied identity was trusted: "+error);
+    common_agent_review_checklist loaded_progress;
+    require(common_agent_review_checklist_from_json(common_agent_review_checklist_json(progress),loaded_progress) &&
+        loaded_progress.parts.front().content_fingerprint==progress.parts.front().content_fingerprint,
+        "partial review lost its content binding after round trip");
+    auto fabricated=partial;fabricated.parts.front().excerpt="No such claim was read";
+    require(!common_agent_advance_review_checklist({},fabricated,report_plan,"saved report",next,error),
+        "unread text received a reviewed verdict");
+    fabricated=partial;fabricated.parts.front().evidence_ids={"invented"};
+    require(!common_agent_advance_review_checklist({},fabricated,report_plan,"saved report",next,error),
+        "invented evidence approved a report excerpt");
+    fabricated=partial;fabricated.parts.front().evidence_ids.clear();
+    require(!common_agent_advance_review_checklist({},fabricated,report_plan,"saved report",next,error),
+        "reviewed excerpt lacked supporting evidence");
+    auto stale=report_plan;stale.observations.front().summary=R"({"failure":{"code":"read_failed"}})";
+    require(!common_agent_advance_review_checklist({},partial,stale,"saved report",next,error),
+        "failed read received a reviewed verdict");
+    common_reflection_result new_review;new_review.structured_review=true;
+    require(common_agent_advance_review_checklist(progress,new_review,report_plan,"changed draft",next,error) &&
+        next.parts.size()==2,"unchanged report excerpts were invalidated by a chat wording change");
+    auto changed_content=report_plan;
+    changed_content.observations.front().summary=R"({"ok":true,"result":{"resource":{"uri":"resource://report-r3"},"content":"Different content"}})";
+    require(common_agent_advance_review_checklist(progress,new_review,changed_content,"changed draft",next,error) &&
+        next.parts.empty(),"changed report content retained stale excerpt assessments");
+    auto with_blocker=progress;with_blocker.blocking.push_back({"unsupported","Unsupported conclusion","Remove it",{}});
+    require(!common_agent_advance_review_checklist(with_blocker,new_review,report_plan,"saved report",next,error),
+        "partially reviewed text laundered an unresolved blocker");
+    common_reflection_evidence_references references(report_plan);
+    auto compact=partial;compact.parts.front().observation_id="e1";compact.parts.front().evidence_ids={"e1"};
+    compact.parts.back().observation_id="e1";
+    require(references.restore(compact,error) && compact.parts.front().observation_id==report_plan.observations.front().id,
+        "excerpt handle did not restore its canonical identity");
+    require(references.restore(compact,error),"canonical issued evidence identity was rejected");
+    compact.parts.front().observation_id="unknown";
+    require(!references.restore(compact,error),"unknown excerpt identity bypassed restoration");
+    common_agent_review_progress paused{report_plan.id,progress.draft_fingerprint,progress.evidence_fingerprint,
+        false,true,progress.parts,with_blocker.blocking};
+    common_agent_jsonl_turn_result paused_wire;paused_wire.review_progress=paused;
+    const auto paused_json=common_agent_jsonl_make_turn_result(paused_wire);
+    require(!paused_json["ok"].get<bool>() && paused_json["review_progress"]["paused"]==true &&
+        paused_json["review_progress"]["parts"].size()==2,"paused partial review became a successful answer");
     run(false);
     const auto rejected=run(true);
     common_agent_jsonl_turn_result wire;

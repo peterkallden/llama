@@ -664,10 +664,12 @@ bool run_agent_web_server(
         if (!listing.contains("resources") || !listing["resources"].is_array()) { set_json_error(response, 502, "chat history listing is invalid"); return; }
         struct message_row { uint64_t sequence; json value; };
         std::vector<message_row> rows;
+        std::map<std::string,json> review_progress;
         for (const auto & descriptor : listing.value("resources", json::array())) {
             if (!descriptor.is_object() || !descriptor.contains("metadata") || !descriptor["metadata"].is_object() ||
                     (descriptor["metadata"].value("purpose", std::string()) != "agent.context.turn.v1" &&
-                     descriptor["metadata"].value("purpose", std::string()) != "agent.context.review_draft.v1")) continue;
+                     descriptor["metadata"].value("purpose", std::string()) != "agent.context.review_draft.v1" &&
+                     descriptor["metadata"].value("purpose", std::string()) != "agent.context.review_progress.v1")) continue;
             json stored;
             json read;
             if (!daemon_command(options, {{"command", "read_resource"}, {"uri", descriptor.value("uri", std::string())},
@@ -678,11 +680,31 @@ bool run_agent_web_server(
             }
             stored = json::parse(read["content"].get<std::string>(), nullptr, false);
             if (!stored.is_object()) { set_json_error(response, 502, "persisted chat history contains an invalid record"); return; }
+            if(stored.contains("review_progress")) {
+                const auto id=stored.value("request_id",std::string())+"-assistant";
+                auto prior=review_progress.find(id);
+                // A blocked verdict has no accepted assistant response. Restore
+                // its display-only status without making it model-visible.
+                const auto blocked_reason = stored["review_progress"].value("blocked_reason", std::string{});
+                if (!blocked_reason.empty() && !stored["review_progress"].value("accepted", false)) {
+                    rows.push_back({stored.value("sequence", uint64_t(0)), json{
+                        {"id", id}, {"turn_id", stored.value("turn_id", std::string{})},
+                        {"role", "assistant"}, {"content", "Work blocked; the requested analysis is unfinished."},
+                        {"recorded_at", stored.value("recorded_at", int64_t(0))},
+                        {"review_progress", stored["review_progress"]}}});
+                }
+                // Immutable metadata records can share second-resolution timestamps.
+                // Accepted progress wins over a paused view of the same turn.
+                if(prior==review_progress.end() || stored["review_progress"].value("accepted",false) ||
+                        (!prior->second.value("accepted",false) && stored["review_progress"].value("paused",false)))
+                    review_progress[id]=stored["review_progress"];
+                continue;
+            }
             const auto role = stored.value("role", std::string());
             if (role != "user" && role != "assistant") { set_json_error(response, 502, "persisted chat history contains an invalid role"); return; }
             rows.push_back({stored.value("sequence", uint64_t(0)), json{{"id", stored.value("request_id", std::string()) + "-" + role},
                 {"turn_id", stored.value("turn_id", std::string())}, {"role", role}, {"content", stored.value("content", std::string())},
-                {"recorded_at", stored.value("recorded_at", int64_t(0))}, {"evidence_refs", stored.value("evidence_refs", json::array())}}});
+                {"recorded_at", stored.value("recorded_at", int64_t(0))}, {"content_fingerprint",stored.value("review_content_fingerprint",std::string{})}, {"evidence_refs", stored.value("evidence_refs", json::array())}}});
             if(stored.contains("unverified_draft")) rows.back().value["unverified_draft"]=stored["unverified_draft"];
         }
         // An accepted response supersedes a display-only draft of the same
@@ -694,6 +716,17 @@ bool run_agent_web_server(
             if(prior==by_id.end() || (prior->second.value.contains("unverified_draft") &&
                 (!row.value.contains("unverified_draft") || row.value.value("recorded_at",int64_t(0)) >=
                     prior->second.value.value("recorded_at",int64_t(0))))) by_id[id]=std::move(row);
+        }
+        for(auto & row:by_id) {
+            const auto progress=review_progress.find(row.first);
+            if(progress!=review_progress.end()) {
+                const auto & snapshot=progress->second;
+                const auto fingerprint=snapshot.value("draft_fingerprint",std::string{});
+                const auto saved_fingerprint=row.second.value.contains("unverified_draft")
+                    ? row.second.value["unverified_draft"].value("draft_fingerprint",std::string{})
+                    : row.second.value.value("content_fingerprint",std::string{});
+                if(!fingerprint.empty() && fingerprint==saved_fingerprint) row.second.value["review_progress"]=snapshot;
+            }
         }
         rows.clear(); for(auto & row:by_id) rows.push_back(std::move(row.second));
         std::sort(rows.begin(), rows.end(), [](const auto & a, const auto & b) {

@@ -5,6 +5,7 @@
 
 class common_plan_sqlite_store final : public common_plan_store {
 public:
+    common_plan_policy_config policy_limits() const override { return cache_.policy_limits(); }
     common_plan_sqlite_store() = default;
     ~common_plan_sqlite_store() override;
 

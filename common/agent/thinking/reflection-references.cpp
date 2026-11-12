@@ -49,6 +49,8 @@ std::string common_reflection_evidence_references::project_context(const std::st
             for (auto & item:value.items()) {
                 if (item.key()=="evidence_ids" && item.value().is_array()) {
                     for (auto & id:item.value()) if (id.is_string()) id=alias(id.get<std::string>());
+                } else if((item.key()=="observation_id" || item.key()=="evidence_id") && item.value().is_string()) {
+                    item.value()=alias(item.value().get<std::string>());
                 } else self(self,item.value());
             }
         } else if (value.is_array()) for (auto & item:value) self(self,item);
@@ -94,11 +96,20 @@ bool common_reflection_evidence_references::restore(common_reflection_result & r
     const auto restore_ids=[&](std::vector<std::string> & ids) {
         for (auto & id:ids) {
             const auto found=handles.find(id);
-            if (found==handles.end()) {error="unknown review evidence handle: "+id.substr(0,64);return false;}
-            id=found->second;
+            if (found!=handles.end()) {id=found->second;continue;}
+            // Some tool results expose the canonical identity as well as the
+            // compact handle. Only an exact issued identity is equivalent.
+            if(std::none_of(handles.begin(),handles.end(),[&](const auto & entry){return entry.second==id;})) {
+                error="unknown review evidence handle: "+id.substr(0,64);return false;
+            }
         }
         return true;
     };
+    for(auto & part:candidate.parts) {
+        std::vector<std::string> target{part.observation_id};
+        if(!restore_ids(target) || !restore_ids(part.evidence_ids)) return false;
+        part.observation_id=target.front();
+    }
     for (auto & phase:candidate.phase_reviews) if (!restore_ids(phase.evidence_ids)) return false;
     for (auto & issue:candidate.issues) if (!restore_ids(issue.evidence_ids)) return false;
     for (auto & operation:candidate.proposed_plan_operations) {
