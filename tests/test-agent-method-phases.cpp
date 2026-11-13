@@ -12,6 +12,18 @@ using json=nlohmann::ordered_json;
 int main() {
     using namespace method_phase_scenario;
     std::string error;
+    {
+        common_plan_state limited;
+        limited.constraints.push_back({"execution.tool_limits.v1", R"({"graph.describe.propose":1})", true});
+        common_plan_step first; first.id="first";
+        first.tool_call=common_plan_tool_call{"graph.describe.propose", "{}"};
+        limited.steps.push_back(first);
+        common_plan_operation next; next.step=first; next.step->id="second";
+        require(!common_agent_method_validate_progress(limited,{next},"propose","turn",{},error),
+            "persisted tool reservation limit was bypassed");
+        require(common_agent_method_validate_progress(limited,{},"propose","turn",{},error),
+            "unchanged plan exceeded its tool reservation limit");
+    }
     const auto saved=std::optional<common_plan_state>(run());
     run(true); // Rejected continuation is corrected before any side effect.
     run(false,true);

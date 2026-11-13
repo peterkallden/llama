@@ -939,7 +939,7 @@ common_agent_publication_status common_agent_cozo_data_store::publish_context_gr
         }
         if (node.descriptions.size() > 64) { error = "too many graph descriptions"; return common_agent_publication_status::invalid; }
         for (const auto & d : node.descriptions) {
-            if (d.text.empty() || d.text.size() > 512 || d.text.find('\0') != std::string::npos || d.source != "model" ||
+            if (d.text.empty() || d.text.size() > common_context_graph_description_max_bytes || d.text.find('\0') != std::string::npos || d.source != "model" ||
                     d.source_revision.size() > 256 || d.evidence_refs.size() > 16) {
                 error = "context graph description is invalid"; return common_agent_publication_status::invalid;
             }

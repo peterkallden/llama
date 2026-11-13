@@ -653,7 +653,8 @@ test-agent-flydelta-alpha-response-search.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/openapi)
             target_sources(${TEST_NAME} PRIVATE
                 ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-catalog.cpp
-                ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-flydelta-oracle.cpp)
+                ${PROJECT_SOURCE_DIR}/tools/agent/openapi/agent-openapi-flydelta-oracle.cpp
+                ${PROJECT_SOURCE_DIR}/tools/agent/tooling/agent-result-view.cpp)
         endif()
         if (TEST_NAME STREQUAL "test-agent-continuation")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
@@ -674,7 +675,7 @@ test-agent-flydelta-alpha-response-search.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-resource-workflow-continuation.cpp
                 ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-workflow-transition.cpp)
-            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta)
+            target_link_libraries(${TEST_NAME} PRIVATE llama-agent-flydelta llama-agent-daemon-library)
         endif()
         if (TEST_NAME STREQUAL "test-agent-execution-envelope")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})

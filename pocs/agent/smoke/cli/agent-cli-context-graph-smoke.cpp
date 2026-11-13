@@ -46,7 +46,7 @@ int main(int argc, char ** argv) {
         bindings.data_store = &store; bindings.tool_scope = context.scope; return true;
     });
     agent_tool_context context; context.profile_id = "graph-project"; context.scope.namespace_id = "smoke";
-    context.scope.project_id = "project"; context.max_calls = 16; agent_tool_context_apply_policy_gated_writes(context, true);
+    context.scope.project_id = "project"; context.max_calls = 32; agent_tool_context_apply_policy_gated_writes(context, true);
     auto view = provider.resolve_tools(context, error);
     if (!view) { std::cerr << error << '\n'; return 1; }
     const auto setup = view->call({"setup", "graph.link.propose", R"({"from":{"kind":"component","name":"planning"},"to":{"kind":"file","name":"selection","path":"src/selection.cpp"},"relation":"depends_on","rationale":"inspect selection"})"}, error);
@@ -73,6 +73,26 @@ int main(int argc, char ** argv) {
     const auto described_result = json::parse(described.content_json, nullptr, false);
     if (described_result.is_discarded() || described_result["result"]["nodes"].empty() ||
             described_result["result"]["nodes"][0]["id"] != edge["from"]) return 1;
+
+    // Standalone notes need neither an invented edge nor a second store.
+    const auto current_revision = json::parse(description.content_json)["result"]["revision"];
+    const std::string long_note = "Purpose: standalone evidence. Invariant: proposed only. Dependencies: none known. Change hazard: verify sources. " + std::string(600, 'x');
+    const auto isolated = view->call({"isolated", "graph.describe.propose", json{
+        {"node", {{"kind", "component"}, {"name", "isolated comprehension subject"}}},
+        {"description", long_note}, {"source_revision", "fixture-v1"},
+        {"evidence_refs", {"paper:a"}}, {"expected_revision", current_revision}}.dump()}, error);
+    if (!isolated.ok) { std::cerr << "standalone proposal failed\n"; return 1; }
+    const auto saved_isolated = json::parse(isolated.content_json)["result"];
+    const auto isolated_id = saved_isolated["node"]["id"];
+    const auto isolated_revision = saved_isolated["revision"];
+    const auto replay = view->call({"replay-isolated", "graph.describe.propose", json{
+        {"id", isolated_id}, {"description", long_note}, {"source_revision", "fixture-v1"},
+        {"evidence_refs", {"paper:a"}}, {"expected_revision", isolated_revision}}.dump()}, error);
+    if (!replay.ok || !json::parse(replay.content_json)["result"].value("reused", false)) return 1;
+    const auto isolated_read = read_view->call({"read-isolated", "graph.get", json{{"id", isolated_id}}.dump()}, error);
+    if (!isolated_read.ok || json::parse(isolated_read.content_json)["result"]["node"]["description"]["text"] != long_note) return 1;
+    const auto isolated_expand = read_view->call({"expand-isolated", "graph.expand", json{{"id", isolated_id}, {"depth", 1}}.dump()}, error);
+    if (!isolated_expand.ok || !json::parse(isolated_expand.content_json)["result"]["edges"].empty()) return 1;
 
     common_agent_tool_call selected{"graph.search", R"({"relation":"authored"})"};
     if (!model.empty()) {

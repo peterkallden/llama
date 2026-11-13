@@ -176,6 +176,33 @@ bool common_agent_method_validate_progress(const common_plan_state & plan,
         const std::vector<common_plan_operation> & operations,const std::string & phase,const std::string & turn,
         const std::function<bool(const std::string &)> & is_read_only,std::string & error) {
     error.clear();
+    // Imported hard constraints survive plan persistence and resume. Count
+    // reserved tool steps, including failures, so repair cannot reset a limit.
+    // This is a generic method guard; authorization still belongs to tool policy.
+    for (const auto & constraint : plan.constraints) {
+        if (!constraint.hard || constraint.id != "execution.tool_limits.v1") continue;
+        const auto limits = json::parse(constraint.description, nullptr, false);
+        if (!limits.is_object() || limits.empty() || limits.size() > 32) {
+            error = "invalid method tool limits"; return false;
+        }
+        for (const auto & limit : limits.items()) {
+            if (!limit.value().is_number_unsigned() || limit.value().get<size_t>() > 1024) {
+                error = "invalid method tool limit"; return false;
+            }
+            size_t reserved = 0;
+            std::set<std::string> counted;
+            for (const auto & step : plan.steps) if (step.tool_call && step.tool_call->name == limit.key()) {
+                ++reserved; counted.insert(step.id);
+            }
+            for (const auto & operation : operations) if (operation.step && operation.step->tool_call &&
+                    operation.step->tool_call->name == limit.key() && counted.insert(operation.step->id).second) ++reserved;
+            if (reserved > limit.value().get<size_t>()) {
+                error = "method tool reservation limit reached for " + limit.key() +
+                    "; report partial coverage or request an explicitly extended allocation";
+                return false;
+            }
+        }
+    }
     // Without a durable turn identity, old work may belong to a new user request.
     if (turn.empty()) return true;
     const bool has_tool=std::any_of(operations.begin(),operations.end(),[](const auto & operation) {

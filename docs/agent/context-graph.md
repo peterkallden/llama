@@ -159,3 +159,48 @@ The daemon scope smoke can be run without inference using
 `python3 scripts/agent-daemon-graph-mcp-smoke.py build-agent-vulkan-cozo/bin/llama-agent-daemon`.
 It uses a temporary data store and verifies shared project access, read-only
 policy, and namespace and project isolation through the daemon dispatcher.
+
+### Standalone descriptions and comprehension refresh
+
+`graph.describe.propose` accepts exactly one of an existing `id` or a `node`
+descriptor using the same identity rules as relationship endpoints. The host
+resolves the entity and appends its description in the same scoped publication,
+protected by `expected_revision`. No edge is created. Existing id-based callers
+remain supported. Descriptions remain model proposals and retain the existing
+2048-byte bound and evidence references.
+
+The starter `comprehension-refresh-v1` blueprint applies to code, research,
+documents and investigations. It inspects at most ten candidates and proposes
+at most three compact Purpose/Invariant/Dependencies/Change hazard notes.
+Research artifacts remain the detailed evidence workspace; graph notes link to
+them. Unknown facts must remain explicit. This blueprint is explicitly selected
+through normal planning; post-verification opt-in variants are described below.
+
+### Phased comprehension and opt-in development methods
+
+The description limit is now 2048 bytes in the adapter and Cozo store, with the
+same bound in the tool schema. Retrieval retains the existing bounded context
+projection; longer stored notes do not increase the prompt allocation.
+
+`execution.tool_limits.v1` is an imported hard method constraint whose JSON
+object maps exact tool names to reservation limits. Method progress validation
+counts persisted tool steps and new unique steps together, including failed
+steps, before accepting another slice. The comprehension starter reserves at
+most three description steps and ten graph lookups. These limits do not replace
+host authorization or research budgets. They bound tool reservations, not the
+number of entities returned by one call; the ten-subject frontier and depth-one
+selection remain model instructions.
+
+For opt-in post-verification maintenance select
+`repository-change-v5-with-comprehension` or
+`regression-repair-v5-with-comprehension`. These configuration variants append
+the existing comprehension phases after the development phases. Normal method
+review and continuation own ordering, saved progress and partial completion.
+No autonomous worker is started. Failed or unavailable verification is reported
+as a maintenance blocker. Source and research references remain plan evidence;
+this feature creates no second research workspace.
+
+The method-phase contract includes persisted reservation checks. The existing
+CLI graph smoke now covers standalone creation, a description over 512 bytes,
+idempotent replay and reading an isolated node through a separate tool view.
+These source changes have not yet been compiled or executed.

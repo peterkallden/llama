@@ -400,14 +400,20 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                 {"limitations", visual.limitations}, {"visualization", common_agent_visualization_relationship_to_json(visual)}});
         }
         if (operation == "graph.describe.propose") {
-            if (!text_value(args, "id", 256) || !text_value(args, "description", 512) ||
+            if (args.contains("id") == args.contains("node") ||
+                    (args.contains("id") && !text_value(args, "id", 256)) || !text_value(args, "description", common_context_graph_description_max_bytes) ||
                     !text_value(args, "source_revision", 256, false) || !args.contains("expected_revision") ||
                     !args["expected_revision"].is_number_unsigned() ||
                     (args.contains("evidence_refs") && (!args["evidence_refs"].is_array() || args["evidence_refs"].size() > 16)))
                 return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid description proposal");
             if (graph.revision != args["expected_revision"].get<uint64_t>())
                 return common_adapter_failure("tool.graph.conflict", common_tool_failure_class::conflict, true, "Graph has changed.", "graph revision conflict");
-            auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto & n) { return n.id == args["id"].get<std::string>(); });
+            std::string subject_id;
+            if (args.contains("node")) {
+                if (!resolve_endpoint(args["node"], bindings.tool_scope, graph, subject_id, error))
+                    return common_adapter_validation_failure("tool.graph.invalid_arguments", error);
+            } else subject_id = args["id"].get<std::string>();
+            auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto & n) { return n.id == subject_id; });
             if (node == graph.nodes.end()) return common_adapter_not_found_failure("tool.graph.not_found", "graph node is unavailable", "Graph node is unavailable.");
             std::vector<std::string> refs;
             if (args.contains("evidence_refs")) for (const auto & ref : args["evidence_refs"]) {

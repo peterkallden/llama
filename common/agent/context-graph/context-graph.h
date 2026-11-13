@@ -1,6 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
+
+// Shared storage and adapter bound for a compact architectural note.
+constexpr size_t common_context_graph_description_max_bytes = 2048;
 #include <string>
 #include <vector>
 

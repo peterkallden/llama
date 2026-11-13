@@ -62,7 +62,8 @@ public:
         const auto record = memories.get(arguments.value("id", ""), error);
         if (!record || !common_memory_scope_matches(*record, memory_scope)) {
             return common_tool_execution_result::failure("tool.memory_get.unavailable",
-                "memory is unavailable in the current scope", "Memory is unavailable in the current scope.");
+                common_tool_failure_class::not_found, false,
+                "Memory is unavailable in the current scope.", "memory is unavailable in the current scope");
         }
         ++memory_gets;
         return common_tool_execution_result::success(

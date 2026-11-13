@@ -247,6 +247,13 @@
       "content": "Follow the host-retained method phases in dependency order. Tool selection remains model-owned through the normal family, tool and argument stages. A phase may need no tool: explain why, rather than inventing an operation. Use existing research escalation for a material knowledge gap, then continue the same method using its retained observations. Keep findings linked to sources and applicable versions. Distinguish phase satisfaction, remaining feasible work and a real authority or input limitation. Do not accept the whole task just because one bounded inspection slice finished. Compiler and runtime failures call for the shared diagnosis procedures; reconsider the correction before another authorized verification attempt. Never turn an unavailable build into a passed check. Optional durable graph proposals belong after useful knowledge has been established.",
       "importance": 0.95,
       "confidence": 1.0
+    },
+    {
+      "id": "comprehension-refresh-v1",
+      "summary": "bounded reusable understanding",
+      "content": "Inspect at most 10 candidate entities from the requested area and at most one-hop neighbors. Select at most 3 useful subjects. Read current evidence and existing graph descriptions. Propose a compact note with Purpose, Invariant, Dependencies and Change hazard; state unknown where unsupported. Code, research, documents and investigations may supply evidence. Preserve source revision and evidence references. Semantic misses do not prove absence. Reuse research artifacts rather than copying investigations. Use graph.describe.propose with an existing id or a standalone node descriptor; never invent relations to create nodes. Reuse adequate notes; reconsider notes whose evidence changed. Stay within authorized scope and budget. Conflicts require rereading current graph revision before retry.",
+      "importance": 0.9,
+      "confidence": 1.0
     }
   ],
   "workflows": [
@@ -3563,6 +3570,313 @@
           "objective": "Answer the question with Findings, Evidence and Limitations; offer a Next step only when needed. Keep proposed changes separate from this read-only investigation.",
           "depends_on": [
             "establish-evidence"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "comprehension-refresh-v1",
+      "source_revision": "comprehension-refresh@v1",
+      "selection_description": "Preserve a bounded reusable understanding of a requested code area, research subject, document or investigation.",
+      "purpose": "Save sourced reusable understanding.",
+      "goal": "Inspect existing knowledge and propose at most three compact descriptions.",
+      "success_criteria": "Useful notes are saved as proposals with source references, or limitations are reported.",
+      "required_capabilities": [
+        "graph.find",
+        "graph.describe.propose"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "graph-maintenance-v1",
+        "comprehension-refresh-v1",
+        "development-knowledge-gap-v1"
+      ],
+      "next_action": "inspect",
+      "steps": [
+        {
+          "id": "inspect",
+          "title": "Inspect current evidence",
+          "objective": "Inspect the requested change or subject, current source identity, verification receipts where present and existing graph descriptions. Retain source references and unresolved questions in plan observations. Inspect at most ten candidate subjects and one-hop neighbors."
+        },
+        {
+          "id": "analyse",
+          "title": "Choose reusable understanding",
+          "objective": "Select at most three useful subjects or clusters. Reuse sufficient evidence; use existing research escalation only for material gaps. Preserve research artifact references. State uncertainty rather than inventing invariants or dependencies.",
+          "depends_on": [
+            "inspect"
+          ]
+        },
+        {
+          "id": "propose",
+          "title": "Publish sourced notes",
+          "objective": "Compare existing notes with current evidence. Save only useful changes through graph.describe.propose, using expected_revision and evidence_refs. Read current graph revision after a conflict before reconsidering a proposal. Standalone nodes need no relation.",
+          "depends_on": [
+            "analyse"
+          ]
+        },
+        {
+          "id": "report",
+          "title": "Report coverage and limitations",
+          "objective": "Report actual publication receipts, reused notes, uncertainty, incomplete coverage and unrun verification. Preserve unfinished work in the existing plan for resume.",
+          "depends_on": [
+            "propose"
+          ]
+        }
+      ],
+      "phase_review_required": true,
+      "constraints": [
+        {
+          "id": "execution.tool_limits.v1",
+          "hard": true,
+          "description": "{\"graph.describe.propose\":3,\"graph.find\":10}"
+        }
+      ]
+    },
+    {
+      "id": "repository-change-v5-with-comprehension",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed. Includes explicitly requested bounded comprehension maintenance after verification.",
+      "purpose": "Implement the requested repository change. Preserve reusable project understanding after verification.",
+      "goal": "Implement the requested repository change.",
+      "success_criteria": "The requested change is implemented and reviewed, or explicitly blocked; verification is tied to the post-change source state and unrun checks are disclosed. An inspection alone does not establish implementation.",
+      "required_capabilities": [
+        "tool.repository",
+        "graph.find",
+        "graph.describe.propose"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-phase-progress-v1",
+        "development-diagnosis-v1",
+        "graph-maintenance-v1",
+        "comprehension-refresh-v1"
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        },
+        {
+          "id": "execution.tool_limits.v1",
+          "hard": true,
+          "description": "{\"graph.describe.propose\":3,\"graph.find\":10}"
+        }
+      ],
+      "steps": [
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Inspect the task, affected contracts, callers, local patterns and relevant tests; preserve source identity and unresolved questions."
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve knowledge gaps",
+          "objective": "Identify material uncertainties. Use available local evidence first; inspect external primary sources only when useful and authorized. Carry applicable findings and source references forward.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "design",
+          "title": "Design",
+          "objective": "Choose a coherent change and acceptance criteria using inspected evidence; retain unresolved assumptions.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "implement",
+          "title": "Implement",
+          "objective": "Apply the authorized change using available host freshness guards; preserve unrelated work and retain change evidence.",
+          "depends_on": [
+            "design"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify",
+          "objective": "When permitted and available, verify against the post-change source state with relevant configured targets; otherwise record the limitation. Distinguish build, tests and behavioral evidence.",
+          "depends_on": [
+            "implement"
+          ]
+        },
+        {
+          "id": "review",
+          "title": "Review and answer",
+          "objective": "Inspect the diff where available, report the result and evidence and optionally propose durable graph knowledge when supported.",
+          "depends_on": [
+            "verify"
+          ]
+        },
+        {
+          "id": "comprehension-inspect",
+          "title": "Inspect current evidence",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Inspect the requested change or subject, current source identity, verification receipts where present and existing graph descriptions. Retain source references and unresolved questions in plan observations. Inspect at most ten candidate subjects and one-hop neighbors.",
+          "depends_on": [
+            "review"
+          ]
+        },
+        {
+          "id": "comprehension-analyse",
+          "title": "Choose reusable understanding",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Select at most three useful subjects or clusters. Reuse sufficient evidence; use existing research escalation only for material gaps. Preserve research artifact references. State uncertainty rather than inventing invariants or dependencies.",
+          "depends_on": [
+            "comprehension-inspect"
+          ]
+        },
+        {
+          "id": "comprehension-propose",
+          "title": "Publish sourced notes",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Compare existing notes with current evidence. Save only useful changes through graph.describe.propose, using expected_revision and evidence_refs. Read current graph revision after a conflict before reconsidering a proposal. Standalone nodes need no relation.",
+          "depends_on": [
+            "comprehension-analyse"
+          ]
+        },
+        {
+          "id": "comprehension-report",
+          "title": "Report coverage and limitations",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Report actual publication receipts, reused notes, uncertainty, incomplete coverage and unrun verification. Preserve unfinished work in the existing plan for resume.",
+          "depends_on": [
+            "comprehension-propose"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "regression-repair-v5-with-comprehension",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses. Includes explicitly requested bounded comprehension maintenance after verification.",
+      "purpose": "Diagnose the reported regression and repair it when warranted. Preserve reusable project understanding after verification.",
+      "goal": "Diagnose the reported regression and repair it when warranted.",
+      "success_criteria": "The observed failure, supporting evidence, uncertainty, authorized correction and verification or limitations are explicit.",
+      "required_capabilities": [
+        "tool.repository",
+        "graph.find",
+        "graph.describe.propose"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-diagnosis-v1",
+        "development-regression-guard-v1",
+        "development-phase-progress-v1",
+        "graph-maintenance-v1",
+        "comprehension-refresh-v1"
+      ],
+      "next_action": "reproduce",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        },
+        {
+          "id": "execution.tool_limits.v1",
+          "hard": true,
+          "description": "{\"graph.describe.propose\":3,\"graph.find\":10}"
+        }
+      ],
+      "steps": [
+        {
+          "id": "reproduce",
+          "title": "Establish failure",
+          "objective": "Preserve the reported symptom, relevant source identity, environment and available outputs; reproduce only when authorized and useful."
+        },
+        {
+          "id": "diagnose",
+          "title": "Investigate cause",
+          "objective": "Compare expected and observed behavior, trace the relevant seams, and discriminate competing hypotheses before selecting a correction.",
+          "depends_on": [
+            "reproduce"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve knowledge gaps",
+          "objective": "Use local source and documentation first; consult authorized primary sources if a material version-specific question remains unresolved.",
+          "depends_on": [
+            "diagnose"
+          ]
+        },
+        {
+          "id": "guard",
+          "title": "Establish regression guard",
+          "objective": "Identify or add a focused check tied to the observed failure. Preserve baseline evidence and distinguish an unrun guard from a reproduced failure.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair or report diagnosis",
+          "objective": "Make a scoped correction only when requested and supported; otherwise explain the evidence and unresolved cause.",
+          "depends_on": [
+            "guard"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify and report",
+          "objective": "Use appropriate authorized checks on the relevant source state and report passed, failed and unrun work.",
+          "depends_on": [
+            "repair"
+          ]
+        },
+        {
+          "id": "comprehension-inspect",
+          "title": "Inspect current evidence",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Inspect the requested change or subject, current source identity, verification receipts where present and existing graph descriptions. Retain source references and unresolved questions in plan observations. Inspect at most ten candidate subjects and one-hop neighbors.",
+          "depends_on": [
+            "verify"
+          ]
+        },
+        {
+          "id": "comprehension-analyse",
+          "title": "Choose reusable understanding",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Select at most three useful subjects or clusters. Reuse sufficient evidence; use existing research escalation only for material gaps. Preserve research artifact references. State uncertainty rather than inventing invariants or dependencies.",
+          "depends_on": [
+            "comprehension-inspect"
+          ]
+        },
+        {
+          "id": "comprehension-propose",
+          "title": "Publish sourced notes",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Compare existing notes with current evidence. Save only useful changes through graph.describe.propose, using expected_revision and evidence_refs. Read current graph revision after a conflict before reconsidering a proposal. Standalone nodes need no relation.",
+          "depends_on": [
+            "comprehension-analyse"
+          ]
+        },
+        {
+          "id": "comprehension-report",
+          "title": "Report coverage and limitations",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Report actual publication receipts, reused notes, uncertainty, incomplete coverage and unrun verification. Preserve unfinished work in the existing plan for resume.",
+          "depends_on": [
+            "comprehension-propose"
           ]
         }
       ],
