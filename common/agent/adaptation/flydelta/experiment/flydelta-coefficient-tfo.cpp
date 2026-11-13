@@ -64,7 +64,9 @@ bool run_tfo_lite_coefficient_search(
     for (size_t index = 0; index < config.population_size && population.size() < candidate_limit;
             ++index) {
         std::vector<float> coefficients(basis.vectors.size(), 0.0f);
-        const size_t coordinate_count = config.population_size > 1
+        const size_t coordinate_count = (config.sensitivity.enabled || config.sensitivity_probe_stencil)
+            ? std::min(config.population_size, basis.vectors.size() * 2)
+            : config.population_size > 1
             ? std::min(config.population_size - 1, basis.vectors.size() * 2)
             : 0;
         if (index < coordinate_count) {
@@ -233,7 +235,38 @@ bool run_tfo_lite_coefficient_search(
             population_parents.push_back(anchor_index);
             population_mutations.push_back("forage_anchor");
         }
-        for (size_t index = 1; index < config.population_size; ++index) {
+        // Reuse executed probes; no extra runner or unbudgeted evaluations.
+        // Only the initial zero-centered coordinate stencil is eligible.
+        if (config.sensitivity.enabled && iteration == 0) {
+            std::vector<common_flydelta_sensitivity_sample> samples;
+            for (const auto & trial : trials) {
+                if (trial.iteration != 0 || !trial.executed || !trial.overlay_applied ||
+                    trial.outcome == common_flydelta_counterfactual_outcome::harmed ||
+                    !trial.margin.available || trial.dose_safety_limited ||
+                    (trial.dose_evaluated && trial.dose_action != common_flydelta_dose_action::accept)) continue;
+                samples.push_back({trial.coefficients, trial.margin.normalized_delta()});
+            }
+            std::vector<float> proposal;
+            std::string reason;
+            const bool available = common_flydelta_coefficient_sensitivity_propose(
+                config.sensitivity, basis.vectors, samples, proposal, reason);
+            if (config.sensitivity.trace) config.sensitivity.trace(reason, samples.size(), proposal);
+            if (available) {
+                proposal = bound_coefficients(std::move(proposal), config.max_l2_norm);
+                if (!contains_coefficients(evaluated_coefficients, proposal) &&
+                    !contains_coefficients(population, proposal) && population.size() < config.population_size) {
+                    population.push_back(std::move(proposal));
+                    float physical = 0;
+                    if (calibrated && !common_flydelta_intervention_norm(basis, population.back(), physical, error)) return false;
+                    population_doses.push_back(calibrated ? physical / config.residual_calibration.median_norm : 0);
+                    population_parents.push_back(static_cast<size_t>(-1));
+                    population_mutations.push_back("sensitivity_proposal");
+                    if (config.sensitivity.trace) config.sensitivity.trace(
+                        "candidate_admitted", samples.size(), population.back());
+                }
+            }
+        }
+        for (size_t index = config.sensitivity.enabled ? std::max(size_t(1), population.size()) : 1; index < config.population_size; ++index) {
             std::vector<float> coefficients = anchor;
             const float anchor_norm = norm(coefficients);
             if (calibrated && anchor_norm > 0)

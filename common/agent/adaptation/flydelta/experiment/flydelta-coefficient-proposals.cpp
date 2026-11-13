@@ -49,6 +49,16 @@ bool common_flydelta_coefficient_search_config_validate(
         error = "FlyDelta coefficient search configuration is invalid";
         return false;
     }
+    if (config.sensitivity.enabled &&
+        (config.strategy != common_flydelta_coefficient_search_strategy::tfo_lite ||
+         !finite(config.sensitivity.ridge) || config.sensitivity.ridge <= 0 ||
+         !finite(config.sensitivity.target_margin_delta) || config.sensitivity.target_margin_delta <= 0 ||
+         !finite(config.sensitivity.trust_radius) || config.sensitivity.trust_radius <= 0 ||
+         config.sensitivity.trust_radius > config.max_l2_norm ||
+         config.population_size < 2 * rank || config.iterations < 2 || config.max_candidates <= 2 * rank)) {
+        error = "FlyDelta sensitivity requires TFO, matched coordinate probes and a remaining proposal budget";
+        return false;
+    }
     if (config.max_batch_arms > 64) {
         error = "FlyDelta coefficient batch wave limit is invalid";
         return false;

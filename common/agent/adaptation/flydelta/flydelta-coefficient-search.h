@@ -1,4 +1,5 @@
 #pragma once
+#include "flydelta-coefficient-sensitivity.h"
 
 #include "agent/adaptation/flydelta/flydelta-concept.h"
 #include "agent/adaptation/flydelta/flydelta-direction-search.h"
@@ -205,6 +206,10 @@ struct common_flydelta_coefficient_search_config {
     std::vector<float> anchor_coefficients;
     std::string anchor_basis_identity;
     std::vector<std::vector<float>> evaluated_coefficients;
+    common_flydelta_sensitivity_config sensitivity;
+    // Matched control experiments may request the same probe stencil without
+    // enabling the sensitivity proposal itself.
+    bool sensitivity_probe_stencil = false;
     size_t max_candidates = 16;
     // Backend batch wave limit for diagnostic/model-facing coefficient arms.
     // Zero lets the registered batch runner own the limit. This is an

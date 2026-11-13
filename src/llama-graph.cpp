@@ -1502,7 +1502,10 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
                 n_vocab, static_cast<size_t>(i) * t_logits->nb[1]);
             ggml_tensor * logits_matrix = ggml_reshape_2d(ctx_compute.get(),
                 logits_row, n_vocab, 1);
-            ggml_tensor * logits_by_token = ggml_transpose(ctx_compute.get(), logits_matrix);
+            // GET_ROWS requires a contiguous first dimension on CUDA. A
+            // transpose is a strided view even when its width is one.
+            ggml_tensor * logits_by_token = ggml_cont(ctx_compute.get(),
+                ggml_transpose(ctx_compute.get(), logits_matrix));
             ggml_tensor * target_id = ggml_view_1d(ctx_compute.get(), target_ids, 1,
                 static_cast<size_t>(i) * sizeof(int32_t));
             ggml_tensor * max_id = ggml_argmax(ctx_compute.get(), logits_matrix);

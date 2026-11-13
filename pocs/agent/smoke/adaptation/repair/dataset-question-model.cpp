@@ -57,6 +57,8 @@ struct options {
     std::string learning_ledger;
     bool force_deep = false;
     bool force_tfo_lite = false;
+    bool sensitivity_comparison = false;
+    bool sensitivity_enabled = false;
     bool low_rank_rank_sweep = false;
     bool dose_comparison = false;
     bool disable_factorized_cvec_batch = false;
@@ -128,6 +130,12 @@ bool parse_args(int argc, char ** argv, options & value) {
         else if (argument == "--config") { const auto v = next("--config"); if (!v) return false; value.config = v; }
         else if (argument == "--learning-ledger") { const auto v = next("--learning-ledger"); if (!v) return false; value.learning_ledger = v; }
         else if (argument == "--force-deep") value.force_deep = true;
+        else if (argument == "--sensitivity-control" || argument == "--sensitivity-enabled") {
+            value.sensitivity_comparison = true;
+            value.sensitivity_enabled = argument == "--sensitivity-enabled";
+            value.force_tfo_lite = true;
+            value.force_deep = true;
+        }
         else if (argument == "--force-tfo-lite") { value.force_tfo_lite = true; value.force_deep = true; }
         else if (argument == "--low-rank-rank-sweep") {
             value.low_rank_rank_sweep = true;
@@ -544,9 +552,13 @@ int main(int argc, char ** argv) {
                   << " [--learning-ledger JSONL]"
                   << " [--outcome-guidance-mode off|shadow|experimental]"
                   << " [--progress-guidance-smoke shadow|experimental]"
-                  << " [--force-deep|--force-tfo-lite|--low-rank-rank-sweep|--dose-comparison] [--adaptive-alpha-search]"
+                  << " [--sensitivity-control|--sensitivity-enabled] [--force-deep|--force-tfo-lite|--low-rank-rank-sweep|--dose-comparison] [--adaptive-alpha-search]"
                   << " [--threads N] [--n-gpu-layers N] [--require-gpu] [--n-parallel N]"
                   << " [--n-ctx-per-sequence N]\n";
+        return 2;
+    }
+    if (value.sensitivity_comparison && (dose_environment || value.low_rank_rank_sweep || value.dose_comparison)) {
+        std::cerr << "sensitivity comparison requires the standalone raw-coefficient mode\n";
         return 2;
     }
     if (value.dose_comparison && (!dose_environment || value.low_rank_rank_sweep ||
@@ -2113,6 +2125,22 @@ int main(int argc, char ** argv) {
                 deep_backend_batch_used = false;
                 common_flydelta_deep_search_config rank_config = deep_config;
                 rank_config.max_rank = requested_rank;
+                if (value.sensitivity_comparison) {
+                    auto & coefficients = rank_config.coefficients;
+                    coefficients.sensitivity.enabled = value.sensitivity_enabled;
+                    coefficients.sensitivity_probe_stencil = true;
+                    coefficients.population_size = 2 * requested_rank;
+                    coefficients.iterations = 2;
+                    coefficients.max_candidates = 4 * requested_rank;
+                    coefficients.seed = 0x464c5944454c5441ULL;
+                    coefficients.sensitivity.trace = [&](const std::string & reason, size_t count,
+                            const std::vector<float> & proposal) {
+                        ordered_json event = {{"schema", "flydelta-sensitivity-trace.v1"},
+                            {"group", entry.first}, {"rank", requested_rank},
+                            {"reason", reason}, {"sample_count", count}, {"proposal", proposal}};
+                        std::fprintf(stderr, "flydelta_sensitivity_trace %s\n", event.dump().c_str());
+                    };
+                }
                 if (dose_environment) {
                     if ((!value.low_rank_rank_sweep && !value.dose_comparison) ||
                             (value.force_tfo_lite && dose_experiment != "direction-dose")) {
@@ -2565,6 +2593,7 @@ int main(int argc, char ** argv) {
                                     ? "baseline_and_candidate_passed"
                                     : "baseline_and_candidate_did_not_establish_helped";
                     ordered_json arm = {
+                        {"sensitivity_enabled", value.sensitivity_enabled},
                         {"group", entry.first}, {"fixture_id", deep_fixture.id},
                         {"evaluation_scenario_id", deep_case.id},
                         {"task", deep_case.question}, {"arm_id", trial.arm_id},

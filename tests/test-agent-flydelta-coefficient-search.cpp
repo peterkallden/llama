@@ -55,6 +55,27 @@ static common_flydelta_experiment_fixture fixture() {
 
 int main() {
     std::string error;
+    {
+        common_flydelta_sensitivity_config cfg;
+        cfg.enabled = true;
+        const std::vector<std::vector<float>> basis = {{1,0},{0,1}};
+        std::vector<common_flydelta_sensitivity_sample> samples = {
+            {{0.05f,0},0.1f}, {{-0.05f,0},-0.1f},
+            {{0,0.05f},0.05f}, {{0,-0.05f},-0.05f}};
+        std::vector<float> proposal, replay;
+        CHECK(common_flydelta_coefficient_sensitivity_propose(cfg,basis,samples,proposal,error));
+        CHECK(proposal.size() == 2 && proposal[0] > proposal[1] && proposal[1] > 0);
+        CHECK(std::hypot(proposal[0],proposal[1]) <= cfg.trust_radius + 1e-6f);
+        CHECK(common_flydelta_coefficient_sensitivity_propose(cfg,basis,samples,replay,error));
+        CHECK(proposal == replay);
+        samples.back().applied_coefficients[1] = -0.025f;
+        CHECK(!common_flydelta_coefficient_sensitivity_propose(cfg,basis,samples,proposal,error));
+        samples.back().applied_coefficients[1] = -0.05f;
+        for (auto & sample : samples) sample.margin = 0;
+        CHECK(!common_flydelta_coefficient_sensitivity_propose(cfg,basis,samples,proposal,error));
+        cfg.enabled = false;
+        CHECK(!common_flydelta_coefficient_sensitivity_propose(cfg,basis,samples,proposal,error));
+    }
     common_flydelta_search_execution_budget budget;
     budget.limit = 10;
     budget.used = 4;
