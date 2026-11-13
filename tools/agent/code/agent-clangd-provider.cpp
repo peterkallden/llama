@@ -436,6 +436,32 @@ common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const 
     if (!session_->request("workspace/symbol", {{"query", arguments["symbol"]}}, response, error)) return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
     json definitions = json::array(), result;
     if (!result_array(response, result)) return provider_error("tool.diagnostics.symbol.invalid_result", "clangd returned an invalid symbol result");
+    // A workspace index miss is not evidence that a known document has no
+    // symbol. Request its current AST once and use document symbols directly;
+    // this also acts as a bounded parse barrier without restarting clangd.
+    if (result.empty() && !hint.empty() && std::filesystem::is_regular_file(hint, fs_error) && !fs_error) {
+        const auto uri = agent_clangd_file_uri(hint);
+        json document_response, document_symbols;
+        if (!session_->request("textDocument/documentSymbol", {{"textDocument", {{"uri", uri}}}}, document_response, error))
+            return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
+        if (!result_array(document_response, document_symbols))
+            return provider_error("tool.diagnostics.symbol.invalid_result", "clangd returned invalid document symbols");
+        const auto query = arguments["symbol"].get<std::string>();
+        auto collect = [&](auto && self, const json & symbols) -> void {
+            for (const auto & item : symbols) {
+                if (!item.is_object()) continue;
+                if (item.contains("name") && item["name"].is_string() &&
+                    item["name"].get<std::string>().find(query) != std::string::npos) {
+                    if (item.contains("location")) result.push_back(item);
+                    else if (item.contains("selectionRange")) result.push_back({
+                        {"name", item["name"]}, {"kind", item.value("kind", 12)},
+                        {"location", {{"uri", uri}, {"range", item["selectionRange"]}}}});
+                }
+                if (item.contains("children") && item["children"].is_array()) self(self, item["children"]);
+            }
+        };
+        collect(collect, document_symbols);
+    }
     const auto limit = std::min<size_t>(arguments.value("max_results", 64), 64);
     bool incomplete = false;
     for (const auto & item : result) {
@@ -593,6 +619,20 @@ common_tool_execution_result agent_clangd_code_provider::call_hierarchy(const st
     if (!session_->request("textDocument/prepareCallHierarchy", {{"textDocument", {{"uri", location.uri}}}, {"position", {{"line", location.line}, {"character", location.column}}}}, prepared, error)) return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
     json items;
     if (!result_array(prepared, items)) return provider_error("tool.diagnostics.call_hierarchy.invalid_result", "clangd returned an invalid call hierarchy selection");
+    if (items.empty()) {
+        // Reconcile the known document AST once before repeating selection.
+        // The same authorized source location is retained across both requests.
+        json parsed;
+        if (!session_->request("textDocument/documentSymbol",
+                {{"textDocument", {{"uri", location.uri}}}}, parsed, error))
+            return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
+        if (!session_->request("textDocument/prepareCallHierarchy",
+                {{"textDocument", {{"uri", location.uri}}},
+                 {"position", {{"line", location.line}, {"character", location.column}}}}, prepared, error))
+            return provider_error("tool.diagnostics.call_hierarchy.provider_unavailable", error);
+        if (!result_array(prepared, items))
+            return provider_error("tool.diagnostics.call_hierarchy.invalid_result", "clangd returned an invalid call hierarchy selection");
+    }
     if (items.size() > 1) return provider_error("tool.diagnostics.call_hierarchy.ambiguous", "source position resolved to multiple call hierarchy items");
     const auto direction = arguments.value("direction", std::string("both"));
     json callers = json::array(), callees = json::array();

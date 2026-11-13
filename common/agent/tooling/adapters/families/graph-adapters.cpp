@@ -58,7 +58,11 @@ json edge_json(const common_context_graph_edge & e) {
         {"status", e.status}, {"source", e.source}, {"rationale", e.rationale},
         {"evidence_refs", e.evidence_refs}, {"source_revision", e.source_revision}, {"version", e.version},
         {"retraction_rationale", e.retraction_rationale}, {"assertions", assertions}, {"assertions_truncated", assertions.size() < e.assertions.size()},
-        {"freshness", "unverified"}};
+        {"freshness", "unverified"},
+        {"revision_validation", {{"status", "not_checked_against_current_repository"},
+            {"observed_revision", e.source_revision},
+            {"requires_live_verification", true},
+            {"next_step", "Use graph.source with the endpoint's current source location; saved evidence line numbers may have moved."}}}};
 }
 json edge_prompt_json(const common_context_graph_edge & edge) {
     auto value = edge_json(edge);
