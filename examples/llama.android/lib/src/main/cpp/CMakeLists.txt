@@ -80,6 +80,7 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/openapi/agent-openapi-catalog.cpp
         ${LLAMA_SRC}/tools/agent/openapi/dynamic/agent-openapi-dynamic-admission.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-provider.cpp
+        ${LLAMA_SRC}/tools/agent/tooling/agent-result-view.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-selection-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-result-json-contracts.cpp
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-runtime-adapter.cpp

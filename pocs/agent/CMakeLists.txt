@@ -929,7 +929,7 @@ target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../memory
     ${PROJECT_SOURCE_DIR}/tools/server
 )
-target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library)
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support llama-agent-daemon-library cpp-httplib)
 target_compile_features(${TARGET} PRIVATE cxx_std_17)
 if (LLAMA_AGENT_TOOLS_CLANG)
     target_compile_definitions(${TARGET} PRIVATE LLAMA_AGENT_TOOLS_USE_CLANG=1)
