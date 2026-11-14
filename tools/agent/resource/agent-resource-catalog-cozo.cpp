@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <map>
 
 extern "C" {
 #include <cozo_c.h>
@@ -467,13 +468,60 @@ bool agent_cozo_resource_catalog::list_descriptors(
         return false;
     }
 
-    out.clear();
-    for (const auto & row : parsed["rows"]) {
-        if (row.is_array()) {
-            out.push_back(descriptor_from_row(row));
-            if (!load_provenance(out.back().uri, out.back(), error)) return false;
-        }
+    // Listing is used during host startup as well as tool calls. Read each
+    // metadata relation once instead of issuing two queries per descriptor.
+    std::string provenance_result, lineage_result;
+    if (!run("?[uri, source_operation, source_request_json, retrieved_at, content_hash] := *agent_resource_provenance[uri, source_operation, source_request_json, retrieved_at, content_hash]",
+            "{}", provenance_result, error) ||
+            !run("?[uri, lineage_json] := *agent_resource_lineage[uri, lineage_json]",
+                "{}", lineage_result, error)) return false;
+    const auto provenance=json::parse(provenance_result,nullptr,false);
+    const auto lineages=json::parse(lineage_result,nullptr,false);
+    if (!provenance.is_object() || !provenance.contains("rows") || !provenance["rows"].is_array() ||
+            !lineages.is_object() || !lineages.contains("rows") || !lineages["rows"].is_array()) {
+        error="unexpected Cozo resource metadata list result"; return false;
     }
+    std::map<std::string,const json *> provenance_by_uri,lineage_by_uri;
+    std::vector<agent_resource_descriptor> staged;
+    try {
+        for (const auto & row:provenance["rows"]) {
+            if (!row.is_array() || row.size()!=5) {error="malformed resource provenance row";return false;}
+            provenance_by_uri.emplace(row.at(0).get<std::string>(),&row);
+        }
+        for (const auto & row:lineages["rows"]) {
+            if (!row.is_array() || row.size()!=2) {error="malformed resource lineage row";return false;}
+            lineage_by_uri.emplace(row.at(0).get<std::string>(),&row);
+        }
+        for (const auto & row:parsed["rows"]) {
+            if (!row.is_array()) {error="malformed resource descriptor row";return false;}
+            auto descriptor=descriptor_from_row(row);
+            const auto source=provenance_by_uri.find(descriptor.uri);
+            if (source!=provenance_by_uri.end()) {
+                const auto & saved=*source->second;
+                descriptor.metadata.source_operation=saved.at(1).get<std::string>();
+                descriptor.metadata.source_request_json=saved.at(2).get<std::string>();
+                descriptor.metadata.retrieved_at=saved.at(3).get<int64_t>();
+                descriptor.metadata.content_hash=saved.at(4).get<std::string>();
+            }
+            const auto lineage=lineage_by_uri.find(descriptor.uri);
+            if (lineage!=lineage_by_uri.end()) {
+                const auto saved=json::parse(lineage->second->at(1).get<std::string>());
+                auto & value=descriptor.lineage;
+                value.parent_uri=saved.at("parent_uri").get<std::string>();
+                value.chunk_index=saved.at("chunk_index").get<size_t>();
+                value.chunk_count=saved.at("chunk_count").get<size_t>();
+                value.byte_offset=saved.at("byte_offset").get<size_t>();
+                value.byte_length=saved.at("byte_length").get<size_t>();
+                value.overlap_bytes=saved.at("overlap_bytes").get<size_t>();
+                value.derivation=saved.at("derivation").get<std::string>();
+                if (!common_runtime_resource_lineage_is_valid(value,error)) return false;
+            }
+            staged.push_back(std::move(descriptor));
+        }
+    } catch (const json::exception &) {
+        error="stored resource metadata is malformed"; return false;
+    }
+    out=std::move(staged);
     error.clear();
     return true;
 }

@@ -224,7 +224,8 @@ bool common_agent_runtime_resident_runtime::run_agent_prompt(
         const std::string & turn_id,
         int n_predict,
         common_agent_result & result,
-        std::string & error) {
+        std::string & error,
+        const std::string * original_user_prompt) {
     if (!prepare_model(error)) return false;
     if (plan_store == nullptr) {
         error = "resident agent runtime requires a plan store";
@@ -247,6 +248,7 @@ bool common_agent_runtime_resident_runtime::run_agent_prompt(
         memories,
         tooling,
     };
+    if (original_user_prompt) build_context.turn_request.request.original_user_prompt = *original_user_prompt;
     auto inputs = make_agent_runtime_host_agent_inputs(build_context, build_context.turn_request.orchestration_config);
     const bool ok = host.run_turn(inputs, result, error);
     if (ok && result.plan_id) {

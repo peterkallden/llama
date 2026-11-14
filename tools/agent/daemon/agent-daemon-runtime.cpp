@@ -1,3 +1,4 @@
+#include "agent/continuation-budget.h"
 #include "agent/tooling/contracts/tool-budget.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent-daemon-adapter.h"
@@ -235,7 +236,8 @@ common_agent_runtime_policy make_daemon_runtime_policy(const daemon_options & op
     policy.enable_reflection = true;
     // Each rejected draft needs another agent iteration before it can be
     // reviewed again. Do not silently cap a configured review budget at two.
-    policy.max_iterations = std::max<size_t>(2, static_cast<size_t>(std::max(0, options.max_reflection_rounds)));
+    policy.max_iterations = common_agent_continuation_execution_limit(
+        options.max_reflection_rounds, options.max_plan_revisions);
     policy.max_reflection_rounds = static_cast<size_t>(std::max(0, options.max_reflection_rounds));
     // A zero value in host/bootstrap configuration means "use the safe
     // default". Keep daemon turns consistent with the CLI/runtime policy;

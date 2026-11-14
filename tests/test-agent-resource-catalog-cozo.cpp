@@ -109,6 +109,29 @@ int main() {
             require(catalog.find_descriptor(derived.uri, restored, error), error);
             check_lineage(restored);
         }
+        // A populated catalog must retain per-resource metadata when listing
+        // batches, including after reopening the underlying Cozo database.
+        {
+            agent_cozo_resource_catalog catalog;require(catalog.open(path,error),error);
+            for (int index=0;index<64;++index) {
+                auto item=derived;item.uri="agent-resource://resource/batch-"+std::to_string(index);
+                item.resource_id="batch-"+std::to_string(index);
+                item.metadata.source_operation="operation-"+std::to_string(index);
+                item.metadata.content_hash="hash-"+std::to_string(index);
+                require(catalog.put_descriptor(item,error),error);
+            }
+        }
+        {
+            agent_cozo_resource_catalog catalog;require(catalog.open(path,error),error);
+            std::vector<agent_resource_descriptor> listed;require(catalog.list_descriptors(listed,error),error);
+            size_t count=0;
+            for (const auto & item:listed) if (item.resource_id.rfind("batch-",0)==0) {
+                const auto index=item.resource_id.substr(6);check_lineage(item);
+                require(item.metadata.source_operation=="operation-"+index && item.metadata.content_hash=="hash-"+index,
+                    "batch listing mixed per-resource provenance");++count;
+            }
+            require(count==64,"batch listing omitted resource metadata");
+        }
         // Fail the last metadata write and ensure no descriptor is partly published.
         catalog_script(path, "::remove agent_resource_lineage");
         catalog_script(path, "?[uri, lineage_json] <- [['fixture', 0]] "

@@ -1,3 +1,4 @@
+#include "agent/continuation-budget.h"
 #include "agent/continuation-control.h"
 #include "agent/method-phases.h"
 #include "pocs/agent/smoke/support/method-phase-scenario.h"
@@ -142,6 +143,11 @@ public:
 }
 
 int main() {
+    if (common_agent_continuation_execution_limit(4,3)!=4 ||
+            common_agent_continuation_execution_limit(4,12)!=13 ||
+            common_agent_continuation_execution_limit(9,3)!=9 ||
+            common_agent_continuation_execution_limit(0,0)!=2) return 1;
+
     std::string error;
     common_agent_continuation_budget budget{1, 1, 1, 1};
     common_plan_operation op;

@@ -1207,7 +1207,7 @@ bool common_agent_runtime_session_host::run_turn(
             break;
         case common_agent_runtime_host_mode::agent:
             ok = runtime->run_agent_prompt(effective_request.prompt, turn_id,
-                effective_request.n_predict, agent_result, error);
+                effective_request.n_predict, agent_result, error, &request.prompt);
             break;
     }
     runtime->set_research_context({}, {}, {});

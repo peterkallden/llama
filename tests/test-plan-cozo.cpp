@@ -19,6 +19,7 @@ int main() {
         assert(store.open((dir / "plan.db").string(), error));
         write_atomic_route_entry(store);
         write_method_progress(store);
+    write_prior_work_lineage(store);
         common_plan_state plan;
         plan.id = "p";
         plan.scope = common_plan_scope::global;
@@ -156,6 +157,7 @@ int main() {
         assert(store.open((dir / "plan.db").string(), error));
         verify_atomic_route_entry(store);
         verify_method_progress(store);
+    verify_prior_work_lineage(store);
         auto plan = store.get("p", error);
         assert(plan);
         assert(plan->observations.size()==1);

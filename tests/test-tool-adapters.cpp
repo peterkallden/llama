@@ -782,6 +782,11 @@ int main() {
         assert(revised_description.ok);
         const auto description_page = graph_registry.execute({"graph.get", nlohmann::json{{"id", from}, {"description_offset", 0}}.dump()});
         assert(description_page.ok && nlohmann::json::parse(description_page.output)["description_page"]["total"] == 2);
+        const auto described = nlohmann::json::parse(description_page.output);
+        assert(described["node"]["description"]["text_complete"] == true);
+        assert(described["node"]["description"]["text_bytes"] == std::string("Coordinates planning policy").size());
+        assert(described["description_page"]["items"][0]["text_complete"] == true);
+        assert(described["description_page"]["items"][0]["text_bytes"] == std::string("Coordinates orchestration policies").size());
         const auto description_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
             "planning policy", 1800, true);
         assert(description_context.find("Coordinates planning policy") != std::string::npos);

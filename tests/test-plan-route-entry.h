@@ -1,3 +1,6 @@
+#include "agent/method-phases.h"
+#include "agent/synthesis-state.h"
+#include <stdexcept>
 #pragma once
 
 #include "plan/plan-store.h"
@@ -109,4 +112,42 @@ inline void verify_method_progress(common_plan_store & store) {
         plan->observations.back().source=="method_phase_review" &&
         plan->observations.back().summary.find("Inspected local source")!=std::string::npos,
         "method metadata or phase progress did not survive store restart");
+}
+
+// Checkpoint references and inherited phase decisions use ordinary plan codecs.
+inline void write_prior_work_lineage(common_plan_store & store) {
+    std::string error;
+    common_plan_state source;source.id="prior-work-source";source.namespace_id="local";
+    source.session_id="lineage-session";source.project_id="lineage-project";
+    source.status=common_plan_status::active;
+    source.observations.push_back({"prior-source-read","repository.read",R"({"ok":true,"result":{"path":"header.h","sha256":"sha256:known"}})",1.0f});
+    if (!store.create(source,error)) throw std::runtime_error(error);
+    source=*store.get(source.id,error);
+    const nlohmann::ordered_json reference={{"source_plan_id",source.id},{"source_plan_version",source.version},{"observation_id","prior-source-read"}};
+    common_plan_state child;child.id="prior-work-child";child.namespace_id=source.namespace_id;
+    child.session_id=source.session_id;child.project_id=source.project_id;child.status=common_plan_status::active;
+    child.observations.push_back({"prior-work-link","prior_work_checkpoint",
+        nlohmann::ordered_json{{"schema","prior-work.v2"},{"source_plan_id",source.id},{"source_plan_version",source.version},
+            {"evidence_fingerprint",common_agent_synthesis_evidence_fingerprint(source)}}.dump(),1.0f});
+    child.observations.push_back({"inherited-phases","method_phase_review",
+        nlohmann::ordered_json{{"schema","method-phase-review.v1"},{"method_revision","v1"},
+            {"phases",{{"inspect",{{"status","satisfied"},{"reason","Inspected source"},
+                {"evidence_ids",{"prior-source-read"}},{"evidence_refs",nlohmann::ordered_json::array({reference})}}}}}}.dump(),0.0f});
+    if (!store.create(child,error)) throw std::runtime_error(error);
+}
+
+inline void verify_prior_work_lineage(common_plan_store & store) {
+    std::string error;
+    const auto child=store.get("prior-work-child",error),source=store.get("prior-work-source",error);
+    if (!child || !source) throw std::runtime_error("prior-work plans lost on restart: "+error);
+    const auto checkpoint=nlohmann::ordered_json::parse(child->observations.front().summary);
+    const auto progress=nlohmann::ordered_json::parse(child->observations.back().summary);
+    const auto reference=progress["phases"]["inspect"]["evidence_refs"].front();
+    const auto resolved=common_agent_resolve_prior_observation(store,*child,checkpoint,reference,error);
+    if (!resolved || resolved->id!="prior-source-read") throw std::runtime_error("prior-work evidence lost on restart: "+error);
+    common_plan_state grandchild=*child;grandchild.id="prior-work-grandchild";grandchild.observations.clear();
+    const nlohmann::ordered_json next={{"schema","prior-work.v2"},{"source_plan_id",child->id},
+        {"source_plan_version",child->version},{"evidence_fingerprint",common_agent_synthesis_evidence_fingerprint(*child)}};
+    if (!common_agent_resolve_prior_observation(store,grandchild,next,reference,error))
+        throw std::runtime_error("second continuation lost ancestor evidence: "+error);
 }

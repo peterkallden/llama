@@ -49,3 +49,21 @@ later session finds it after daemon restart. Keep prompts, UI observations,
 trace references, node and graph revision, call counts and limitations. Report
 separately if post-verification continuation was not exercised. Tool-call limits
 are not proof of a host-enforced entity frontier or traversal-depth limit.
+
+## Paused development continuation
+
+Pause a comprehension task after a source-backed inspection phase has been
+accepted, with analysis/publication still pending. Use Continue remaining work.
+Record predecessor and successor plan IDs. The trace must show the compatible
+method retained, inherited phase progress and selection of the unresolved
+analysis phase. Unchanged source inspection must not be repeated just because
+its phase IDs belong to a new plan instance.
+
+Repeat after a daemon restart with the same plan stores. Inspect the published
+node and actual description; placeholder text is a failure even if the tool
+accepted its schema. Preserve the verified node ID, revision and proposal receipt.
+
+In a separate temporary project, change a source file after pausing and before
+continuing. The dependent phase must reopen rather than inheriting a current
+inspection. Restore neither facts nor execution authority from stale metadata.
+Report unsupported historical observations separately from changed file content.

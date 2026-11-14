@@ -215,6 +215,12 @@ struct common_agent_request {
     std::vector<common_agent_dataset_descriptor> available_datasets;
     std::optional<common_agent_working_state> working_state;
     std::optional<common_agent_objective> objective;
+    // Original user task, before host history and document context are appended.
+    std::optional<std::string> original_user_prompt;
+    // Host-only source validity check; absent support means historical evidence.
+    std::function<bool(const common_plan_observation &)> prior_evidence_is_current;
+    // Read-only projection for planning/review. Never pass this view to execution or persistence.
+    std::function<common_plan_state(const common_plan_state &)> prior_evidence_view;
     // Host-prepared, immutable per-turn FlyDelta activation. Runtime code
     // propagates this snapshot but never invents or mutates it.
     std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;

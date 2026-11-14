@@ -1,4 +1,5 @@
 #include "continuation-control.h"
+#include "continuation-budget.h"
 #include "plan/plan-context.h"
 #include "plan/plan-workflow-state.h"
 #include <nlohmann/json.hpp>
@@ -164,4 +165,9 @@ bool common_agent_workflow_storage_available(const common_plan_state & plan,
         return false;
     }
     return true;
+}
+
+size_t common_agent_continuation_execution_limit(int reflection_rounds, int plan_revisions) {
+    return std::max({size_t(2), static_cast<size_t>(std::max(0,reflection_rounds)),
+        size_t(1)+static_cast<size_t>(std::max(0,plan_revisions))});
 }

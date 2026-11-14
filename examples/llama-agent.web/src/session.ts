@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from "vue";
-import { AgentApi, AgentApiError, type WebChat, type WebProject } from "./api/agent-api";
+import { AgentApi, AgentApiError, type WebChat, type WebChatMessage, type WebProject } from "./api/agent-api";
 import type { AgentEvent, ChatMessage, DaemonStatus, DaemonToolStatus, PutResourceResult, TurnRequest, TurnResult, UploadedResource } from "./types/agent";
 
 const apiBase = import.meta.env.VITE_AGENT_WEB_BASE_URL || "/api/v1";
@@ -256,9 +256,15 @@ async function refreshCurrentHistory() {
   if (disposed || requestEpoch !== sessionEpoch || requestSession !== sessionId.value || requestProject !== projectId.value) return;
   chatTitle.value = history.chat.title;
   historyAvailable.value = history.history_available;
+  mergeHistoryMessages(history.messages);
+  if (!historyCursor.value) historyCursor.value = history.next_cursor ?? "";
+  sessionStorage.setItem("llama-agent-web.chat-title", chatTitle.value);
+}
+
+function mergeHistoryMessages(history: WebChatMessage[]) {
   const currentById = new Map(messages.value.map((message) => [message.id, message]));
   const restored = new Map(messages.value.filter((message) => !message.pending).map((message) => [message.id, message]));
-  for (const item of history.messages) {
+  for (const item of history) {
     const current = currentById.get(item.id);
     restored.set(item.id, current?.pending ? current : {
       id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft, reviewProgress: item.review_progress,
@@ -266,8 +272,6 @@ async function refreshCurrentHistory() {
   }
   for (const item of messages.value) if (item.pending) restored.set(item.id, item);
   messages.value = [...restored.values()].sort((a, b) => (a.sequence ?? Number.MAX_SAFE_INTEGER) - (b.sequence ?? Number.MAX_SAFE_INTEGER));
-  if (!historyCursor.value) historyCursor.value = history.next_cursor ?? "";
-  sessionStorage.setItem("llama-agent-web.chat-title", chatTitle.value);
 }
 
 async function loadOlderMessages() {
@@ -957,11 +961,16 @@ async function newSession(forProject = projectId.value) {
 }
 
 async function ensureActiveChat() {
+  const requestSession = sessionId.value;
+  const requestProject = projectId.value;
+  const requestEpoch = sessionEpoch;
+  const current = () => !disposed && requestEpoch === sessionEpoch && requestSession === sessionId.value && requestProject === projectId.value;
   try {
-    const history = await api.value.chatMessages(sessionId.value, projectId.value);
+    const history = await api.value.chatMessages(requestSession, requestProject);
+    if (!current()) return;
     chatTitle.value = history.chat.title;
     historyAvailable.value = history.history_available;
-    messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft, reviewProgress: item.review_progress }));
+    mergeHistoryMessages(history.messages);
     historyCursor.value = history.next_cursor ?? "";
     attachments.value = (history.chat.attachments ?? []).map((item) => ({ name: item.name,
       mime_type: item.mime_type ?? "application/octet-stream", scope: "session" as const,
@@ -971,14 +980,17 @@ async function ensureActiveChat() {
     legacyMigrationPending = false;
     sessionStorage.setItem(navigationSchemaKey, "1");
   } catch (cause) {
+    if (!current()) return;
     if (!(cause instanceof AgentApiError) || cause.status !== 404) throw cause;
     if (legacyMigrationPending) {
       const migrated = await api.value.migrateLegacyChat(sessionId.value);
+      if (!current()) return;
       projectId.value = migrated.chat.project_id;
       const history = await api.value.chatMessages(sessionId.value, projectId.value);
+      if (disposed || requestEpoch !== sessionEpoch || requestSession !== sessionId.value || projectId.value !== migrated.chat.project_id) return;
       chatTitle.value = history.chat.title;
       historyAvailable.value = history.history_available;
-      messages.value = history.messages.map((item) => ({ id: item.id, turnId: item.turn_id, role: item.role, content: item.content, sequence: item.sequence, unverifiedDraft: item.unverified_draft, reviewProgress: item.review_progress }));
+      mergeHistoryMessages(history.messages);
       historyCursor.value = history.next_cursor ?? "";
       attachments.value = (history.chat.attachments ?? []).map((item) => ({ name: item.name,
         mime_type: item.mime_type ?? "application/octet-stream", scope: "session" as const,
@@ -990,6 +1002,7 @@ async function ensureActiveChat() {
       legacyMigrationPending = false;
     } else {
       const result = await api.value.createChat(sessionId.value, projectId.value, chatTitle.value);
+      if (!current()) return;
       chatTitle.value = result.chat.title;
       sessionStorage.setItem(navigationSchemaKey, "1");
     }

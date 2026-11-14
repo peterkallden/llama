@@ -55,6 +55,7 @@ int main() {
     observation_cfg.char_budget = 1024;
     const auto observations = common_plan_render_tool_observations(plan, observation_cfg);
     CHECK_CONTRACT(observations.find("<verified_tool_observations>") == 0);
+    CHECK_CONTRACT(observations.find("Quoted scalar values are literal stored values") != std::string::npos);
     CHECK_CONTRACT(observations.find("orders.csv") != std::string::npos);
     CHECK_CONTRACT(observations.find("total: 40") != std::string::npos);
     CHECK_CONTRACT(observations.find("alias: \"summary\"") != std::string::npos);
@@ -285,5 +286,29 @@ int main() {
         complete.find(std::string(2000,'z'))!=std::string::npos,
         "available model context still discarded the complete retained text");
     require(reading.observations.front().summary==payload.dump(),"presentation changed durable resource evidence");
+    common_plan_state source_read;
+    nlohmann::ordered_json source_lines = nlohmann::ordered_json::array();
+    for (int line = 1; line <= 70; ++line)
+        source_lines.push_back({{"line", line}, {"text", std::string(80, 'x')}});
+    const auto source_payload = nlohmann::ordered_json{{"ok", true}, {"result", {
+        {"path", "header.h"}, {"lines", source_lines}, {"complete", true},
+        {"returned_end_line", 70}, {"has_more", false}}}};
+    source_read.observations.push_back({"tool:read:repository.read", "repository.read", source_payload.dump(), 1.0f});
+    const auto source_excerpt = common_plan_render_tool_observations(source_read, {1800});
+    require(source_excerpt.size() <= 1800 &&
+        source_excerpt.find("model_content_complete\":false") != std::string::npos &&
+        source_excerpt.find("model_next_start_line") != std::string::npos,
+        "source read completion hid incomplete model-visible line coverage");
+    const auto source_complete = common_plan_render_tool_observations(source_read, {16000});
+    require(source_complete.find("model_content_complete\":true") != std::string::npos &&
+        source_complete.find("line 70:") != std::string::npos,
+        "complete source projection lost source rows");
+    auto metadata_heavy = source_payload;
+    metadata_heavy["result"]["source_context"] = std::string(800,'m');
+    source_read.observations.front().summary=metadata_heavy.dump();
+    const auto metadata_excerpt=common_plan_render_tool_observations(source_read,{1800});
+    require(metadata_excerpt.size()<=1800 && metadata_excerpt.find("model_next_start_line")!=std::string::npos &&
+        metadata_excerpt.find("line 1:")!=std::string::npos,
+        "source metadata forced a fallback that lost line continuation");
     return 0;
 }

@@ -46,6 +46,44 @@ vi.mock("./api/agent-api", () => ({ AgentApiError: class extends Error { constru
 
 afterEach(() => { transport.upload = undefined; transport.history = undefined; transport.detach = undefined; transport.detachRequests.length = 0; transport.uploadedResources.length = 0; vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+it("preserves an in-flight answer when initial history arrives after submission", async () => {
+  transport.calls.length=0; transport.replies.length=0;
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  let restore!: (value: unknown) => void;
+  transport.history=()=>new Promise(resolve=>{restore=resolve;});
+  const loading=session.ensureActiveChat();
+  const pending=session.submit("Verify the saved note");
+  const turnId=String(transport.calls[0].turn_id);
+  restore({chat:{id:session.sessionId,project_id:session.projectId,title:"Saved work"},messages:[],history_available:true});
+  await loading;
+  expect(session.messages.find(message=>message.turnId===turnId && message.role==="assistant")?.pending).toBe(true);
+  transport.replies[0]({ok:true,response:"Saved and verified"});
+  expect(await pending).toBe(true);
+  expect(session.messages.find(message=>message.turnId===turnId && message.role==="assistant")?.content).toBe("Saved and verified");
+});
+
+it("ignores initial history for a session that has since been replaced", async () => {
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  const oldSession=session.sessionId;
+  let restore!: (value: unknown) => void;
+  transport.history=()=>new Promise(resolve=>{restore=resolve;});
+  const loading=session.ensureActiveChat();
+  await session.newSession();
+  restore({chat:{id:oldSession,project_id:"",title:"Old work"},messages:[{id:"old",turn_id:"old",role:"assistant",content:"Old answer",recorded_at:1}],history_available:true});
+  await loading;
+  expect(session.sessionId).not.toBe(oldSession);
+  expect(session.messages).toHaveLength(0);
+  expect(session.chatTitle).not.toBe("Old work");
+});
+
 it("retains an unapproved draft when terminal SSE precedes the failed turn response", async () => {
   transport.calls.length=0; transport.replies.length=0;
   const values=new Map<string,string>();

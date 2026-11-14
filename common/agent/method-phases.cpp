@@ -1,5 +1,7 @@
 #include "method-phases.h"
 #include "continuation-control.h"
+#include "synthesis-state.h"
+#include "plan/plan-store.h"
 #include "plan/plan-context.h"
 #include <algorithm>
 #include <map>
@@ -73,19 +75,8 @@ bool common_agent_method_review(const common_plan_state & plan,
             }
         progress[review.phase_id]={{"status",review.status},{"reason",review.reason},{"evidence_ids",review.evidence_ids}};
     }
-    // Evaluate dependency closure after collecting the whole review: the order
-    // of independent verdicts in the model's array is not an execution order.
-    for (const auto & review:reviews) {
-        if (review.status!="satisfied" && review.status!="blocked") continue;
-        const auto phase=std::find_if(phases.begin(),phases.end(),[&](const auto & item) {
-            return item.is_object() && item.value("id",std::string{})==review.phase_id;
-        });
-        for (const auto & dependency:phase->value("depends_on",json::array())) {
-            if (!dependency.is_string() || !closed(progress,dependency.get<std::string>())) {
-                error="method phase precedes unresolved dependency"; return false;
-            }
-        }
-    }
+    // Downstream verdicts are provisional until their prerequisites close.
+    // Keep the review and its evidence, but do not persist premature closure.
     // Reopening a prerequisite invalidates descendant completion; do not let
     // an old later-stage verdict silently survive new unresolved work.
     bool removed=false;
@@ -109,6 +100,9 @@ std::string common_agent_render_method_progress(const common_plan_state & plan) 
         "\nAssess phases in dependency order. Report phase_reviews using exact phase IDs, status "
         "satisfied/not_needed/blocked/remaining, a reason and known evidence_ids. A phase may need no tool. "
         "Satisfied describes the phase objective, never fabricated tool execution. "
+        "Evaluate each phase against its own objective: later analysis, publication and reporting are not prerequisites "
+        "for completing an inspection phase. Cite source reads in phase_reviews; optional resource excerpt parts "
+        "require content with a host resource identity. "
         "Describe remaining needs in phase reasons and revision guidance. Multiple phases may remain unresolved. "
         "The existing planner selects the next ready phase and its operations. "
         "Use authorized research escalation for material knowledge gaps. "
@@ -350,4 +344,190 @@ bool common_agent_method_append_slice(const common_plan_state & plan,const commo
     }
     operations=std::move(ordered);
     return true;
+}
+
+std::optional<common_plan_state> common_agent_resolve_prior_work(
+        common_plan_store & store, const common_plan_state & successor,
+        const json & checkpoint, std::string & error) {
+    try {
+    error.clear();
+    std::set<std::string> visited{successor.id};
+    auto current = checkpoint;
+    std::optional<common_plan_state> selected;
+    for (size_t depth = 0; depth < 32; ++depth) {
+        if (!current.is_object() ||
+                (current.value("schema", std::string{}) != "prior-work.v1" &&
+                 current.value("schema", std::string{}) != "prior-work.v2") ||
+                !current.contains("source_plan_id") || !current["source_plan_id"].is_string()) {
+            error = "invalid prior-work lineage reference"; return std::nullopt;
+        }
+        const auto id = current["source_plan_id"].get<std::string>();
+        if (!visited.insert(id).second) {
+            error = "cyclic prior-work lineage"; return std::nullopt;
+        }
+        const auto parent = store.get(id, error);
+        if (!parent || !error.empty() || parent->namespace_id != successor.namespace_id ||
+                parent->session_id != successor.session_id || parent->project_id != successor.project_id ||
+                !current.contains("source_plan_version") || (!current["source_plan_version"].is_number_integer() || current["source_plan_version"].get<int64_t>() < 0) ||
+                parent->version != current["source_plan_version"].get<uint64_t>() ||
+                current.value("evidence_fingerprint", std::string{}) != common_agent_synthesis_evidence_fingerprint(*parent)) {
+            error = "prior-work lineage scope, version or evidence changed"; return std::nullopt;
+        }
+        if (!selected) selected = *parent;
+        if (current.value("schema", std::string{}) == "prior-work.v2" && current.contains("method")) {
+            const auto & method = current["method"];
+            if (!method.is_object()) { error = "invalid prior-work method reference"; return std::nullopt; }
+            for (const auto * source : {"blueprint_outline", "method_phase_review"}) {
+                if (!method.contains(source)) continue;
+                const auto & reference = method[source];
+                if (!reference.is_object() || reference.value("source_plan_id", std::string{}) != parent->id ||
+                        reference.value("source_plan_version", uint64_t(0)) != parent->version ||
+                        std::none_of(parent->observations.begin(), parent->observations.end(), [&](const auto & observation) {
+                            return observation.source == source && observation.id == reference.value("observation_id", std::string{});
+                        })) {
+                    error = "prior-work method observation reference is invalid"; return std::nullopt;
+                }
+            }
+        }
+        const auto link = std::find_if(parent->observations.begin(), parent->observations.end(),
+            [](const auto & observation) { return observation.source == "prior_work_checkpoint"; });
+        if (link == parent->observations.end()) return selected;
+        current = json::parse(link->summary, nullptr, false);
+    }
+    error = "prior-work lineage exceeds 32 plans";
+    return std::nullopt;
+    } catch (const json::exception &) {
+        error = "malformed prior-work reference";
+        return std::nullopt;
+    }
+}
+
+json common_agent_method_inheritance(const common_plan_state & parent,
+        const common_plan_state & successor,
+        const std::function<bool(const common_plan_observation &)> & evidence_is_current) {
+    json result = {{"schema", "method-inheritance.v1"}, {"source_plan_id", parent.id},
+        {"source_plan_version", parent.version}, {"phases", json::object()}};
+    if (!parent.phase_review_required || !successor.phase_review_required ||
+            !parent.derived_from_plan_id || parent.derived_from_plan_id != successor.derived_from_plan_id ||
+            parent.source_revision.empty() || parent.source_revision != successor.source_revision ||
+            parent.namespace_id != successor.namespace_id || parent.project_id != successor.project_id ||
+            parent.session_id != successor.session_id) return result;
+    const auto previous = saved_progress(parent);
+    const auto old_outline = outline(parent), new_outline = outline(successor);
+    for (const auto & phase : new_outline) {
+        // Older outlines have no canonical phase key and cannot transfer status.
+        const auto origin = phase.value("origin_phase_id", std::string{});
+        if (origin.empty() || std::count_if(new_outline.begin(),new_outline.end(),[&](const auto & item) {
+                return item.value("origin_phase_id",std::string{})==origin;
+            })!=1 || std::count_if(old_outline.begin(),old_outline.end(),[&](const auto & item) {
+                return item.value("origin_phase_id",std::string{})==origin;
+            })!=1) continue;
+        const auto old = std::find_if(old_outline.begin(), old_outline.end(), [&](const auto & item) {
+            return item.value("origin_phase_id", std::string{}) == origin;
+        });
+        if (old == old_outline.end() || old->value("objective", std::string{}) != phase.value("objective", std::string{})) continue;
+        const auto old_id = old->value("id", std::string{});
+        if (!previous.contains(old_id) || !previous[old_id].is_object()) continue;
+        const auto & decision = previous[old_id];
+        const auto status = decision.value("status", std::string{});
+        if (status != "satisfied" && status != "not_needed") continue;
+        const auto evidence = decision.value("evidence_ids", json::array());
+        // Empty evidence cannot establish that a prior interpretation is current.
+        if (!evidence.is_array() || (evidence.empty() && status!="not_needed") ||
+                (!evidence.empty() && !evidence_is_current)) continue;
+        json references = json::array();
+        bool valid = true;
+        for (const auto & id : evidence) {
+            if (!id.is_string()) { valid = false; break; }
+            const auto observation = std::find_if(parent.observations.begin(), parent.observations.end(),
+                [&](const auto & item) { return item.id == id.get<std::string>(); });
+            if (observation == parent.observations.end() || !evidence_is_current(*observation)) {
+                valid = false; break;
+            }
+            references.push_back({{"source_plan_id", parent.id}, {"source_plan_version", parent.version},
+                {"observation_id", observation->id}});
+        }
+        if (valid) result["phases"][phase.value("id", std::string{})] = {
+            {"status", status}, {"reason", decision.value("reason", std::string{})},
+            {"source_phase_id", old_id}, {"evidence_refs", references}};
+    }
+    // Dependency closure is evaluated on the new phase identities.
+    bool changed;
+    do {
+        changed = false;
+        for (const auto & phase : new_outline) {
+            const auto id = phase.value("id", std::string{});
+            if (!result["phases"].contains(id)) continue;
+            for (const auto & dependency : phase.value("depends_on", json::array())) {
+                if (!dependency.is_string() || !result["phases"].contains(dependency.get<std::string>())) {
+                    result["phases"].erase(id); changed = true; break;
+                }
+            }
+        }
+    } while (changed);
+    return result;
+}
+
+std::optional<common_plan_observation> common_agent_resolve_prior_observation(
+        common_plan_store & store, const common_plan_state & successor,
+        const json & checkpoint, const json & reference, std::string & error) {
+    try {
+    if (!reference.is_object() || !reference.contains("source_plan_id") ||
+            !reference["source_plan_id"].is_string() || !reference.contains("observation_id") ||
+            !reference["observation_id"].is_string() || !reference.contains("source_plan_version") ||
+            !reference["source_plan_version"].is_number_integer()) {
+        error = "invalid inherited observation reference"; return std::nullopt;
+    }
+    if (!common_agent_resolve_prior_work(store, successor, checkpoint, error)) return std::nullopt;
+    auto link = checkpoint;
+    for (size_t depth = 0; depth < 32; ++depth) {
+        const auto parent = store.get(link.value("source_plan_id", std::string{}), error);
+        if (!parent || !error.empty()) return std::nullopt;
+        if (parent->id == reference["source_plan_id"].get<std::string>()) {
+            if (reference["source_plan_version"] != json(parent->version)) {
+                error = "inherited observation source version changed"; return std::nullopt;
+            }
+            const auto observed = std::find_if(parent->observations.begin(), parent->observations.end(),
+                [&](const auto & item) { return item.id == reference["observation_id"].get<std::string>(); });
+            if (observed == parent->observations.end()) {
+                error = "inherited observation does not exist"; return std::nullopt;
+            }
+            error.clear(); return *observed;
+        }
+        const auto next = std::find_if(parent->observations.begin(), parent->observations.end(),
+            [](const auto & item) { return item.source == "prior_work_checkpoint"; });
+        if (next == parent->observations.end()) break;
+        link = json::parse(next->summary, nullptr, false);
+    }
+    error = "inherited observation is outside the selected lineage";
+    return std::nullopt;
+    } catch (const json::exception &) {
+        error = "malformed prior-work reference";
+        return std::nullopt;
+    }
+}
+
+common_plan_state common_agent_prior_evidence_view(const common_plan_state & current,
+        const common_plan_state & parent,
+        const std::function<bool(const common_plan_observation &)> & evidence_is_current) {
+    auto view = current;
+    if (!evidence_is_current || current.namespace_id != parent.namespace_id ||
+            current.project_id != parent.project_id || current.session_id != parent.session_id) return view;
+    // Old execution identities are retained only in this transient evidence view.
+    // All inherited steps are completed; the actual executable plan is unchanged.
+    std::vector<common_plan_observation> inherited;
+    for (const auto & observation : parent.observations) {
+        if (!evidence_is_current(observation) || std::any_of(view.observations.begin(), view.observations.end(),
+                [&](const auto & item) { return item.id == observation.id; })) continue;
+        const auto * step = common_plan_find_tool_observation_step(parent, observation);
+        if (!step || step->status != common_plan_step_status::completed) continue;
+        if (std::any_of(current.steps.begin(), current.steps.end(), [&](const auto & item) { return item.id == step->id; })) continue;
+        auto retained_step = *step;
+        retained_step.depends_on.clear(); retained_step.blocked_by.clear();
+        if (std::none_of(view.steps.begin(),view.steps.end(),[&](const auto & item){return item.id==retained_step.id;}))
+            view.steps.push_back(std::move(retained_step));
+        inherited.push_back(observation);
+    }
+    view.observations.insert(view.observations.begin(),inherited.begin(),inherited.end());
+    return view;
 }

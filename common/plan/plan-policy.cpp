@@ -25,6 +25,8 @@ const char * common_plan_operation_kind_name(common_plan_operation_kind kind) {
 }
 
 bool common_plan_workflow_control_observation(const common_plan_state & plan, const common_plan_observation & observation) {
+    if (plan.phase_review_required &&
+            (observation.source == "method_phase_review" || observation.source == "response_review")) return true;
     if (!plan.workflow_definition || plan.workflow_definition->transitions.empty()) return false;
     for (const auto * source : {"workflow_arguments", "workflow_verification", "workflow_choice",
             "workflow_grounding_policy", "workflow_terminal_choice", "artifact_continuation",
@@ -314,7 +316,9 @@ common_plan_policy_result common_plan_policy::validate(const common_plan_state &
             return deny("invalid or excessive observation");
     }
     if (op.kind == common_plan_operation_kind::record_observation && op.observation && !op.host_authorized &&
-            (op.observation->source == "workflow_verification" || op.observation->source == "workflow_arguments" ||
+            (op.observation->source == "prior_work_checkpoint" || op.observation->source == "method_phase_review" ||
+             op.observation->source == "blueprint_outline" ||
+             op.observation->source == "workflow_verification" || op.observation->source == "workflow_arguments" ||
              op.observation->source == "workflow_choice" ||
              op.observation->source == "workflow_handoff" || op.observation->source == "workflow_grounding_policy" ||
              op.observation->source == "response_review" || op.observation->source == "declared_claim" || op.observation->source == "artifact_snapshot" ||

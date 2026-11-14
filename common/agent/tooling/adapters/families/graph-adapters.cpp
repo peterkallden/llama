@@ -13,6 +13,14 @@
 namespace {
 using json = common_adapter_json;
 
+json description_json(const common_context_graph_description & d) {
+    // Text is returned verbatim. Pagination applies to description records,
+    // not a hidden continuation of an individual description's text.
+    return {{"text", d.text}, {"text_bytes", d.text.size()}, {"text_complete", true},
+        {"source", d.source}, {"status", "proposed"},
+        {"source_revision", d.source_revision}, {"evidence_refs", d.evidence_refs}};
+}
+
 json node_json(const common_context_graph_node & n) {
     json observations = json::array();
     const size_t offset = n.observations.size() > 8 ? n.observations.size() - 8 : 0;
@@ -26,8 +34,7 @@ json node_json(const common_context_graph_node & n) {
     const auto description_offset = n.descriptions.size() > 4 ? n.descriptions.size() - 4 : 0;
     for (size_t i = description_offset; i < n.descriptions.size(); ++i) {
         const auto & d = n.descriptions[i];
-        descriptions.push_back({{"text", d.text}, {"source", d.source},
-        {"status", "proposed"}, {"source_revision", d.source_revision}, {"evidence_refs", d.evidence_refs}});
+        descriptions.push_back(description_json(d));
     }
     return {{"id", n.id}, {"kind", n.kind}, {"name", n.name}, {"path", latest ? latest->path : n.path},
         {"line", latest ? latest->line : n.line}, {"source_revision", latest ? latest->source_revision : n.source_revision},
@@ -38,6 +45,13 @@ json node_json(const common_context_graph_node & n) {
 }
 json node_prompt_json(const common_context_graph_node & node) {
     auto value = node_json(node);
+    // Keep the established compact prompt footprint. Full read responses
+    // carry per-text completeness metadata; the preview is already bounded
+    // by the enclosing graph projection contract.
+    if (value["description"].is_object()) {
+        value["description"].erase("text_bytes");
+        value["description"].erase("text_complete");
+    }
     value.erase("observations");
     value.erase("observations_truncated");
     value.erase("descriptions");
@@ -68,6 +82,9 @@ json edge_prompt_json(const common_context_graph_edge & edge) {
     auto value = edge_json(edge);
     value.erase("assertions");
     value.erase("assertions_truncated");
+    // This warning is shared by the prompt envelope. Repeating its verbose
+    // explanation per edge can displace the relationships being projected.
+    value.erase("revision_validation");
     value["assertion_count"] = edge.assertions.size();
     return value;
 }
@@ -202,6 +219,9 @@ std::string common_context_graph_prompt_projection(common_agent_data_store & sto
         }
         if (ids.count(edge.from) && ids.count(edge.to)) result["edges"].push_back(edge_prompt_json(edge));
     }
+    if (!result["edges"].empty()) result["revision_validation"] = {
+        {"status", "not_checked_against_current_repository"}, {"requires_live_verification", true},
+        {"next_step", "Verify saved references against current sources with graph.source."}};
     budget = std::min<size_t>(budget, 1800);
     while (result.dump().size() > budget && !result["edges"].empty()) { result["edges"].erase(result["edges"].end() - 1); result["truncated"] = true; }
     while (result.dump().size() > budget && !result["nodes"].empty()) { result["nodes"].erase(result["nodes"].end() - 1); result["truncated"] = true; }
@@ -273,8 +293,7 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                     json page = json::array();
                     for (size_t i = offset; i < node->descriptions.size() && i - offset < 4; ++i) {
                         const auto & d = node->descriptions[i];
-                        page.push_back({{"text", d.text}, {"source", d.source}, {"status", "proposed"},
-                            {"source_revision", d.source_revision}, {"evidence_refs", d.evidence_refs}});
+                        page.push_back(description_json(d));
                     }
                     const auto end = std::min(node->descriptions.size(), offset + page.size());
                     result["description_page"] = {{"offset", offset}, {"items", page}, {"total", node->descriptions.size()},

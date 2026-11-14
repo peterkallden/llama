@@ -4,6 +4,49 @@
 #include <set>
 
 common_reflection_evidence_references::common_reflection_evidence_references(const common_plan_state & plan) {
+    for (const auto & observation : plan.observations) {
+        if (observation.source != "blueprint_outline") continue;
+        const auto outline=nlohmann::ordered_json::parse(observation.summary,nullptr,false);
+        if (!outline.is_array()) break;
+        for (const auto & phase:outline) if (phase.is_object() && phase.contains("id") && phase["id"].is_string()) {
+            const auto id=phase["id"].get<std::string>();
+            if (!id.empty()) phase_handles.emplace("p"+std::to_string(phase_handles.size()+1),id);
+        }
+        break;
+    }
+    // A validated checkpoint can expose its predecessor IDs as historical
+    // context. Resolve only exact phase keys from the same method revision.
+    std::map<std::string,std::string> origins;
+    for (const auto & observation:plan.observations) {
+        if (observation.source!="blueprint_outline") continue;
+        const auto outline=nlohmann::ordered_json::parse(observation.summary,nullptr,false);
+        if (outline.is_array()) for (const auto & phase:outline)
+            if (phase.is_object() && phase.contains("origin_phase_id") && phase["origin_phase_id"].is_string() &&
+                    phase.contains("id") && phase["id"].is_string())
+                origins[phase["origin_phase_id"].get<std::string>()]=phase["id"].get<std::string>();
+        break;
+    }
+    for (const auto & observation:plan.observations) {
+        if (observation.source!="prior_work_checkpoint") continue;
+        const auto checkpoint=nlohmann::ordered_json::parse(observation.summary,nullptr,false);
+        if (!checkpoint.is_object() || checkpoint.value("schema",std::string{})!="prior-work.v2" ||
+                !checkpoint.contains("method") || !checkpoint["method"].is_object() ||
+                checkpoint["method"].value("revision",std::string{})!=plan.source_revision ||
+                checkpoint["method"].value("blueprint_id",std::string{})!=plan.derived_from_plan_id.value_or(std::string{}) ||
+                !checkpoint.contains("method_progress") || !checkpoint["method_progress"].is_string()) continue;
+        const auto text=checkpoint["method_progress"].get<std::string>();
+        const auto begin=text.find("\n{");
+        if (begin==std::string::npos) continue;
+        const auto end=text.find('\n',begin+1);
+        const auto progress=nlohmann::ordered_json::parse(text.substr(begin+1,end-begin-1),nullptr,false);
+        if (!progress.is_object() || !progress.contains("outline") || !progress["outline"].is_array()) continue;
+        for (const auto & phase:progress["outline"]) {
+            if (!phase.is_object() || !phase.contains("id") || !phase["id"].is_string() ||
+                    !phase.contains("origin_phase_id") || !phase["origin_phase_id"].is_string()) continue;
+            const auto found=origins.find(phase["origin_phase_id"].get<std::string>());
+            if (found!=origins.end()) prior_phase_aliases[phase["id"].get<std::string>()]=found->second;
+        }
+    }
     std::set<std::string> seen;
     for (const auto & observation:plan.observations) {
         if (!observation.id.empty() && seen.insert(observation.id).second)
@@ -91,6 +134,19 @@ std::string common_reflection_evidence_references::project_context(const std::st
     return result;
 }
 
+std::string common_reflection_evidence_references::project_method(const std::string & input) const {
+    auto result=project_context(input);
+    for (const auto & entry:phase_handles) {
+        const auto original=nlohmann::ordered_json(entry.second).dump();
+        const auto replacement=nlohmann::ordered_json(entry.first).dump();
+        size_t position=0;
+        while ((position=result.find(original,position))!=std::string::npos) {
+            result.replace(position,original.size(),replacement);position+=replacement.size();
+        }
+    }
+    return result;
+}
+
 bool common_reflection_evidence_references::restore(common_reflection_result & review,std::string & error) const {
     auto candidate=review;
     const auto restore_ids=[&](std::vector<std::string> & ids) {
@@ -110,7 +166,13 @@ bool common_reflection_evidence_references::restore(common_reflection_result & r
         if(!restore_ids(target) || !restore_ids(part.evidence_ids)) return false;
         part.observation_id=target.front();
     }
-    for (auto & phase:candidate.phase_reviews) if (!restore_ids(phase.evidence_ids)) return false;
+    for (auto & phase:candidate.phase_reviews) {
+        const auto found=phase_handles.find(phase.phase_id);
+        if (found!=phase_handles.end()) phase.phase_id=found->second;
+        else if (const auto prior=prior_phase_aliases.find(phase.phase_id); prior!=prior_phase_aliases.end())
+            phase.phase_id=prior->second;
+        if (!restore_ids(phase.evidence_ids)) return false;
+    }
     for (auto & issue:candidate.issues) if (!restore_ids(issue.evidence_ids)) return false;
     for (auto & operation:candidate.proposed_plan_operations) {
         if (!restore_ids(operation.evidence_ids)) return false;

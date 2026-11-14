@@ -23,6 +23,11 @@ bool validate_review_part(const common_plan_state & plan,common_agent_review_par
     const auto payload=nlohmann::ordered_json::parse(observed->summary,nullptr,false);
     const auto body=payload.is_object()?payload.value("result",payload):nlohmann::ordered_json{};
     const auto content=body.is_object()?body.value("content",nlohmann::ordered_json{}):nlohmann::ordered_json{};
+    if (!body.is_object() || !body.contains("content") || !body["content"].is_string() ||
+            !body.contains("resource") || !body["resource"].is_object()) {
+        error="excerpt parts require resource content with a host resource identity; omit parts for repository/workspace reads and assess them through phase_reviews or revision_guidance";
+        return false;
+    }
     if(!content.is_string() || part.excerpt.empty() || part.excerpt.size()>512 ||
         content.get_ref<const std::string &>().find(part.excerpt)==std::string::npos ||
         part.reason.empty() || part.reason.size()>512 || part.evidence_ids.size()>8 ||

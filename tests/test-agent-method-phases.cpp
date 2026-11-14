@@ -1,10 +1,12 @@
 #include "agent/agent-runtime.h"
 #include "agent/method-phases.h"
 #include "agent/review-checklist.h"
+#include "agent/synthesis-state.h"
 #include "agent/thinking/reflection-references.h"
 #include "plan/plan-context.h"
 #include "plan/plan-in-memory.h"
 #include "pocs/agent/smoke/support/method-phase-scenario.h"
+#include "pocs/agent/smoke/support/prior-work-scenario.h"
 #include <stdexcept>
 #include <algorithm>
 
@@ -12,6 +14,22 @@ using json=nlohmann::ordered_json;
 int main() {
     using namespace method_phase_scenario;
     std::string error;
+    {
+        common_plan_state plan; plan.id="phased"; plan.phase_review_required=true;
+        common_plan_policy_config limits; limits.max_observations=1;
+        plan.observations.push_back({"source","repository.read","{}",1.0f});
+        common_plan_policy policy(limits);
+        common_plan_operation review; review.plan_id=plan.id; review.expected_version=plan.version;
+        review.kind=common_plan_operation_kind::record_observation; review.host_authorized=true;
+        review.observation=common_plan_observation{"review","method_phase_review","{}",1.0f};
+        require(policy.validate(plan,review).allowed,"phase control exhausted source evidence capacity");
+        review.host_authorized=false;
+        require(!policy.validate(plan,review).allowed,"model forged phase control proof");
+        review.host_authorized=true; review.observation->source="repository.read";
+        require(!policy.validate(plan,review).allowed,"source budget was bypassed");
+        plan.phase_review_required=false; review.observation->source="response_review";
+        require(!policy.validate(plan,review).allowed,"ordinary plan control classification changed");
+    }
     {
         common_plan_state limited;
         limited.constraints.push_back({"execution.tool_limits.v1", R"({"graph.describe.propose":1})", true});
@@ -24,6 +42,92 @@ int main() {
         require(common_agent_method_validate_progress(limited,{},"propose","turn",{},error),
             "unchanged plan exceeded its tool reservation limit");
     }
+    {
+        common_plan_state parent; parent.id="parent"; parent.phase_review_required=true;
+        parent.derived_from_plan_id="method"; parent.source_revision="v1";
+        common_plan_state child=parent; child.id="child";
+        parent.observations.push_back({"outline","blueprint_outline",
+            R"([{"id":"parent:inspect","origin_phase_id":"inspect","objective":"Inspect","depends_on":[]}])",0.0f});
+        parent.observations.push_back({"evidence","repository.read","{}",1.0f});
+        parent.observations.push_back({"review","method_phase_review",
+            R"({"schema":"method-phase-review.v1","method_revision":"v1","phases":{"parent:inspect":{"status":"satisfied","reason":"Inspected","evidence_ids":["evidence"]}}})",0.0f});
+        child.observations.push_back({"outline","blueprint_outline",
+            R"([{"id":"child:inspect","origin_phase_id":"inspect","objective":"Inspect","depends_on":[]}])",0.0f});
+        const auto current=[](const common_plan_observation &){return true;};
+        require(common_agent_method_inheritance(parent,child,current)["phases"].contains("child:inspect"),
+            "compatible phase identity did not transfer");
+        require(common_agent_method_inheritance(parent,child,[](const auto &){return false;})["phases"].empty(),
+            "stale evidence transferred a completed phase");
+        auto excluded=child;excluded.steps.clear();excluded.observations.clear();
+        excluded.observations.push_back({"outline","blueprint_outline",
+            R"([{"id":"child:inspect","origin_phase_id":"inspect","objective":"Inspect","depends_on":["child:missing"]}])",0.0f});
+        require(common_agent_method_inheritance(parent,excluded,current)["phases"].empty(),
+            "inherited phase bypassed a reopened prerequisite");
+        child.source_revision="v2";
+        require(common_agent_method_inheritance(parent,child,current)["phases"].empty(),
+            "incompatible method revision transferred status");
+    }
+    {
+        common_plan_state blueprint; blueprint.kind=common_plan_kind::blueprint;
+        common_plan_step phase; phase.id="inspect"; phase.objective="Inspect source";
+        blueprint.steps.push_back(phase);
+        common_plan_state instance; instance.kind=common_plan_kind::task;
+        phase.id="instance:inspect"; instance.steps.push_back(phase);
+        instance.observations.push_back(common_plan_make_blueprint_outline(blueprint,"instance"));
+        const auto outline=json::parse(common_plan_make_blueprint_outline(instance,"successor").summary);
+        require(outline.front()["origin_phase_id"]=="inspect",
+            "runtime outline replaced canonical phase identity with an instance identity");
+    }
+    {
+        common_plan_in_memory_store store;
+        require(store.open("",error),error);
+        common_plan_state parent; parent.id="prior-source"; parent.namespace_id="local";
+        parent.session_id="session"; parent.project_id="project";
+        parent.status=common_plan_status::active;
+        common_plan_step read;read.id="prior-read";read.status=common_plan_step_status::completed;
+        read.tool_call=common_plan_tool_call{"repository.read",R"({"path":"header.h"})"};
+        parent.steps.push_back(read);
+        parent.observations.push_back({"tool:prior-read:repository.read","repository.read",
+            R"({"ok":true,"result":{"path":"header.h","sha256":"sha256:known","lines":[{"line":1,"text":"source"}]}})",1.0f});
+        require(store.create(parent,error),error);
+        parent=*store.get(parent.id,error);
+        common_plan_state child;child.id="successor";child.namespace_id=parent.namespace_id;
+        child.session_id=parent.session_id;child.project_id=parent.project_id;
+        const json checkpoint={{"schema","prior-work.v2"},{"source_plan_id",parent.id},
+            {"source_plan_version",parent.version},{"evidence_fingerprint",common_agent_synthesis_evidence_fingerprint(parent)}};
+        const json reference={{"source_plan_id",parent.id},{"source_plan_version",parent.version},
+            {"observation_id",parent.observations.front().id}};
+        require(common_agent_resolve_prior_observation(store,child,checkpoint,reference,error).has_value(),error);
+        auto malformed=checkpoint;malformed["source_plan_version"]="invalid";
+        require(!common_agent_resolve_prior_work(store,child,malformed,error),"malformed lineage version was accepted");
+        auto self=checkpoint;self["source_plan_id"]=child.id;
+        require(!common_agent_resolve_prior_work(store,child,self,error) && error.find("cyclic")!=std::string::npos,
+            "self-referencing checkpoint was accepted");
+        common_plan_operation forged;forged.kind=common_plan_operation_kind::record_observation;
+        forged.plan_id=parent.id;forged.expected_version=parent.version;
+        forged.observation=common_plan_observation{"forged","prior_work_checkpoint",checkpoint.dump(),1.0f};
+        common_plan_state unchanged;
+        require(!store.apply(forged,unchanged,error),"model-created lineage observation bypassed host authority");
+        auto foreign=child;foreign.project_id="other";
+        require(!common_agent_resolve_prior_observation(store,foreign,checkpoint,reference,error),
+            "inherited evidence escaped project scope");
+        auto changed=reference;changed["source_plan_version"]=parent.version+1;
+        require(!common_agent_resolve_prior_observation(store,child,checkpoint,changed,error),
+            "changed source version was accepted");
+        auto view=common_agent_prior_evidence_view(child,parent,[](const auto &){return true;});
+        require(child.steps.empty() && child.observations.empty() && view.steps.size()==1 && view.observations.size()==1,
+            "evidence projection mutated the executable successor");
+        require(common_plan_find_tool_observation_step(view,view.observations.front())!=nullptr,
+            "inherited read lost its original execution provenance in review view");
+        require(common_agent_prior_evidence_view(child,parent,[](const auto &){return false;}).observations.empty(),
+            "stale source leaked into current evidence projection");
+        require(common_plan_render_tool_observations(view,{4096}).find("source")!=std::string::npos,
+            "inherited evidence could not be projected through normal context rendering");
+    }
+    {
+        common_plan_in_memory_store store;require(store.open("",error),error);
+        prior_work_scenario::run(store);
+    }
     const auto saved=std::optional<common_plan_state>(run());
     run(true); // Rejected continuation is corrected before any side effect.
     run(false,true);
@@ -33,8 +137,9 @@ int main() {
     pending.observations.erase(std::remove_if(pending.observations.begin(),pending.observations.end(),
         [](const auto & o){return o.source=="method_phase_review";}),pending.observations.end());
     json progress;
-    require(!common_agent_method_review(pending,{{pending.id+":knowledge","satisfied","Premature",{}}},progress,error),
-        "phase completed ahead of its prerequisite");
+    require(common_agent_method_review(pending,{{pending.id+":knowledge","satisfied","Premature",{}}},progress,error) &&
+        !progress.contains(pending.id+":knowledge"),
+        "premature downstream verdict was retained despite an unresolved prerequisite");
     require(common_agent_method_review(pending,{{pending.id+":orient","remaining","Further inspection needed",{}},
         {pending.id+":knowledge","not_needed","No external lookup needed yet",{}}},progress,error) &&
         !progress.contains(pending.id+":knowledge"),
@@ -221,10 +326,35 @@ int main() {
     require(!common_agent_method_has_remaining(legacy) && common_agent_render_method_progress(legacy).empty(),
         "legacy plans acquired new method requirements");
 
+    {
+        common_plan_state previous;previous.id="old";previous.phase_review_required=true;
+        previous.source_revision="v1";previous.derived_from_plan_id="blueprint";
+        previous.observations.push_back({"outline-old","blueprint_outline",
+            R"([{"id":"old:inspect","origin_phase_id":"inspect","depends_on":[]}])",0.0f});
+        common_plan_state current;current.id="new";current.phase_review_required=true;
+        current.source_revision="v1";current.derived_from_plan_id="blueprint";
+        current.observations.push_back({"outline-new","blueprint_outline",
+            R"([{"id":"new:inspect","origin_phase_id":"inspect","depends_on":[]}])",0.0f});
+        current.observations.push_back({"prior","prior_work_checkpoint",json{
+            {"schema","prior-work.v2"},{"method",{{"revision","v1"},{"blueprint_id","blueprint"}}},
+            {"method_progress",common_agent_render_method_progress(previous)}}.dump(),0.0f});
+        common_reflection_evidence_references references(current);
+        common_reflection_result review;review.phase_reviews={{"old:inspect","remaining","Continue",{}}};
+        require(references.restore(review,error) && review.phase_reviews.front().phase_id=="new:inspect",
+            "exact predecessor phase identity did not map to the successor");
+        review.phase_reviews.front().phase_id="old:invented";
+        require(references.restore(review,error) && review.phase_reviews.front().phase_id=="old:invented",
+            "unknown predecessor phase was guessed");
+    }
     common_plan_state evidence;
     evidence.observations={{"tool:long:composite:step:repository.read","repository.read","source",0.0f},
         {"e1","memory","collision",0.0f}};
+    evidence.observations.push_back({"outline","blueprint_outline",
+        R"([{"id":"agent-blueprint:very-long-id:inspect","depends_on":[]},{"id":"agent-blueprint:very-long-id:analyse","depends_on":["agent-blueprint:very-long-id:inspect"]}])",0.0f});
     common_reflection_evidence_references refs(evidence);
+    const auto explicit_view=refs.project_method(R"({"id":"agent-blueprint:very-long-id:analyse","depends_on":["agent-blueprint:very-long-id:inspect"]})");
+    require(explicit_view.find("\"p2\"")!=std::string::npos && explicit_view.find("\"p1\"")!=std::string::npos,
+        "method phase handles were not projected consistently");
     require(refs.project("\"tool:long:composite:step:repository.read\" e1")=="\"e1\" e2",
         "reference projection cascaded replacements or lost stable order");
     require(refs.project("tool:long:composite:step:repository.read:attempt:2")==
@@ -239,9 +369,10 @@ int main() {
         projected.find("\"reason\":\"e1\"")!=std::string::npos,
         "reference projection changed source content or missed host-owned fields");
     common_reflection_result review;
-    review.phase_reviews={{"phase","remaining","Need more evidence",{"e1"}}};
+    review.phase_reviews={{"p2","remaining","Need more evidence",{"e1"}}};
     review.issues.push_back({});review.issues.back().evidence_ids={"e2"};
-    require(refs.restore(review,error) && review.phase_reviews[0].evidence_ids[0]==evidence.observations[0].id &&
+    require(refs.restore(review,error) && review.phase_reviews[0].phase_id=="agent-blueprint:very-long-id:analyse" &&
+        review.phase_reviews[0].evidence_ids[0]==evidence.observations[0].id &&
         review.issues[0].evidence_ids[0]=="e1" && evidence.observations[0].id=="tool:long:composite:step:repository.read",
         "review references changed durable identities or provenance");
     review.phase_reviews[0].evidence_ids={"e1"};review.issues[0].evidence_ids={"e999"};

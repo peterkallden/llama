@@ -217,9 +217,11 @@ static void append_observation_and_resource_events(
 
 static bool apply_request_objective(const common_agent_request & request, common_plan_state & plan, std::string & error) {
     const auto bounded = [](const std::string & value) { return value.size() <= 512; };
-    const auto purpose = request.objective && !request.objective->purpose.empty() ? request.objective->purpose : request.prompt;
-    const auto outcome = request.objective && !request.objective->desired_outcome.empty() ? request.objective->desired_outcome : request.prompt;
-    if (purpose.empty() || outcome.empty() || !bounded(purpose) || !bounded(outcome)) {
+    const auto & user_prompt = request.original_user_prompt ? *request.original_user_prompt : request.prompt;
+    const auto purpose = request.objective && !request.objective->purpose.empty() ? request.objective->purpose : user_prompt;
+    const auto outcome = request.objective && !request.objective->desired_outcome.empty() ? request.objective->desired_outcome : user_prompt;
+    if (purpose.empty() || outcome.empty() ||
+            (request.objective && (!bounded(purpose) || !bounded(outcome)))) {
         error = "agent objective requires bounded purpose and desired outcome";
         return false;
     }
@@ -950,6 +952,67 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_trace(result, common_runtime_trace_stage::observation, common_runtime_trace_kind::recorded,
             "memory supplied to runtime", {}, {}, {}, hit.memory.id);
     }
+    std::optional<common_plan_state> prior_parent;
+    std::vector<common_plan_state> prior_sources;
+    std::optional<common_plan_observation> inherited_review;
+    if (request.prior_work_checkpoint) {
+        const auto checkpoint = json::parse(request.prior_work_checkpoint->summary, nullptr, false);
+        common_plan_state identity;
+        identity.id = request.plan_id.value_or(std::string{});
+        identity.namespace_id = request.namespace_id; identity.session_id = request.session_id;
+        identity.project_id = request.project_id;
+        prior_parent = common_agent_resolve_prior_work(store, identity, checkpoint, error);
+        if (!prior_parent) { result.error = error; return result; }
+        prior_sources.push_back(*prior_parent);
+        for (size_t depth = 1; depth < 32; ++depth) {
+            const auto & source = prior_sources.back();
+            const auto link = std::find_if(source.observations.begin(), source.observations.end(),
+                [](const auto & item) { return item.source == "prior_work_checkpoint"; });
+            if (link == source.observations.end()) break;
+            const auto reference = json::parse(link->summary, nullptr, false);
+            const auto ancestor = store.get(reference.value("source_plan_id", std::string{}), error);
+            if (!ancestor || !error.empty()) { result.error=error; return result; }
+            prior_sources.push_back(*ancestor);
+        }
+        // Hydrate only a transient read view; all persisted source references
+        // below continue to name their actual owning plan and version.
+        for (size_t index = 1; index < prior_sources.size(); ++index)
+            *prior_parent = common_agent_prior_evidence_view(*prior_parent, prior_sources[index], request.prior_evidence_is_current);
+        const auto parent = std::make_shared<const common_plan_state>(*prior_parent);
+        const auto current = request.prior_evidence_is_current;
+        request.prior_evidence_view = [parent, current](const common_plan_state & candidate) {
+            return common_agent_prior_evidence_view(candidate, *parent, current);
+        };
+        if (checkpoint.value("schema", std::string{}) == "prior-work.v2" &&
+                request.blueprint_definition && request.blueprint_plan_id && request.plan_id && !request.plan_id->empty()) {
+            auto method = *request.blueprint_definition;
+            method.id = identity.id; method.namespace_id = identity.namespace_id;
+            method.session_id = identity.session_id; method.project_id = identity.project_id;
+            method.derived_from_plan_id = request.blueprint_plan_id;
+            method.observations.clear();
+            method.observations.push_back(common_plan_make_blueprint_outline(*request.blueprint_definition, method.id));
+            const auto inheritance = common_agent_method_inheritance(*parent, method, current);
+            auto progress = json::object();
+            for (const auto & item : inheritance["phases"].items()) {
+                auto evidence = json::array();
+                for (const auto & reference : item.value()["evidence_refs"]) evidence.push_back(reference["observation_id"]);
+                progress[item.key()] = {{"status", item.value()["status"]}, {"reason", item.value()["reason"]},
+                    {"evidence_ids", evidence}, {"evidence_refs", item.value()["evidence_refs"]}};
+            }
+            for (auto & phase : progress.items()) for (auto & reference : phase.value()["evidence_refs"]) {
+                for (const auto & owner : prior_sources) {
+                    if (std::any_of(owner.observations.begin(),owner.observations.end(),[&](const auto & item) {
+                            return item.id == reference["observation_id"].get<std::string>(); })) {
+                        reference["source_plan_id"]=owner.id; reference["source_plan_version"]=owner.version; break;
+                    }
+                }
+            }
+            if (!progress.empty()) inherited_review = common_plan_observation{
+                "inherited-method:" + parent->id + ":" + std::to_string(parent->version), "method_phase_review",
+                json{{"schema", "method-phase-review.v1"}, {"method_revision", method.source_revision},
+                    {"source_plan_id", parent->id}, {"source_plan_version", parent->version}, {"phases", progress}}.dump(), 0.0f};
+        }
+    }
     bool resumed_existing_plan = false;
     if (request.plan_id && !request.plan_id->empty()) {
         const auto existing = store.get(*request.plan_id, error);
@@ -990,6 +1053,22 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 planning_request.prompt += "\n[Host blueprint constraint " + constraint.id + "] " + constraint.description;
             for (const auto & assumption : method.assumptions)
                 planning_request.prompt += "\n[Blueprint assumption to examine; not a finding] " + assumption.statement;
+        }
+        if (inherited_review && request.blueprint_definition) {
+            auto method = *request.blueprint_definition;
+            method.id = request.plan_id.value_or(std::string{});
+            method.observations.clear();
+            method.observations.push_back(common_plan_make_blueprint_outline(*request.blueprint_definition, method.id));
+            method.observations.push_back(*inherited_review);
+            const auto ready = common_agent_method_ready_phases(method);
+            planning_request.prompt += common_agent_render_method_progress(method);
+            for (const auto & phase : ready)
+                planning_request.method_phase_choices.emplace_back(phase["handle"].get<std::string>(), phase["phase_id"].get<std::string>());
+            planning_request.prompt += "\nContinue from one of these dependency-ready phases, not the first blueprint phase: " + ready.dump();
+            common_plan_state evidence_identity;
+            evidence_identity.namespace_id=request.namespace_id; evidence_identity.session_id=request.session_id;
+            evidence_identity.project_id=request.project_id;
+            planning_request.prompt += common_plan_render_tool_observations(request.prior_evidence_view(evidence_identity), {4096});
         }
         auto proposal = planner.create_plan_result(planning_request, error);
         if (!error.empty()) { result.error = error; return result; }
@@ -1054,6 +1133,18 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
             proposal.plan.observations.push_back(common_plan_make_blueprint_outline(method, proposal.plan.id));
         }
+        if (inherited_review) {
+            if (std::none_of(planning_request.method_phase_choices.begin(), planning_request.method_phase_choices.end(),
+                    [&](const auto & choice) { return choice.second == proposal.selected_method_phase; })) {
+                result.error = "successor planner must select a dependency-ready inherited method phase"; return result;
+            }
+            proposal.plan.observations.push_back(*inherited_review);
+            for (auto & step : proposal.plan.steps) {
+                if (common_plan_step_effective_mode(step) == common_plan_step_mode::final_response) continue;
+                step.method_phase_id = proposal.selected_method_phase;
+                step.method_turn_id = request.turn_id;
+            }
+        }
         if (!store.create(proposal.plan, error)) { result.error = error; return result; }
         plan = proposal.plan;
         append_event(result, request, common_agent_event_type::plan_created, "plan created", {}, plan.id);
@@ -1073,6 +1164,53 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::plan, common_runtime_trace_kind::updated,
                 "initial plan operation applied", plan.id,
                 op.step_id.value_or(op.step ? op.step->id : std::string()));
+        }
+    }
+    if (inherited_review) {
+        const auto found = std::find_if(plan.observations.begin(), plan.observations.end(),
+            [&](const auto & observation) { return observation.id == inherited_review->id; });
+        if (found == plan.observations.end()) {
+            common_plan_operation operation; operation.kind=common_plan_operation_kind::record_observation;
+            operation.plan_id=plan.id; operation.expected_version=plan.version; operation.host_authorized=true;
+            operation.observation=*inherited_review;
+            operation.reason_summary="restore compatible method progress from validated predecessor evidence";
+            if (!store.apply(operation,plan,error)) { result.error=error; return result; }
+        }
+        append_trace(result,common_runtime_trace_stage::plan,common_runtime_trace_kind::updated,
+            "method inheritance source="+prior_parent->id+"; validated phases retained; executable steps not inherited",plan.id);
+    }
+    if (request.prior_work_checkpoint && plan.phase_review_required) {
+        std::vector<common_agent_method_phase_review> reopened;
+        for (auto observed=plan.observations.rbegin();observed!=plan.observations.rend();++observed) {
+            if (observed->source!="method_phase_review") continue;
+            const auto review=json::parse(observed->summary,nullptr,false);
+            if (!review.is_object() || !review.contains("phases") || !review["phases"].is_object()) break;
+            for (const auto & phase:review["phases"].items()) {
+                if (!phase.value().is_object() || !phase.value().contains("evidence_refs")) continue;
+                bool current=true;
+                for (const auto & reference:phase.value()["evidence_refs"]) {
+                    const auto source=common_agent_resolve_prior_observation(store,plan,
+                        json::parse(request.prior_work_checkpoint->summary,nullptr,false),reference,error);
+                    if (!source || !request.prior_evidence_is_current || !request.prior_evidence_is_current(*source)) {
+                        current=false; error.clear(); break;
+                    }
+                }
+                if (!current) reopened.push_back({phase.key(),"remaining",
+                    "Previously inspected source is changed, unavailable or lacks a current host validation",{}});
+            }
+            break;
+        }
+        if (!reopened.empty()) {
+            json progress;
+            if (!common_agent_method_review(plan,reopened,progress,error)) {result.error=error;return result;}
+            common_plan_operation operation;operation.kind=common_plan_operation_kind::record_observation;
+            operation.plan_id=plan.id;operation.expected_version=plan.version;operation.host_authorized=true;
+            operation.reason_summary="reopen inherited phases whose source validity changed";
+            operation.observation=common_plan_observation{"revalidate-method:"+std::to_string(plan.version),"method_phase_review",
+                json{{"schema","method-phase-review.v1"},{"method_revision",plan.source_revision},{"phases",progress}}.dump(),0.0f};
+            if (!store.apply(operation,plan,error)) {result.error=error;return result;}
+            append_trace(result,common_runtime_trace_stage::plan,common_runtime_trace_kind::updated,
+                "method inheritance reopened phases="+std::to_string(reopened.size()),plan.id);
         }
     }
     // Keep synthesis pending until host checks and any requested review have
@@ -1150,16 +1288,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         const auto & checkpoint=*request.prior_work_checkpoint;
         const auto value=json::parse(checkpoint.summary,nullptr,false);
         if(checkpoint.source!="prior_work_checkpoint" || !value.is_object() ||
-                value.value("schema",std::string{})!="prior-work.v1") {
+                (value.value("schema",std::string{})!="prior-work.v1" &&
+                 value.value("schema",std::string{})!="prior-work.v2")) {
             result.error="invalid host prior-work checkpoint";return result;
         }
-        const auto parent=store.get(value.value("source_plan_id",std::string{}),error);
-        if(!parent || !error.empty() || parent->namespace_id!=request.namespace_id ||
-                parent->session_id!=request.session_id || parent->project_id!=request.project_id ||
-                parent->id==plan.id || parent->version!=value.value("source_plan_version",uint64_t(0)) ||
-                value.value("evidence_fingerprint",std::string{})!=common_agent_synthesis_evidence_fingerprint(*parent)) {
-            result.error="prior-work checkpoint scope or source version changed";return result;
-        }
+        const auto parent = common_agent_resolve_prior_work(store, plan, value, error);
+        if (!parent) { result.error = error; return result; }
         const auto retained=std::find_if(plan.observations.begin(),plan.observations.end(),
             [&](const auto & item){return item.id==checkpoint.id;});
         if(retained!=plan.observations.end() && retained->summary!=checkpoint.summary) {
@@ -1744,14 +1878,32 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
     std::string last_complete_draft_evidence;
     common_agent_review_checklist checklist;
     bool unresolved_review = false;
+    bool local_review_found = false;
     for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
         if (item->source != "response_review") continue;
+        local_review_found = true;
         const auto review = json::parse(item->summary, nullptr, false);
         unresolved_review = !review.is_object() || review.value("accepted", json(false)) != true;
         if(review.is_object() && review.contains("checklist"))
             common_agent_review_checklist_from_json(review["checklist"],checklist);
         break;
     }
+    if (!local_review_found && request.prior_work_checkpoint) {
+        const auto checkpoint=json::parse(request.prior_work_checkpoint->summary,nullptr,false);
+        const auto previous=checkpoint.is_object()?checkpoint.value("review",json::object()):json::object();
+        if (previous.is_object() && previous.value("accepted",json(false))!=true && previous.contains("checklist")) {
+            if (!common_agent_review_checklist_from_json(previous["checklist"],checklist)) {
+                result.error="invalid inherited review checklist";return result;
+            }
+            // Retain unresolved needs, not prior acceptance of particular text
+            // or current validity of its evidence. The new review must ground
+            // any resolution in this turn's validated evidence view.
+            checklist.parts.clear();checklist.draft_fingerprint.clear();checklist.evidence_fingerprint.clear();
+            for (auto & issue:checklist.blocking) issue.evidence_ids.clear();
+            unresolved_review=true;
+        }
+    }
+    request.review_checklist=checklist;
     if(unresolved_review) for(const auto & issue:checklist.blocking)
         guidance.push_back(issue.correction.empty()?issue.description:issue.correction);
     const auto stop_unverified_response = [&](const std::string & reason,
@@ -3321,16 +3473,31 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             break;
         }
         common_agent_review_checklist next_checklist;
-        if(!common_agent_advance_review_checklist(checklist,reflection,plan,draft,next_checklist,error)) {
+        if(!common_agent_advance_review_checklist(checklist,reflection,request.prior_evidence_view ? request.prior_evidence_view(plan) : plan,draft,next_checklist,error)) {
             stop_unverified_response("invalid reflection checklist: "+error,common_agent_failure_class::validation);
             break;
         }
         if (plan.phase_review_required && !reflection.phase_reviews.empty()) {
             json phase_progress;
-            if (!common_agent_method_review(plan,reflection.phase_reviews,phase_progress,error)) { result.error=error;return result; }
+            if (!common_agent_method_review(request.prior_evidence_view ? request.prior_evidence_view(plan) : plan,reflection.phase_reviews,phase_progress,error)) { result.error=error;return result; }
+            for (auto & phase : phase_progress.items()) {
+                auto references=json::array();
+                for (const auto & id : phase.value().value("evidence_ids",json::array())) {
+                    if (!id.is_string()) continue;
+                    for (const auto & owner : prior_sources) {
+                        if (std::any_of(owner.observations.begin(),owner.observations.end(),[&](const auto & item) {
+                                return item.id==id.get<std::string>(); })) {
+                            references.push_back({{"source_plan_id",owner.id},{"source_plan_version",owner.version},{"observation_id",id}});
+                            break;
+                        }
+                    }
+                }
+                if (!references.empty()) phase.value()["evidence_refs"]=std::move(references);
+            }
             common_plan_operation observed;observed.kind=common_plan_operation_kind::record_observation;
             observed.plan_id=plan.id;observed.expected_version=plan.version;
             observed.reason_summary="host-validated model method phase decisions";
+            observed.host_authorized=true;
             observed.observation=common_plan_observation{"method-review:"+std::to_string(plan.version),"method_phase_review",
                 json{{"schema","method-phase-review.v1"},{"method_revision",plan.source_revision},
                     {"phases",phase_progress}}.dump(),0.0f};

@@ -1,4 +1,5 @@
 #include "agent/continuation-control.h"
+#include "agent/method-phases.h"
 #include "agent/synthesis-state.h"
 #include "plan/plan-context.h"
 #include "agent-plan-orchestration.h"
@@ -252,7 +253,7 @@ bool maybe_auto_select_plan(
                  child.status!=common_plan_status::completed)) continue;
         for(const auto & item:child.observations) if(item.source=="prior_work_checkpoint") {
             const auto link=nlohmann::ordered_json::parse(item.summary,nullptr,false);
-            if(link.is_object() && link.value("schema",nlohmann::ordered_json{})=="prior-work.v1" &&
+            if(link.is_object() && (link.value("schema",nlohmann::ordered_json{})=="prior-work.v1" || link.value("schema",nlohmann::ordered_json{})=="prior-work.v2") &&
                     link.contains("source_plan_id") && link["source_plan_id"].is_string())
                 linked_parents.insert(link["source_plan_id"].get<std::string>());
         }
@@ -310,10 +311,20 @@ bool maybe_auto_select_plan(
             if(successor_candidates.count(*selection_result.plan_id)) {
                 const auto selected=std::find_if(candidates.begin(),candidates.end(),[&](const auto & plan){
                     return plan.id==*selection_result.plan_id;});
-                nlohmann::ordered_json checkpoint{{"schema","prior-work.v1"},{"source_plan_id",selected->id},
+                nlohmann::ordered_json checkpoint{{"schema","prior-work.v2"},{"source_plan_id",selected->id},
                     {"source_plan_version",selected->version},{"goal",selected->goal},
                     {"context",common_plan_render_context(*selected,{8192,true})},
                     {"evidence_fingerprint",common_agent_synthesis_evidence_fingerprint(*selected)}};
+                checkpoint["method_progress"] = common_agent_render_method_progress(*selected);
+                checkpoint["method"] = {{"blueprint_id", selected->derived_from_plan_id.value_or(std::string{})},
+                    {"revision", selected->source_revision}, {"phase_review_required", selected->phase_review_required}};
+                for (const auto & observation : selected->observations) {
+                    if (observation.source == "blueprint_outline" || observation.source == "method_phase_review") {
+                        checkpoint["method"][observation.source] = {
+                            {"source_plan_id", selected->id}, {"source_plan_version", selected->version},
+                            {"observation_id", observation.id}};
+                    }
+                }
                 for(auto item=selected->observations.rbegin();item!=selected->observations.rend();++item) {
                     if(item->source!="response_review") continue;
                     checkpoint["review"]=nlohmann::ordered_json::parse(item->summary,nullptr,false);break;
@@ -498,7 +509,29 @@ bool maybe_select_agent_route(
     std::string selection_mode = "deterministic";
     float confidence = 1.0f;
     std::string reason;
-    if (context.config.agent_blueprint != "auto" && !host_orientation) {
+    if (context.config.agent_blueprint=="auto" && !host_orientation && context.prior_work_checkpoint && *context.prior_work_checkpoint) {
+        common_plan_state successor;successor.namespace_id=context.scope.namespace_id;
+        successor.session_id=context.scope.session_id;successor.project_id=context.scope.project_id;
+        const auto checkpoint=nlohmann::ordered_json::parse((*context.prior_work_checkpoint)->summary,nullptr,false);
+        const auto prior=common_agent_resolve_prior_work(context.plan_store,successor,checkpoint,error);
+        if (!prior) return false;
+        if (checkpoint.value("schema",std::string{})=="prior-work.v2" && prior->phase_review_required && prior->derived_from_plan_id) {
+            const auto matching=std::find_if(catalog.candidates.begin(),catalog.candidates.end(),[&](const auto & candidate) {
+                return candidate.kind==common_agent_route_kind::blueprint &&
+                    candidate.blueprint_persisted_id==*prior->derived_from_plan_id &&
+                    candidate.blueprint_revision==prior->source_revision;
+            });
+            if (matching!=catalog.candidates.end()) {
+                chosen=*matching;reason="continue the selected predecessor method under current route authority";
+                context.pre_turn_trace.push_back({common_runtime_trace_stage::plan,common_runtime_trace_kind::decided,
+                    "prior method retained before successor planning",prior->id});
+            } else context.pre_turn_trace.push_back({common_runtime_trace_stage::plan,common_runtime_trace_kind::decided,
+                "prior method is no longer compatible with the authorized route catalog; reselect without automatic phase inheritance",prior->id});
+        }
+    }
+    if (chosen) {
+        // The earlier model plan-selection decision already chose this work.
+    } else if (context.config.agent_blueprint != "auto" && !host_orientation) {
         const auto found = std::find_if(catalog.candidates.begin(), catalog.candidates.end(),
             [&](const auto & candidate) {
                 return !is_normal(candidate) && candidate.blueprint_logical_id == context.config.agent_blueprint;

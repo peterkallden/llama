@@ -96,7 +96,8 @@ public:
         const std::string & turn_id,
         int n_predict,
         common_agent_result & result,
-        std::string & error);
+        std::string & error,
+        const std::string * original_user_prompt = nullptr);
 
     void reset();
 

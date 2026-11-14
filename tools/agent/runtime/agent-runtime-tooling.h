@@ -13,6 +13,7 @@
 #include <vector>
 
 class agent_tool_view;
+struct common_plan_observation;
 struct common_agent_template_library_snapshot;
 
 struct common_agent_runtime_tooling {
@@ -46,6 +47,7 @@ struct common_agent_runtime_tooling {
     // Host-owned graph read, separately authorized from model tool calls.
     std::function<std::string(const common_agent_scope &, const std::string &, size_t, bool)> project_graph_context;
     std::vector<std::shared_ptr<void>> owned_resources;
+    std::function<bool(const common_plan_observation &)> prior_evidence_is_current;
     // Host-owned resource store used by controller-side bounded chunk planning.
     // Tool execution remains bound through the resolved tool view.
     agent_resource_runtime resource_runtime;

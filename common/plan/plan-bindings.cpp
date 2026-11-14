@@ -199,7 +199,10 @@ bool resolve_value(
         const auto step_id = value["$from_step"].get<std::string>();
         const auto pointer = value["$json_pointer"].get<std::string>();
         if (step_id.empty() || step_id.size() > 64 || pointer.size() > 256 || pointer.empty() || pointer.front() != '/') {
-            error = "tool argument binding is out of bounds";
+            error = "tool argument binding is out of bounds: source_id_bytes=" +
+                std::to_string(step_id.size()) + " (required 1..64), pointer_bytes=" +
+                std::to_string(pointer.size()) + " (required 1..256), absolute_pointer=" +
+                ((!pointer.empty() && pointer.front() == '/') ? "true" : "false");
             return false;
         }
         const auto * source_step = find_step(plan, step_id);

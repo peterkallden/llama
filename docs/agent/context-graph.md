@@ -68,7 +68,11 @@ the graph revision from a read as `expected_revision`. Descriptions are model
 proposals, not verified facts. The node ID does not change; prior descriptions
 are retained. The latest proposal participates in `graph.find` and bounded
 planning projection. Use `graph.get` with `description_offset` to page through
-description history. Existing nodes without descriptions remain valid.
+description history. Full tool responses include `text_bytes` and
+`text_complete: true`: its text is the complete literal stored value, not a
+preview. Description pagination selects records, not fragments of one text.
+The surrounding tool/context projection may still report omitted coverage.
+Existing nodes without descriptions remain valid.
 The current adapter still loads the bounded project graph before applying
 endpoint-kind and status filters; the indexes narrow candidate edges but do
 not yet eliminate that graph load.

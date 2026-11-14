@@ -1,6 +1,10 @@
 #include "agent/tooling/contracts/tool-budget.h"
 #include "agent/tooling/adapters/families/graph-adapters.h"
 #include "agent/investigation-context.h"
+#include "hash/hash.h"
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include "agent-cli-host-adapter.h"
 #include "../openapi/agent-openapi-http.h"
 #include "../openapi/agent-openapi-catalog.h"
@@ -32,6 +36,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <iterator>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -406,6 +411,32 @@ bool resolve_agent_host_tool_selection(
         const auto repository_root = request.repository_root.empty()
             ? resolved_tool_context.repository_root : request.repository_root;
         resolved_tool_context.repository_root = repository_root;
+        selection.tooling.prior_evidence_is_current = [repository_root](const common_plan_observation & observation) {
+            if (repository_root.empty() || (observation.source != "repository.read" && observation.source != "workspace.read")) return false;
+            const auto payload = nlohmann::ordered_json::parse(observation.summary, nullptr, false);
+            if (!payload.is_object() || payload.value("ok", nlohmann::ordered_json(false)) != true ||
+                    payload.value("result_truncated", nlohmann::ordered_json(false)) != false) return false;
+            const auto body = payload.value("result", nlohmann::ordered_json::object());
+            if (!body.is_object() || !body.contains("path") || !body["path"].is_string() ||
+                    !body.contains("sha256") || !body["sha256"].is_string()) return false;
+            std::error_code ec;
+            const auto root = std::filesystem::canonical(repository_root, ec);
+            if (ec) return false;
+            const std::filesystem::path relative(body["path"].get<std::string>());
+            if (relative.empty() || relative.is_absolute()) return false;
+            const auto path = std::filesystem::canonical(root / relative, ec);
+            if (ec) return false;
+            auto from = root.begin(), to = path.begin();
+            for (; from != root.end(); ++from, ++to) if (to == path.end() || *from != *to) return false;
+            if (!std::filesystem::is_regular_file(path, ec) || ec) return false;
+            const auto size = std::filesystem::file_size(path, ec);
+            if (ec || size > 64 * 1024 * 1024) return false;
+            std::ifstream input(path, std::ios::binary);
+            if (!input) return false;
+            const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+            return !input.bad() && bytes.size() == size &&
+                body["sha256"].get<std::string>() == "sha256:" + hash_sha256_hex(bytes.data(), bytes.size());
+        };
         if (!repository_root.empty()) {
             selection.tooling.available_context.push_back("context.repository.available");
         }

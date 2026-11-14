@@ -2203,3 +2203,10 @@ elseif (UNIX)
         USES_TERMINAL
     )
 endif()
+
+# Model-free continuation through the real runtime with deterministic inference.
+set(TARGET llama-agent-prior-work-smoke)
+add_executable(${TARGET} smoke/cli/agent-cli-prior-work-smoke.cpp)
+target_include_directories(${TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+target_link_libraries(${TARGET} PRIVATE llama-agent-runtime-support)
+target_compile_features(${TARGET} PRIVATE cxx_std_17)

@@ -26,8 +26,10 @@ bool evaluate_common_agent_reflection_phase(
         context.error = "invalid cognitive-mode transition into reflection";
         return false;
     }
+    const auto evidence_view = context.request.prior_evidence_view
+        ? context.request.prior_evidence_view(plan) : plan;
     reflection = context.reflector.evaluate_result(
-        context.request, plan, draft, context.error);
+        context.request, evidence_view, draft, context.error);
     if (reflection.generation) {
         context.result.generation_records.push_back(
             common_agent_generation_record_from_result(
@@ -282,11 +284,24 @@ static bool prepare_reflection_plan_repair_attempt(
         if (!method) request.prompt += "\n[Host repair request]\nPropose only the additional read operations needed to correct the evidence. "
             "Keep the selected route, source permissions and host argument bindings. "
             "Do not repeat writes or declare the previous response accepted.\n";
+        if (method) {
+            // The general plan projection is prefix-bounded and can omit the
+            // latest reasoning after several turns. Preserve its explicit
+            // unresolved work before projecting the older journal.
+            for (auto it=plan.observations.rbegin();it!=plan.observations.rend();++it) {
+                if (it->source!="reasoning") continue;
+                request.prompt += "\n[Latest model reasoning; interpretation, not execution evidence]\n"+
+                    common_plan_escape_context_text(it->summary.substr(0,4096));
+                if (it->summary.size()>4096) request.prompt += "\nprojection: truncated\n";
+                break;
+            }
+        }
         if (method) request.prompt += common_agent_render_method_progress(plan)+
             "\nThis is a method continuation, not a read-only answer repair. "
             "Plan only a bounded slice for one model-selected dependency-ready unresolved phase. "
             "Use normal family/tool selection within existing authority; a phase may use reasoning without tools. "
-            "Retain local/external evidence and do not repeat completed writes. "
+            "Retain local/external evidence and do not replay completed writes against unchanged inputs. "
+            "A supported correction to an inadequate persisted result is new work, not a replay. "
             "A failed verification remains failed until corrected and rerun with fresh source arguments. "
             "Never skip mandatory failed operations or invent a passed verification.\n"+
             common_plan_render_context(plan,{8192,true});
@@ -302,7 +317,8 @@ static bool prepare_reflection_plan_repair_attempt(
                 "Honor pagination and incomplete-coverage markers. Do not replay completed operations against unchanged inputs.\n";
         }
         for (const auto & guidance : reflection.revision_guidance) request.prompt += "Correction: " + guidance + "\n";
-        request.prompt += common_plan_render_tool_observations(plan, {2048});
+        const auto evidence_view = request.prior_evidence_view ? request.prior_evidence_view(plan) : plan;
+        request.prompt += common_plan_render_tool_observations(evidence_view, {2048});
         if (!previous_error.empty()) request.prompt +=
             "\n[Host rejected the previous continuation; it was not executed]\n"+previous_error.substr(0,1024)+
             "\nGenerate one complete corrected slice. Do not replay the rejected proposal. "
