@@ -13,6 +13,8 @@
 #include <filesystem>
 #include <utility>
 
+struct common_agent_model_selection;
+
 namespace {
 
 common_agent_model_load_key make_agent_model_load_key(
