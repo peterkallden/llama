@@ -60,6 +60,20 @@ jobs:
         with:
           ref: ${{ steps.source.outputs.commit_sha }}
 
+      - name: Provision LibXml2 with vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = 'C:\vcpkg'
+          if (-not (Test-Path (Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake'))) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg $vcpkgRoot
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $vcpkgRoot 'bootstrap-vcpkg.bat') -disableMetrics
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & (Join-Path $vcpkgRoot 'vcpkg.exe') install libxml2:x64-windows-static-md --disable-metrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File $env:GITHUB_ENV -Append
+
       - name: Provision Cozo C API
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,6 +125,7 @@ jobs:
             '-DLLAMA_TOOLS_INSTALL=OFF -DLLAMA_MEMORY_COZO=ON',
             '-DLLAMA_PLAN_COZO=ON -DLLAMA_AGENT_RUNTIME=ON',
             '-DLLAMA_AGENT_TOOLS_CLANG=ON -DLLAMA_SUBPROCESS=ON',
+            '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static-md',
             '-DCPACK_PACKAGE_NAME=llama-agent-cpu-windows-x64-dev',
             "-DCPACK_PACKAGE_VERSION=0.0.0.$env:GITHUB_RUN_NUMBER",
             "-DCPACK_PACKAGE_FILE_NAME=$packageName",

@@ -77,7 +77,11 @@ jobs:
             dpkg-dev \
             git \
             libssl-dev \
+            libcmark-gfm-dev \
+            libxml2-dev \
             ninja-build \
+            nodejs \
+            npm \
             pkg-config \
             python3 \
             zlib1g-dev
