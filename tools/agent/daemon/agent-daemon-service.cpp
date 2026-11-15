@@ -25,11 +25,11 @@ using json = nlohmann::ordered_json;
 namespace {
 
 bool prepare_research_workspace(common_agent_daemon_runtime & runtime, common_agent_runtime_session_host_turn_request & request, std::string & error) {
-    agent_research_host_resources resources{runtime.data_store, runtime.resource_store};
+    agent_research_host_resources resources{runtime.data_store.get(), runtime.resource_store.get()};
     return agent_prepare_research_workspace(resources, request, error);
 }
 bool persist_research_workspace(common_agent_daemon_runtime & runtime, const common_agent_runtime_session_host_turn_request & request, common_agent_runtime_session_host_turn_result & result, std::string & error, common_agent_research_draft_ref * advanced = nullptr, std::map<std::string, agent_resource_descriptor> * retained_cache = nullptr) {
-    agent_research_host_resources resources{runtime.data_store, runtime.resource_store};
+    agent_research_host_resources resources{runtime.data_store.get(), runtime.resource_store.get()};
     return agent_persist_research_workspace(resources, request, result, error, advanced, retained_cache);
 }
 

@@ -82,7 +82,11 @@ bool parse_investigation_time(const json & value, int64_t & out) {
     input >> std::get_time(&parsed, "%Y-%m-%dT%H:%M:%S");
     if (input.fail()) return false;
     const std::tm original = parsed;
+#ifdef _WIN32
+    const time_t seconds = _mkgmtime(&parsed);
+#else
     const time_t seconds = timegm(&parsed);
+#endif
     if (parsed.tm_year != original.tm_year || parsed.tm_mon != original.tm_mon || parsed.tm_mday != original.tm_mday ||
             parsed.tm_hour != original.tm_hour || parsed.tm_min != original.tm_min || parsed.tm_sec != original.tm_sec) return false;
     int64_t millis = static_cast<int64_t>(seconds) * 1000;
