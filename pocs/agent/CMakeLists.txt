@@ -1405,6 +1405,12 @@ set(AGENT_RUNTIME_TARGETS
     llama-agent-adaptation-admin
     llama-agent-web
 )
+# FetchContent's cmark-gfm install rules include its CLI executable in addition
+# to the libraries linked by the agent. Build it so a clean package install has
+# every installed target available.
+if (TARGET cmark-gfm)
+    list(APPEND AGENT_RUNTIME_TARGETS cmark-gfm)
+endif()
 
 set(AGENT_TEST_BUILD_TARGETS
     llama-agent-cli-document-table-smoke
