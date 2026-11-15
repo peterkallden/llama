@@ -98,7 +98,7 @@ public:
 class smoke_reflector final : public common_reflection_engine {
 public:
     common_reflection_result evaluate(
-            const common_agent_request &,
+            const common_agent_request & request,
             const common_plan_state &,
             const std::string &,
             std::string & error) override {
@@ -107,6 +107,7 @@ public:
         result.decision = common_reflection_decision::accept;
         result.ready_to_answer = true;
         result.confidence = 1.0f;
+        for (const auto & issue : request.review_checklist.blocking) result.resolved_issue_ids.push_back(issue.id);
         return result;
     }
 };
@@ -198,12 +199,13 @@ class bounded_review_reflector final : public common_reflection_engine {
 public:
     size_t calls = 0;
     bool accept_rewrite = false;
-    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &,
+    common_reflection_result evaluate(const common_agent_request & request, const common_plan_state &,
             const std::string &, std::string & error) override {
         error.clear();
         common_reflection_result result;
         if (calls++ > 0 && accept_rewrite) {
             result.ready_to_answer = true;
+            for (const auto & issue : request.review_checklist.blocking) result.resolved_issue_ids.push_back(issue.id);
             return result;
         }
         result.decision = common_reflection_decision::revise;

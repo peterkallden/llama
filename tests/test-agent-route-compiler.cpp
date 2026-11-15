@@ -1026,10 +1026,13 @@ int main() {
     // tools neither gate selection nor become authorized by the template.
     std::vector<common_blueprint_candidate> development_candidates;
     for (const auto & id : installed.installed_blueprint_ids) {
-        if (id.find(":blueprint:repository-change-v5") == std::string::npos &&
-                id.find(":blueprint:regression-repair-v5") == std::string::npos &&
-                id.find(":blueprint:development-compile-diagnosis-v2") == std::string::npos &&
-                id.find(":blueprint:development-runtime-diagnosis-v2") == std::string::npos) continue;
+        const auto matches_suffix = [&](const std::string & suffix) {
+            return id.size() >= suffix.size() && id.compare(id.size() - suffix.size(), suffix.size(), suffix) == 0;
+        };
+        if (!matches_suffix(":blueprint:repository-change-v5") &&
+                !matches_suffix(":blueprint:regression-repair-v5") &&
+                !matches_suffix(":blueprint:development-compile-diagnosis-v2") &&
+                !matches_suffix(":blueprint:development-runtime-diagnosis-v2")) continue;
         common_blueprint_candidate candidate;
         candidate.logical_id = id;
         candidate.persisted_id = id;

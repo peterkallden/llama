@@ -359,6 +359,7 @@ void review_contracts() {
     const auto accepted = [] {
         common_reflection_result review;
         review.ready_to_answer = true;
+        review.resolved_issue_ids = {"review-1-1"};
         return review;
     };
     fixture exhausted;

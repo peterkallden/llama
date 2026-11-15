@@ -180,6 +180,10 @@ bool common_flydelta_propose_calibrated_coefficients(
     if (requested_fractions) requested_fractions->clear();
     if (config.experimental_dose_mode == common_flydelta_coefficient_dose_mode::raw_coefficients)
         return common_flydelta_propose_low_rank_coefficients(config, basis.vectors.size(), proposals, error);
+    if (config.strategy != common_flydelta_coefficient_search_strategy::coordinate) {
+        error = "FlyDelta calibrated coefficient proposals require coordinate strategy; TFO-lite owns its proposal generation";
+        return false;
+    }
     if (!common_flydelta_coefficient_detail::validate_dose_calibration(fixture, basis, config, error)) return false;
     std::vector<std::vector<float>> directions;
     auto stencil_config = config;

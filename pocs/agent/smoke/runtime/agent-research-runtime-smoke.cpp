@@ -271,7 +271,7 @@ class late_research_reflector final : public common_reflection_engine {
 public:
     int calls = 0;
 
-    common_reflection_result evaluate(const common_agent_request &, const common_plan_state &,
+    common_reflection_result evaluate(const common_agent_request & request, const common_plan_state &,
             const std::string &, std::string & error) override {
         error.clear();
         ++calls;
@@ -284,6 +284,7 @@ public:
         }
         result.decision = common_reflection_decision::accept;
         result.ready_to_answer = true;
+        for (const auto & issue : request.review_checklist.blocking) result.resolved_issue_ids.push_back(issue.id);
         return result;
     }
 };

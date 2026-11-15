@@ -5,6 +5,7 @@
 #include "test-tool-runtime-registry-adapter.h"
 
 #include <cassert>
+#include <cstdio>
 
 class planner final : public common_planner {
 public:
@@ -86,6 +87,8 @@ int main() {
     request.max_tool_batches = 1;
     const auto result = runtime.run(request);
     assert(result.response.empty());
+    if (result.error != "final synthesis is blocked by an unrepaired failed tool step: fetch")
+        std::fprintf(stderr, "Unexpected failure result: %s\n", result.error.c_str());
     assert(result.error == "final synthesis is blocked by an unrepaired failed tool step: fetch");
     assert(adaptation.called);
     const auto plan = store.get("tool-failure", error);

@@ -576,8 +576,8 @@ int main() {
     (*search_json)["transitions"][0]["max_pages"] = uint64_t(4294967301ULL);
     assert(!common_agent_package_parse_json(
         over_budget_package_json.dump(), over_budget_package, error));
-    assert(checked_in_starter.procedures.size() == 35 &&
-        checked_in_starter.blueprints.size() == 24);
+    assert(checked_in_starter.procedures.size() == 36 &&
+        checked_in_starter.blueprints.size() == 27);
     assert(checked_in_starter.workflows.size() == 20);
     const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
         checked_in_starter.blueprints.end(), [](const auto & blueprint) {

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <nlohmann/json.hpp>
 
 class planner final : public common_planner {
 public:
@@ -343,7 +344,7 @@ public:
 class revise_completed_step_reflector final : public common_reflection_engine {
 public:
     int calls = 0;
-    common_reflection_result evaluate(const common_agent_request &, const common_plan_state & plan,
+    common_reflection_result evaluate(const common_agent_request & request, const common_plan_state & plan,
             const std::string &, std::string & error) override {
         error.clear();
         common_reflection_result result;
@@ -365,6 +366,8 @@ public:
             result.decision = common_reflection_decision::accept;
             result.next_action = common_agent_reflection_next_action::accept;
             result.ready_to_answer = true;
+            for (const auto & issue : request.review_checklist.blocking)
+                result.resolved_issue_ids.push_back(issue.id);
         }
         return result;
     }
@@ -731,9 +734,12 @@ int main() {
     assert(failed_tool_run.failures.front().code == "tool.lookup.not_found");
     assert(failed_tool_run.failures.front().classification == common_agent_failure_class::not_found);
     const auto failed_plan = failure_store.get("turn-1", error);
-    assert(failed_plan && failed_plan->observations.size() == 1);
+    assert(failed_plan && failed_plan->observations.size() == 2);
     assert(failed_plan->observations.front().summary.find("tool.lookup.not_found") != std::string::npos);
     assert(failed_plan->observations.front().summary.find("\"failure\"") != std::string::npos);
+    const auto rejected_accept = nlohmann::ordered_json::parse(failed_plan->observations.back().summary);
+    assert(rejected_accept.value("accepted", true) == false);
+    assert(rejected_accept.value("action", std::string{}) == "accept");
 
     // Resuming a failed plan must reach reflection's bounded repair path. The
     // dependency scheduler has no ready pending step in this state, but that

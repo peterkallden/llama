@@ -8,6 +8,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstdio>
 #include <deque>
 #include <functional>
 #include <thread>
@@ -21,6 +22,14 @@ struct queued_generation {
     common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::none;
     int decoded_tokens = 0;
 };
+
+// These cases exercise the plan driver's continuation rather than the
+// tool-free chat driver. The fake catalog is never executed by this smoke.
+common_agent_runtime_tooling plan_driver_tooling() {
+    common_agent_runtime_tooling tooling;
+    tooling.tools.push_back({"fixture.read", "Read fixture data", R"({"type":"object","properties":{}})"});
+    return tooling;
+}
 
 class fake_inference final : public common_agent_inference {
 public:
@@ -103,7 +112,7 @@ void test_continuation_is_consumed_in_same_driver_operation() {
 
     const std::vector<common_blueprint_candidate> blueprints;
     const std::vector<common_memory_hit> hits;
-    const common_agent_runtime_tooling tooling;
+    const common_agent_runtime_tooling tooling = plan_driver_tooling();
     std::string current_plan_id;
     common_agent_runtime_config runtime_config;
     runtime_config.generation_config.n_predict = 64;
@@ -116,6 +125,8 @@ void test_continuation_is_consumed_in_same_driver_operation() {
     assert(run_agent_runtime_driver(execution, result, error));
     assert(error.empty());
     assert(result.error.empty());
+    if (result.response != "first slice\nsecond slice")
+        std::fprintf(stderr, "Unexpected continuation response: %s\n", result.response.c_str());
     assert(result.response == "first slice\nsecond slice");
     assert(result.response_stop_reason == common_agent_generation_stop_reason::none);
     assert(!result.continuation_checkpoint);
@@ -151,7 +162,7 @@ void test_continuation_budget_emits_checkpoint() {
     scope.plan_scope = common_plan_scope::turn;
     const std::vector<common_blueprint_candidate> blueprints;
     const std::vector<common_memory_hit> hits;
-    const common_agent_runtime_tooling tooling;
+    const common_agent_runtime_tooling tooling = plan_driver_tooling();
     std::string current_plan_id;
     common_agent_runtime_config runtime_config;
     runtime_config.generation_config.n_predict = 64;
@@ -287,7 +298,7 @@ void test_cancellation_stops_before_next_continuation_slice() {
     scope.plan_scope = common_plan_scope::turn;
     const std::vector<common_blueprint_candidate> blueprints;
     const std::vector<common_memory_hit> hits;
-    const common_agent_runtime_tooling tooling;
+    const common_agent_runtime_tooling tooling = plan_driver_tooling();
     std::string current_plan_id;
     common_agent_runtime_config runtime_config;
     runtime_config.generation_config.n_predict = 64;
@@ -334,7 +345,7 @@ void test_deadline_stops_before_next_continuation_slice() {
     scope.plan_scope = common_plan_scope::turn;
     const std::vector<common_blueprint_candidate> blueprints;
     const std::vector<common_memory_hit> hits;
-    const common_agent_runtime_tooling tooling;
+    const common_agent_runtime_tooling tooling = plan_driver_tooling();
     std::string current_plan_id;
     common_agent_runtime_config runtime_config;
     runtime_config.generation_config.n_predict = 64;
@@ -401,7 +412,7 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     scope.plan_scope = common_plan_scope::turn;
     const std::vector<common_blueprint_candidate> blueprints;
     const std::vector<common_memory_hit> hits;
-    const common_agent_runtime_tooling tooling;
+    const common_agent_runtime_tooling tooling = plan_driver_tooling();
     std::string current_plan_id;
     common_agent_runtime_config runtime_config;
     runtime_config.generation_config.n_predict = 64;

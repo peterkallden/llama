@@ -44,7 +44,8 @@ static int fake_clangd() {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             send(agent_clangd_notification("$/progress", {{"token", "index"}, {"value", {{"kind", "end"}}}}));
             send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", agent_clangd_json::array()}});
-        } else if (method == "textDocument/references" || method == "textDocument/prepareCallHierarchy")
+        } else if (method == "textDocument/references" || method == "textDocument/prepareCallHierarchy" ||
+                method == "textDocument/documentSymbol")
             send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", agent_clangd_json::array()}});
         else if (method == "shutdown") send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", nullptr}});
         else if (method == "exit") return 0;
@@ -82,7 +83,10 @@ int main(int argc, char ** argv) {
         bool success = false;
         std::thread worker([&] { agent_clangd_json reply; std::string failure; success = fake.request("workspace/symbol", {{"query", "test"}}, reply, failure); });
         bool observed = false;
-        for (int i = 0; i < 100; ++i) {
+        // The test executable also serves as clangd and starts under the same
+        // sanitizer instrumentation. Allow process startup before asserting on
+        // the progress notification rather than assuming it fits in 500 ms.
+        for (int i = 0; i < 1000; ++i) {
             if (fake.status_snapshot()["index_activity"] == "active") { observed = true; break; }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }

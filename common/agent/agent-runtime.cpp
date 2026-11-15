@@ -2888,7 +2888,6 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                             plan.workflow_definition->continuation_links.size()),
                     plan.id, tool_step_id, tool_call->name, observed.observation->id);
             }
-            if (yield_workflow_handoff(*observed.observation, tool_step_id, tool_call->name)) return result;
             if (plan.workflow_definition &&
                     plan.workflow_definition->resource_read_policy ==
                         common_plan_workflow_resource_read_policy::chunked &&
@@ -2908,6 +2907,12 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     execution.resource_refs.front().uri);
                 return result;
             }
+            // A workflow may declare a continuation for one terminal state
+            // while another terminal state still needs host-side resource
+            // processing. Let chunked reads reach that processor first; the
+            // continuation resolver then decides whether this exact terminal
+            // observation has an applicable route.
+            if (yield_workflow_handoff(*observed.observation, tool_step_id, tool_call->name)) return result;
         }
 
         if (!common_agent_refresh_investigation_context(request, &plan, error)) {
@@ -2916,7 +2921,23 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             break;
         }
         if (tool_budget_blocks_work) {
-            stop_unverified_response("tool execution budget exhausted; pending work remains saved");
+            if (request.require_tool_execution && !plan_has_completed_tool_step(plan)) {
+                stop_unverified_response("required tool execution budget exhausted; pending work remains saved");
+            } else {
+                // Reaching a configured work cap is a resumable pause, not an
+                // execution failure. Keep the plan and surface the limit via
+                // the normal result/trace fields without synthesizing a draft.
+                result.response.clear();
+                result.plan_id = plan.id;
+                result.plan_version = plan.version;
+                result.limit_reached = true;
+                result.response_generation_status = common_agent_generation_status::completed;
+                result.response_stop_reason = common_agent_generation_stop_reason::limit;
+                append_trace(result, common_runtime_trace_stage::tool,
+                    common_runtime_trace_kind::decided,
+                    "tool execution budget exhausted; pending work remains saved",
+                    plan.id);
+            }
             break;
         }
 
@@ -3629,6 +3650,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // policy; ordinary repairs still consume the remaining review budget.
         if (!review_accepted && reflection_review_count >= request.max_reflection_rounds &&
                 reflection.next_action != common_agent_reflection_next_action::revise_plan) {
+            if (block_unrepaired_tool_failure()) break;
             stop_unverified_response("response rejected; no review budget remains for a repaired answer");
             break;
         }

@@ -206,7 +206,7 @@ int main() {
     tooling.tools[1].item_lookup_parameter = "id";
     inputs.tool_output_format = common_agent_tool_output_format::native;
     selection_inference model;
-    model.replies = {R"({"sources":["OpenAlex"]})", "TOOLS: openalex", R"("openalex.listWorks")", R"({"tool":"openalex.listWorks","args":{"search":"urban cooling"}})"};
+    model.replies = {R"({"sources":[{"quote":"OpenAlex","source_id":"openalex"}]})", "TOOLS: openalex", R"("openalex.listWorks")", R"({"tool":"openalex.listWorks","args":{"search":"urban cooling"}})"};
     auto selection_execution = make_agent_runtime_driver_execution(inputs, model);
     const auto selection_request = make_agent_runtime_driver_request(selection_execution);
     common_agent_research_workspace research;
@@ -268,7 +268,7 @@ int main() {
         "model comparison was not normalized");
 
     selection_inference multiple_model;
-    multiple_model.replies = {R"({"sources":["OpenAlex","web"]})",
+    multiple_model.replies = {R"({"sources":[{"quote":"OpenAlex","source_id":"openalex"},{"quote":"web","source_id":"web"}]})",
         "TOOLS: openalex", R"("openalex.listWorks")",
         R"({"tool":"openalex.listWorks","args":{"search":"urban cooling"}})"};
     auto multiple_inputs = inputs;
@@ -279,7 +279,7 @@ int main() {
         call->name == "openalex.listWorks", "multiple explicit sources were not accepted");
 
     selection_inference invented_model;
-    invented_model.replies = {R"({"sources":["OpenAlex"]})", "TOOLS: openalex", R"("openalex.getWork")",
+    invented_model.replies = {R"({"sources":[{"quote":"OpenAlex","source_id":"openalex"}]})", "TOOLS: openalex", R"("openalex.getWork")",
         R"({"tool":"openalex.getWork","args":{"id":"W999"}})",
         R"({"tool":"openalex.listWorks","args":{"search":"urban cooling"}})"};
     auto invented_execution = make_agent_runtime_driver_execution(inputs, invented_model);
@@ -290,7 +290,7 @@ int main() {
         call && call->name == "openalex.listWorks", "invented identifier did not lead to a search");
 
     selection_inference observed_model;
-    observed_model.replies = {R"({"sources":["OpenAlex"]})", "TOOLS: openalex", R"("openalex.getWork")",
+    observed_model.replies = {R"({"sources":[{"quote":"OpenAlex","source_id":"openalex"}]})", "TOOLS: openalex", R"("openalex.getWork")",
         R"({"tool":"openalex.getWork","args":{"id":"W123"}})"};
     auto observed_execution = make_agent_runtime_driver_execution(inputs, observed_model);
     const auto observed_request = make_agent_runtime_driver_request(observed_execution);
@@ -304,7 +304,7 @@ int main() {
         call && call->name == "openalex.getWork", "observed candidate was not available for lookup");
 
     selection_inference declining_model;
-    declining_model.replies = {R"({"sources":["OpenAlex"]})", "NO_TOOLS",
+    declining_model.replies = {R"({"sources":[{"quote":"OpenAlex","source_id":"openalex"}]})", "NO_TOOLS",
         R"({"decision":"clarify","message":"Which aspect should I investigate?"})"};
     auto declining_execution = make_agent_runtime_driver_execution(inputs, declining_model);
     const auto declining_request = make_agent_runtime_driver_request(declining_execution);
@@ -312,7 +312,7 @@ int main() {
         decision_message.find("Which aspect") != std::string::npos,
         "research cannot stop without selecting a tool");
     selection_inference unavailable_model;
-    unavailable_model.replies = {R"({"sources":["missing-provider"]})"};
+    unavailable_model.replies = {R"({"sources":[{"quote":"missing-provider","source_id":""}]})"};
     auto unavailable_inputs = inputs;
     unavailable_inputs.orchestration_config.prompt = "Search missing-provider for urban cooling";
     auto unavailable_execution = make_agent_runtime_driver_execution(unavailable_inputs, unavailable_model);
@@ -329,8 +329,8 @@ int main() {
     auto followup_inputs = inputs;
     followup_inputs.orchestration_config.prompt = "Use web for the follow-up search";
     selection_inference followup_model;
-    followup_model.replies = {R"({"sources":["web"]})",
-        "TOOLS: web", R"({"tool":"web.search","args":{"query":"urban cooling"}})"};
+    followup_model.replies = {R"({"sources":[{"quote":"web","source_id":"web"}]})",
+        "TOOLS: web", R"("web.search")", R"({"tool":"web.search","args":{"query":"urban cooling"}})"};
     auto followup_execution = make_agent_runtime_driver_execution(followup_inputs, followup_model);
     const auto followup_request = make_agent_runtime_driver_request(followup_execution);
     require(followup_request.research_select_tool(action, research, runtime, nullptr, {}, call, decision_message, error) &&
@@ -340,19 +340,21 @@ int main() {
 
     // A generated gap must not turn a provider name into a user constraint.
     selection_inference generated_gap_model;
-    generated_gap_model.replies = {R"({"sources":["missing-provider"]})"};
+    generated_gap_model.replies = {R"({"sources":[{"quote":"missing-provider","source_id":"web"}]})",
+        R"({"sources":[{"quote":"missing-provider","source_id":"web"}]})"};
     auto generated_gap_execution = make_agent_runtime_driver_execution(inputs, generated_gap_model);
     const auto generated_gap_request = make_agent_runtime_driver_request(generated_gap_execution);
     require(!generated_gap_request.research_select_tool(unavailable_action, unavailable_research, runtime, nullptr, {}, call, decision_message, error) &&
-        error.find("not grounded in the user request") != std::string::npos,
+        error.find("grounded user quote") != std::string::npos,
         "a generated gap was promoted into a user-named source");
 
     selection_inference substituted_model;
-    substituted_model.replies = {R"({"sources":["web"]})"};
+    substituted_model.replies = {R"({"sources":[{"quote":"web","source_id":"web"}]})",
+        R"({"sources":[{"quote":"web","source_id":"web"}]})"};
     auto substituted_execution = make_agent_runtime_driver_execution(inputs, substituted_model);
     const auto substituted_request = make_agent_runtime_driver_request(substituted_execution);
     require(!substituted_request.research_select_tool(action, research, runtime, nullptr, {}, call, decision_message, error) &&
-        error.find("not grounded") != std::string::npos,
+        error.find("grounded user quote") != std::string::npos,
         "a model-selected alternative was silently treated as the named source");
     return 0;
 }

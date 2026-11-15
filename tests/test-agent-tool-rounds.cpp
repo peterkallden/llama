@@ -618,8 +618,11 @@ int main() {
     auto closed_plan = closed_store.get("two-rounds", error);
     assert(closed_plan && closed_plan->status == common_plan_status::active);
     assert(!common_plan_tool_execution_closed(*closed_plan));
-    assert(closed_plan->steps.size() == 4);
-    assert(closed_plan->steps.back().id == "rediscovery");
+    assert(closed_result.error == "continuation tool budget is insufficient for the proposed slice");
+    // The exhausted turn cannot admit a newly proposed tool call. Keep the
+    // original plan resumable rather than persisting over-budget work.
+    assert(closed_plan->steps.size() == 3);
+    assert(closed_plan->steps.back().id == "answer");
     assert(closed_plan->steps.back().status != common_plan_step_status::completed);
     assert(lookup_calls == calls_before_replan + 2);
 

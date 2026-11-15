@@ -90,7 +90,10 @@ json common_agent_synthesis_state_json(const common_agent_synthesis_state & stat
         {"evidence_fingerprint",state.evidence_fingerprint}};
 }
 std::string common_agent_render_synthesis_state(const common_agent_synthesis_state & state,const std::string & phase) {
-    auto value=common_agent_synthesis_state_json(state); value["phase"]=phase;
+    auto value=common_agent_synthesis_state_json(state);
+    // Storage identity and fingerprints are host bookkeeping, not model-facing evidence.
+    value.erase("plan_id"); value.erase("plan_version"); value.erase("evidence_fingerprint");
+    value["phase"]=phase;
     return "\n[Host execution and answer contract]\n"+value.dump()+
         "\nThe work field reports scheduled plan-step execution, not satisfaction of the user's full task. "
         "Review the requested outcome separately; additional authorized inspection or operations require plan repair. "

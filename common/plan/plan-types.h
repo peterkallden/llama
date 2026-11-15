@@ -96,7 +96,11 @@ inline bool common_plan_chunk_observations_valid(
         }
         const auto prior = std::find_if(indexes.begin(), indexes.end(), [&](const auto & item) { return item.index == lineage.chunk_index; });
         if (prior != indexes.end()) {
-            if (!prior->unresolved || prior->offset != lineage.byte_offset || prior->length != lineage.byte_length ||
+            if (!prior->unresolved) {
+                error = "resource_chunk observations must not contain duplicate chunk indexes";
+                return false;
+            }
+            if (prior->offset != lineage.byte_offset || prior->length != lineage.byte_length ||
                     prior->overlap != lineage.overlap_bytes) {
                 error = "resource_chunk retry must match an unresolved chunk range"; return false;
             }

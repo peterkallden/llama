@@ -75,7 +75,8 @@ jobs:
         working-directory: examples/llama.android
         run: >-
           ./gradlew :app:assembleDebug :lib:assembleRelease
-          :lib:testDebugUnitTest --no-daemon --max-workers=3
+          :lib:testDebugUnitTest --no-daemon --max-workers=3 --stacktrace ||
+          { df -h; df -i; exit 1; }
 
       - name: Verify Android CPU and Vulkan backends
         run: |
@@ -165,8 +166,9 @@ jobs:
     name: Smoke test native SQLite storage (Android)
     runs-on: ubuntu-24.04
     # This job performs a complete native/Gradle build before starting the
-    # emulator. Keep enough wall-clock budget for both phases on a cold runner.
-    timeout-minutes: 60
+    # emulator. Cold builds have consumed most of a 60-minute job before
+    # instrumentation starts; leave room for that run and its bounded retry.
+    timeout-minutes: 90
 
     steps:
       - name: Checkout

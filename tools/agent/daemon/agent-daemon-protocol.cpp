@@ -400,7 +400,8 @@ bool parse_agent_daemon_command_name(
             payload.limits.max_retries = limits.value("max_retries", payload.limits.max_retries);
             payload.limits.max_generated_tokens = limits.value("max_generated_tokens", payload.limits.max_generated_tokens);
         }
-        if (payload.candidate_id.empty() && command_name != "flydelta.get_binding") {
+        if (payload.candidate_id.empty() && command_name != "flydelta.get_binding" &&
+                command_name != "flydelta.admit_concept") {
             error = command_name + " requires candidate_id";
             return false;
         }

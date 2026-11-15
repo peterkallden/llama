@@ -1427,6 +1427,8 @@ set(AGENT_TEST_BUILD_TARGETS
     llama-agent-flydelta-repair-echo-replay-smoke
     llama-agent-resident-smoke
     llama-agent-model-residency-smoke
+    llama-agent-http-inference-smoke
+    llama-agent-semi-oracle-target-hunt-smoke
     llama-agent-two-model-smoke
     llama-agent-tool-provider-smoke
     llama-agent-tool-runtime-smoke
@@ -2157,6 +2159,47 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
     llama-agent-openapi-catalog-smoke
     llama-agent-openapi-provider-smoke
     llama-agent-openapi-http-smoke
+)
+# The CTest label below includes these contracts, so the build-pack must build
+# their executables before CTest runs. Keep this list in sync with the agent
+# CTest registrations rather than relying on binaries left in a reused build.
+list(APPEND AGENT_TEST_PACK_CTEST_TARGETS
+    test-agent-artifact
+    test-agent-artifact-sources
+    test-agent-chat-routing
+    test-agent-context-allocation
+    test-agent-context-config
+    test-agent-continuation-control
+    test-agent-daemon-tool-events
+    test-agent-dsl-grammar
+    test-agent-flexible-workflow
+    test-agent-flydelta-guidance-qualification
+    test-agent-flydelta-outcome-guidance
+    test-agent-flydelta-positive-integration
+    test-agent-flydelta-progress-anchor-adviser
+    test-agent-flydelta-state-codec
+    test-agent-investigation-config
+    test-agent-investigation-context
+    test-agent-investigation-contract
+    test-agent-investigation-http
+    test-agent-mcp-app-bridge
+    test-agent-method-phases
+    test-agent-openapi-provider
+    test-agent-planner-orchestration
+    test-agent-project-file-watch
+    test-agent-research-driver
+    test-agent-resource-catalog-cozo
+    test-agent-resource-read-binding
+    test-agent-resource-retention
+    test-agent-response-protocol
+    test-agent-synthesis-state
+    test-agent-template-library
+    test-agent-template-library-store
+    test-agent-visualization-contract
+    test-agent-visualization-tool
+    test-agent-web-presentation
+    test-agent-workflow-grounding
+    test-agent-workflow-recovery
 )
 set(AGENT_TEST_PACK_AVAILABLE_TARGETS)
 foreach(TARGET ${AGENT_TEST_PACK_CTEST_TARGETS})

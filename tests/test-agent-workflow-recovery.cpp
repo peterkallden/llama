@@ -197,8 +197,12 @@ public:
         } else if (request.purpose == common_agent_generation_purpose::draft) {
             ++draft_calls;
             check(view.lookups.size() == (view.singleton ? 1u : 2u), "draft bypassed required candidate recovery");
-            if (!view.second_blocked && !view.singleton)
-                check(view.inspections && view.reads && extraction_calls > 1, "draft preceded chunked full-text analysis");
+            if (!view.second_blocked && !view.singleton) {
+                check(view.inspections && view.reads && extraction_calls > 1,
+                    "draft preceded chunked full-text analysis (inspections=" + std::to_string(view.inspections) +
+                    ", reads=" + std::to_string(view.reads) + ", extractions=" + std::to_string(extraction_calls) +
+                    ", source_bytes=" + std::to_string(view.full_text.size_bytes) + ")");
+            }
             result.content = view.second_blocked || view.singleton ? "Abstract evidence retained; full-text attempts were blocked." :
                 "The second work was read and analyzed from the retrieved full text.";
         } else throw std::runtime_error("unexpected inference purpose in workflow recovery contract");
