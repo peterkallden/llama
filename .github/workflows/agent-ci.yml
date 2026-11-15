@@ -172,7 +172,7 @@ jobs:
           # filename used at link time in DT_NEEDED. Preserve that exact
           # runtime name as well as the stable package alias.
           cozo_runtime_name="$(readelf -d agent-package/lib/libllama-agent-storage-cozo.so \
-            | awk '/NEEDED/ && /libcozo_c/ { gsub(/^.*\\[/, ""); gsub(/\\].*$/, ""); print; exit }')"
+            | awk -F'[][]' '/NEEDED/ && /libcozo_c/ { print $2; exit }')"
           [[ "$cozo_runtime_name" == libcozo_c* ]] || {
             echo "Could not determine Cozo runtime library name" >&2
             exit 1
