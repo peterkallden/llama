@@ -489,8 +489,9 @@ int main() {
         limited_request.enable_reflection = false;
         limited_request.max_iterations = 6;
         const auto outcome = limited_runtime.run(limited_request);
-        assert(outcome.response.empty() && outcome.limit_reached && limited_executor.calls == 1);
-        assert(outcome.error.find("output limit") != std::string::npos);
+        assert(outcome.error.empty() && outcome.response == "unfinished" && outcome.limit_reached && limited_executor.calls == 1);
+        assert(outcome.response_generation_status == common_agent_generation_status::completed);
+        assert(outcome.response_stop_reason == common_agent_generation_stop_reason::limit);
     }
 
     {
