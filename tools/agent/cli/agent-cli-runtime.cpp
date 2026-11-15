@@ -1576,14 +1576,7 @@ public:
                                 false,
                                 true) &&
                             apply_planner_host_argument_bindings(
-                                request, bounded_operations, bounded.plan, bounded_json_error) &&
-                            validate_planner_tool_arguments(
-                                request, bounded_operations,
-                                tool_definitions,
-                                &repair_target,
-                                bounded_json_error,
-                                true,
-                                false);
+                                request, bounded_operations, bounded.plan, bounded_json_error);
                         if (bounded_valid) {
                             bounded.operations = std::move(bounded_operations);
                             if (request.require_tool_execution) {
@@ -2113,20 +2106,10 @@ public:
                         if (!unknown_tool.empty()) parse_error += "; unknown tool: " + unknown_tool;
                     }
                 }
-                if (parsed) {
-                    // The host may own fields that are not part of the
-                    // model-facing schema. At this point only enforce the
-                    // required-field contract against the completed args.
-                    planner_argument_repair_target detected_repair;
-                    parsed = validate_planner_tool_arguments(
-                        request, candidate_operations, tool_definitions, &detected_repair,
-                        parse_error, true, false);
-                    if (!parsed && !detected_repair.tool_name.empty() &&
-                            !attempted_argument_repairs.count(detected_repair.step_index)) {
-                        detected_repair.candidate_plan_json = normalized_candidate;
-                        pending_argument_repair = std::move(detected_repair);
-                    }
-                }
+                // Model arguments were validated before host binding above.
+                // Binding can replace model handles (id) with execution fields
+                // (uri); never validate that execution IR against the model
+                // schema again. The tool registry validates execution inputs.
                 if (generation_config.agent_trace) {
                     trace_planner_candidate(candidate, request.tool_output_format, attempt, parsed, parse_error);
                 }

@@ -555,7 +555,7 @@ function isArtifactEvent(event: Record<string, unknown>) {
                 <ul v-if="message.reviewProgress.follow_up?.length"><li v-for="note in message.reviewProgress.follow_up" :key="note">Possible follow-up: {{ note }}</li></ul>
                 <p v-if="message.reviewProgress.paused">You can continue the remaining review or request more evidence in a later turn.</p>
                 <button v-if="message.reviewProgress.paused" type="button" :disabled="session.busy"
-                  @click="submitMessage('Continue the unfinished work from plan ' + message.reviewProgress.plan_id + '. Preserve saved report revisions and completed operations. Review the outstanding issues and retrieve more evidence only where needed.', false)">Continue remaining work</button>
+                  @click="submitMessage('Continue the unfinished work from plan ' + message.reviewProgress.plan_id + '. Preserve saved report revisions and completed operations. Review the outstanding issues and retrieve more evidence only where needed.', false, false)">Continue remaining work</button>
               </section>
               <ReportCard v-for="report in reportsForTurn(message.turnId)" :key="report.uri" :uri="report.uri" :name="report.name" :review-progress="message.reviewProgress" :session-id="session.sessionId" :editable="canEdit" :open-document="openReportRead" :read-json="session.readJsonResource" :read-blob="session.readResourceBlob" :call-tool="session.callReadOnlyTool" @edit="editReport" @inspect="inspection = $event" />
             </template>
