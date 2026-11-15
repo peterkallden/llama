@@ -6,11 +6,15 @@ const repo = resolve(root, "../..");
 const template = await readFile(resolve(root, "src/mcp-app/document-editor.html"), "utf8");
 const bundle = await readFile(resolve(root, "dist/document-editor.js"), "utf8");
 const css = await readFile(resolve(root, "dist/document-editor.css.css"), "utf8");
+const [toastUiPackage, dompurifyPackage] = await Promise.all([
+  readFile(resolve(root, "node_modules/@toast-ui/editor/package.json"), "utf8").then(JSON.parse),
+  readFile(resolve(root, "node_modules/dompurify/package.json"), "utf8").then(JSON.parse),
+]);
 const escapeHtml = (value) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const thirdParty = [
   ["Notice and attributions", resolve(repo, "docs/third-party/NOTICE.md")],
-  ["TOAST UI Editor 3.2.2 · MIT", resolve(repo, "docs/third-party/TOAST-UI-MIT.txt")],
-  ["DOMPurify 2.5.9 · Apache-2.0 or MPL-2.0", resolve(root, "node_modules/dompurify/LICENSE")],
+  [`TOAST UI Editor ${toastUiPackage.version} · MIT`, resolve(repo, "docs/third-party/TOAST-UI-MIT.txt")],
+  [`DOMPurify ${dompurifyPackage.version} · Apache-2.0 or MPL-2.0`, resolve(root, "node_modules/dompurify/LICENSE")],
   ...["prosemirror-commands", "prosemirror-history", "prosemirror-inputrules", "prosemirror-keymap", "prosemirror-model", "prosemirror-state", "prosemirror-transform", "prosemirror-view", "orderedmap", "rope-sequence", "w3c-keyname"]
     .map((name) => [`${name} · MIT`, resolve(root, `node_modules/${name}/LICENSE`)]),
 ];
