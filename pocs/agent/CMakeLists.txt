@@ -952,6 +952,9 @@ set(TARGET llama-agent-config-discovery-smoke)
 add_executable(${TARGET}
     smoke/daemon/agent-config-discovery-smoke.cpp
 )
+if(LLAMA_MEMORY_COZO)
+    target_compile_definitions(${TARGET} PRIVATE LLAMA_AGENT_CONFIG_DISCOVERY_HAS_COZO=1)
+endif()
 target_include_directories(${TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/tools/agent/host

@@ -3156,7 +3156,17 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         "output-limited draft requires bounded regeneration", plan.id);
                     continue;
                 }
-                stop_unverified_response("draft reached the output limit before completion; no revision budget remains");
+                // The outer runtime driver owns a separate, bounded
+                // continuation budget. Preserve this incomplete draft and its
+                // active plan so that driver can continue it; do not turn an
+                // output limit into a terminal runtime error or mark synthesis
+                // complete here.
+                result.response = draft;
+                result.limit_reached = true;
+                append_trace(result, common_runtime_trace_stage::response,
+                    common_runtime_trace_kind::decided,
+                    "draft reached the output limit; bounded outer continuation may resume synthesis",
+                    plan.id);
                 break;
             }
         }
@@ -4016,7 +4026,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         append_trace(result, common_runtime_trace_stage::turn, common_runtime_trace_kind::failed,
             result.error, plan.id);
     }
-    if (result.error.empty() && !result.response.empty() && plan.status == common_plan_status::active) {
+    if (result.error.empty() && !result.limit_reached && !result.response.empty() &&
+            plan.status == common_plan_status::active) {
         for (size_t pass = 0; pass < 3 && plan.status == common_plan_status::active; ++pass) {
             const auto before_version = plan.version;
             if (!complete_active_synthesis_step()) { result.error = error; return result; }

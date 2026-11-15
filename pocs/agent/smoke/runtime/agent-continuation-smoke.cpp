@@ -66,11 +66,13 @@ common_agent_runtime_driver_execution make_execution(
         const common_agent_runtime_tooling & tooling) {
     common_agent_runtime_policy policy;
     policy.enable_reflection = false;
-    policy.max_iterations = 1;
+    // Planner repair consumes one generation, and the accepted plan still
+    // needs bounded execution plus a final response generation.
+    policy.max_iterations = 4;
     common_agent_orchestration_config orchestration;
     orchestration.prompt = "Continue bounded work";
     orchestration.agent_plan = "off";
-    return {
+    common_agent_runtime_driver_execution execution{
         memories,
         plans,
         inference,
@@ -86,13 +88,21 @@ common_agent_runtime_driver_execution make_execution(
         true,
         tooling,
     };
+    // These cases exercise the plan driver's bounded draft continuation. Use
+    // the native plan contract so the fixture can make a tool-free reasoning
+    // plan; the fake catalog is intentionally not an executable tool runtime.
+    execution.tool_output_format = common_agent_tool_output_format::native;
+    return execution;
 }
 
 void test_continuation_is_consumed_in_same_driver_operation() {
     fake_inference inference;
     inference.queued = {
         {"not-json", common_agent_generation_stop_reason::none, 1},
-        {"still-not-json", common_agent_generation_stop_reason::none, 1},
+        {R"({"goal":"Continue the fixture task","steps":[{"id":"reason","title":"Continue","objective":"Continue bounded fixture work.","mode":"reasoning"}]})",
+            common_agent_generation_stop_reason::none, 1},
+        {R"({"summary":"The bounded fixture task is ready for a concise response."})",
+            common_agent_generation_stop_reason::none, 1},
         {"first slice", common_agent_generation_stop_reason::limit, 5},
         {"second slice", common_agent_generation_stop_reason::none, 6},
     };
@@ -122,7 +132,11 @@ void test_continuation_is_consumed_in_same_driver_operation() {
         scope, blueprints, hits, tooling);
 
     common_agent_result result;
-    assert(run_agent_runtime_driver(execution, result, error));
+    if (!run_agent_runtime_driver(execution, result, error)) {
+        std::fprintf(stderr, "continuation runtime driver failed: %s (result: %s)\n",
+            error.c_str(), result.error.c_str());
+        assert(false);
+    }
     assert(error.empty());
     assert(result.error.empty());
     if (result.response != "first slice\nsecond slice")
@@ -131,20 +145,24 @@ void test_continuation_is_consumed_in_same_driver_operation() {
     assert(result.response_stop_reason == common_agent_generation_stop_reason::none);
     assert(!result.continuation_checkpoint);
     assert(result.plan_id);
-    assert(inference.seen.size() == 4);
+    assert(inference.seen.size() == 5);
     assert(inference.seen[0].purpose == common_agent_generation_purpose::planner);
     assert(inference.seen[1].purpose == common_agent_generation_purpose::planner);
     assert(inference.seen[1].messages.size() == 3);
-    assert(inference.seen[1].messages[2].content.find("[Regeneration]") != std::string::npos);
-    assert(inference.seen[2].purpose == common_agent_generation_purpose::draft);
+    assert(inference.seen[1].messages[2].content.find("[Repair]") != std::string::npos);
+    assert(inference.seen[2].purpose == common_agent_generation_purpose::reasoning);
     assert(inference.seen[3].purpose == common_agent_generation_purpose::draft);
+    assert(inference.seen[4].purpose == common_agent_generation_purpose::draft);
 }
 
 void test_continuation_budget_emits_checkpoint() {
     fake_inference inference;
     inference.queued = {
         {"not-json", common_agent_generation_stop_reason::none, 1},
-        {"still-not-json", common_agent_generation_stop_reason::none, 1},
+        {R"({"goal":"Continue the fixture task","steps":[{"id":"reason","title":"Continue","objective":"Continue bounded fixture work.","mode":"reasoning"}]})",
+            common_agent_generation_stop_reason::none, 1},
+        {R"({"summary":"The bounded fixture task is ready for a concise response."})",
+            common_agent_generation_stop_reason::none, 1},
         {"limited", common_agent_generation_stop_reason::limit, 5},
     };
 
@@ -182,7 +200,9 @@ void test_continuation_budget_emits_checkpoint() {
     assert(result.continuation_checkpoint->working_state);
     assert(!result.continuation_checkpoint->working_state->goal.empty());
     assert(!result.continuation_checkpoint->working_state->current_phase.empty());
-    assert(inference.seen.size() == 3);
+    assert(inference.seen.size() == 4);
+    assert(inference.seen[2].purpose == common_agent_generation_purpose::reasoning);
+    assert(inference.seen[3].purpose == common_agent_generation_purpose::draft);
 }
 
 void test_working_state_projection_is_bounded_and_preserves_refs() {
@@ -276,13 +296,16 @@ void test_cancellation_stops_before_next_continuation_slice() {
     fake_inference inference;
     inference.queued = {
         {"not-json", common_agent_generation_stop_reason::none, 1},
-        {"still-not-json", common_agent_generation_stop_reason::none, 1},
+        {R"({"goal":"Continue the fixture task","steps":[{"id":"reason","title":"Continue","objective":"Continue bounded fixture work.","mode":"reasoning"}]})",
+            common_agent_generation_stop_reason::none, 1},
+        {R"({"summary":"The bounded fixture task is ready for a concise response."})",
+            common_agent_generation_stop_reason::none, 1},
         {"cancelled slice", common_agent_generation_stop_reason::limit, 5},
         {"must not run", common_agent_generation_stop_reason::none, 6},
     };
     const auto cancellation = std::make_shared<common_agent_runtime_cancellation_state>();
     inference.after_generate = [cancellation](size_t count) {
-        if (count == 3) cancellation->request_cancel("continuation cancelled by smoke");
+        if (count == 4) cancellation->request_cancel("continuation cancelled by smoke");
     };
 
     common_memory_in_memory_store memories;
@@ -314,14 +337,17 @@ void test_cancellation_stops_before_next_continuation_slice() {
     assert(result.response_generation_status == common_agent_generation_status::cancelled);
     assert(result.response_stop_reason == common_agent_generation_stop_reason::cancelled);
     assert(error == "continuation cancelled by smoke");
-    assert(inference.seen.size() == 3);
+    assert(inference.seen.size() == 4);
 }
 
 void test_deadline_stops_before_next_continuation_slice() {
     fake_inference inference;
     inference.queued = {
         {"not-json", common_agent_generation_stop_reason::none, 1},
-        {"still-not-json", common_agent_generation_stop_reason::none, 1},
+        {R"({"goal":"Continue the fixture task","steps":[{"id":"reason","title":"Continue","objective":"Continue bounded fixture work.","mode":"reasoning"}]})",
+            common_agent_generation_stop_reason::none, 1},
+        {R"({"summary":"The bounded fixture task is ready for a concise response."})",
+            common_agent_generation_stop_reason::none, 1},
         {"deadline slice", common_agent_generation_stop_reason::limit, 5},
         {"must not run", common_agent_generation_stop_reason::none, 6},
     };
@@ -329,7 +355,7 @@ void test_deadline_stops_before_next_continuation_slice() {
     control.cancellation = std::make_shared<common_agent_runtime_cancellation_state>();
     control.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     inference.after_generate = [&control](size_t count) {
-        if (count == 3) std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        if (count == 4) std::this_thread::sleep_for(std::chrono::milliseconds(300));
     };
 
     common_memory_in_memory_store memories;
@@ -361,7 +387,7 @@ void test_deadline_stops_before_next_continuation_slice() {
     assert(result.response_generation_status == common_agent_generation_status::cancelled);
     assert(result.response_stop_reason == common_agent_generation_stop_reason::cancelled);
     assert(error == "turn deadline exceeded");
-    assert(inference.seen.size() == 3);
+    assert(inference.seen.size() == 4);
 }
 
 void test_context_pressure_reserves_completion_and_tool_space() {
@@ -395,7 +421,7 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     inference.queued = {
         {R"({"goal":"Continue bounded work","steps":[{"id":"context-check","mode":"reasoning","objective":"Check the compact context"}]})",
             common_agent_generation_stop_reason::none, 1},
-        {R"({"goal":"Continue bounded work","steps":[{"id":"context-check","mode":"reasoning","objective":"Check the compact context"}]})",
+        {R"({"summary":"The compact context has been checked."})",
             common_agent_generation_stop_reason::none, 1},
     };
 
@@ -439,7 +465,14 @@ void test_context_pressure_stops_before_draft_and_checkpoints() {
     execution.orchestration_config.prompt = "short context-pressure request";
 
     common_agent_result result;
-    assert(run_agent_runtime_driver(execution, result, error));
+    if (!run_agent_runtime_driver(execution, result, error)) {
+        std::fprintf(stderr, "context-pressure runtime failed: %s (result: %s; generations: %zu)\n",
+            error.c_str(), result.error.c_str(), inference.seen.size());
+        for (size_t i = 0; i < inference.seen.size(); ++i)
+            std::fprintf(stderr, "generation[%zu] purpose=%d messages=%zu\n", i,
+                static_cast<int>(inference.seen[i].purpose), inference.seen[i].messages.size());
+        assert(false);
+    }
     assert(error.empty());
     assert(result.error.empty());
     assert(result.response.empty());

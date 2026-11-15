@@ -2,6 +2,7 @@
 #include "tools/agent/daemon/agent-daemon-adapter.h"
 
 #include <cassert>
+#include <cstdio>
 
 int main() {
     agent_mcp_caller_policy policy;
@@ -137,8 +138,11 @@ int main() {
             {"analysis_profile", "narrative_comparison"}}},
     };
     common_agent_daemon_command investigation;
-    assert(parse_agent_daemon_command(investigation_request, options,
-        common_agent_runtime_host_mode::agent, investigation, error));
+    if (!parse_agent_daemon_command(investigation_request, options,
+            common_agent_runtime_host_mode::agent, investigation, error)) {
+        std::fprintf(stderr, "valid signed investigation revision was rejected: %s\n", error.c_str());
+        assert(false);
+    }
     assert(investigation.turn && investigation.turn->request.turn.investigation_context);
     assert(investigation.turn->request.turn.investigation_context->case_id == "case-1");
     assert(investigation.turn->request.turn.investigation_context->revision == 3);
@@ -148,6 +152,14 @@ int main() {
     assert(investigation.turn->request.turn.investigation_context->analysis_profile == "narrative_comparison");
     auto invalid_investigation = investigation_request;
     invalid_investigation["investigation_context"]["revision"] = 0;
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+    invalid_investigation = investigation_request;
+    invalid_investigation["investigation_context"]["revision"] = -1;
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+    invalid_investigation = investigation_request;
+    invalid_investigation["investigation_context"]["revision"] = 1.5;
     assert(!parse_agent_daemon_command(invalid_investigation, options,
         common_agent_runtime_host_mode::agent, rejected_orientation, error));
     invalid_investigation = investigation_request;

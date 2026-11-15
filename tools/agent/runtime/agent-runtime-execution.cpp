@@ -2973,7 +2973,8 @@ bool run_agent_runtime_driver(
 
     // Internal slices may yield an empty answer to resume bounded work. Once
     // the outer driver stops, the UI must receive an explicit saved-work status.
-    if (result.response.empty() && result.error.empty() && result.limit_reached) {
+    if (result.response.empty() && result.error.empty() && result.limit_reached &&
+            !result.continuation_checkpoint) {
         result.error = "Execution budget exhausted before a verified answer was ready. ";
         if (result.plan_id) {
             std::string saved_error;

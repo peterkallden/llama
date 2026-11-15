@@ -423,6 +423,7 @@ int main() {
     bootstrap_options.bootstrap_package = bootstrap_path.string();
     bootstrap_options.backend = "in-memory";
     bootstrap_options.plan_backend = "in-memory";
+#ifdef LLAMA_AGENT_CONFIG_DISCOVERY_HAS_COZO
     bootstrap_options.data_backend = "cozo";
     bootstrap_options.data_db = investigation_store_path.string();
     bootstrap_options.investigation.enabled = true;
@@ -435,6 +436,12 @@ int main() {
     smoke_source.allowed_namespaces = {"local"};
     smoke_source.fields = {{"event_time", "@timestamp"}};
     bootstrap_options.investigation.sources.push_back(smoke_source);
+#else
+    // This smoke also runs in the sanitizer configuration, which deliberately
+    // excludes optional persistent data backends. Keep its config-discovery
+    // and general bootstrap-import coverage independent of Cozo availability.
+    bootstrap_options.data_backend = "disabled";
+#endif
     bootstrap_options.resource_blob_backend = "in-memory";
     bootstrap_options.resource_metadata_backend = "in-memory";
     common_agent_daemon_runtime bootstrap_runtime;
@@ -455,8 +462,12 @@ int main() {
                 plan.workflow_definition->workflow_revision == "v1";
         });
     };
-    if (!error.empty() || !has_workflow("workflow://startup-smoke") ||
-            !has_workflow("workflow://investigation/startup-smoke")) {
+    const bool missing_expected_workflow = !has_workflow("workflow://startup-smoke")
+#ifdef LLAMA_AGENT_CONFIG_DISCOVERY_HAS_COZO
+        || !has_workflow("workflow://investigation/startup-smoke")
+#endif
+        ;
+    if (!error.empty() || missing_expected_workflow) {
         bootstrap_runtime.data_store.reset();
         std::filesystem::remove_all(investigation_store_path);
         std::fprintf(stderr, "daemon bootstrap package workflow was not persisted: %s\n", error.c_str());

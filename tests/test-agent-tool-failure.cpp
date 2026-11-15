@@ -4,6 +4,7 @@
 #include "plan/plan-in-memory.h"
 #include "test-tool-runtime-registry-adapter.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 
@@ -92,7 +93,14 @@ int main() {
     assert(result.error == "final synthesis is blocked by an unrepaired failed tool step: fetch");
     assert(adaptation.called);
     const auto plan = store.get("tool-failure", error);
-    assert(plan && plan->steps[0].status == common_plan_step_status::failed && plan->observations.size() == 1 && plan->observations[0].summary.find("temporarily unavailable") != std::string::npos);
+    assert(plan && plan->steps[0].status == common_plan_step_status::failed);
+    const auto failure = std::find_if(plan->observations.begin(), plan->observations.end(), [](const auto & observation) {
+        return observation.source == "failing_lookup";
+    });
+    assert(failure != plan->observations.end());
+    const auto failure_observation = nlohmann::ordered_json::parse(failure->summary, nullptr, false);
+    assert(failure_observation.is_object() && failure_observation.contains("failure") &&
+        failure_observation["failure"].value("safe_summary", std::string{}).find("temporarily unavailable") != std::string::npos);
 
     common_plan_in_memory_store optional_store;
     assert(optional_store.open("", error));
