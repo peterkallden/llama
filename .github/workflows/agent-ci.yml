@@ -168,7 +168,18 @@ jobs:
           set -euo pipefail
           cmake --install build-agent-ci --prefix agent-package
           mkdir -p agent-package/lib
+          # Cozo's C API library has no SONAME, so the linker records the
+          # filename used at link time in DT_NEEDED. Preserve that exact
+          # runtime name as well as the stable package alias.
+          cozo_runtime_name="$(readelf -d agent-package/lib/libllama-agent-storage-cozo.so \
+            | awk '/NEEDED/ && /libcozo_c/ { gsub(/^.*\\[/, ""); gsub(/\\].*$/, ""); print; exit }')"
+          [[ "$cozo_runtime_name" == libcozo_c* ]] || {
+            echo "Could not determine Cozo runtime library name" >&2
+            exit 1
+          }
+          cp "$COZO_LIBRARY" "agent-package/lib/$cozo_runtime_name"
           cp "$COZO_LIBRARY" agent-package/lib/libcozo_c.so
+          test -f "agent-package/lib/$cozo_runtime_name"
           test -f agent-package/bin/llama-agent
           test -f agent-package/bin/llama-agent-daemon
           test -f agent-package/bin/llama-agent-mcp-stdio-server

@@ -943,8 +943,6 @@ if(LLAMA_AGENT_NPM_EXECUTABLE AND EXISTS ${LLAMA_AGENT_DOCUMENT_EDITOR_DEPS})
     target_compile_definitions(llama-agent-mcp-server PRIVATE LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE=1)
     target_compile_definitions(llama-agent-tool-provider PRIVATE LLAMA_AGENT_DOCUMENT_EDITOR_RESOURCE=1)
     install(FILES
-        ${PROJECT_SOURCE_DIR}/docs/third-party/NOTICE.md
-        ${PROJECT_SOURCE_DIR}/docs/third-party/TOAST-UI-MIT.txt
         ${PROJECT_SOURCE_DIR}/examples/llama-agent.web/node_modules/dompurify/LICENSE
         DESTINATION share/doc/llama-agent/third-party)
     foreach(LLAMA_AGENT_PM_PACKAGE IN ITEMS
@@ -1195,6 +1193,13 @@ if(LLAMA_TOOLS_INSTALL OR LLAMA_AGENT_PACKAGE_INSTALL)
         ${PROJECT_SOURCE_DIR}/docs/examples/agent-runtime-context-budgets.json
         ${PROJECT_SOURCE_DIR}/docs/examples/llama-agent-daemon.service
         DESTINATION share/llama-agent/examples)
+    # The installed web client is built inside the development container.
+    # Keep the same third-party notices available even when npm dependencies
+    # were not installed during the native package build.
+    install(FILES
+        ${PROJECT_SOURCE_DIR}/docs/third-party/NOTICE.md
+        ${PROJECT_SOURCE_DIR}/docs/third-party/TOAST-UI-MIT.txt
+        DESTINATION share/doc/llama-agent/third-party)
     install(FILES
         ${PROJECT_SOURCE_DIR}/docs/examples/openalex-provider.d/openalex.json
         DESTINATION share/llama-agent/examples/openalex-provider.d)

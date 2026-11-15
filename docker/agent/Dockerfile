@@ -7,6 +7,7 @@ COPY ${PACKAGE_ARCHIVE} /tmp/agent-package.tar.gz
 
 RUN mkdir -p /opt/llama-agent \
     && tar -xzf /tmp/agent-package.tar.gz -C /opt/llama-agent \
+    && ln -sfn ../doc/llama-agent /opt/llama-agent/share/llama-agent/docs \
     && cd /opt/llama-agent/share/llama-agent/examples/llama-agent.web \
     && npm ci --ignore-scripts \
     && npm run build
@@ -26,6 +27,7 @@ RUN apt-get update \
     && apt-get install --no-install-recommends --yes \
         ca-certificates \
         libgomp1 \
+        libxml2 \
         libssl3 \
         libvulkan1 \
         nginx \
