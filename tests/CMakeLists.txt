@@ -592,7 +592,7 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
-        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-loop|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|agent-resource-retention|agent-research-contract|plan-store|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|tool-family-index|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
+        if (TEST_NAME MATCHES "^test-(agent-cognitive-mode|agent-loop|agent-tool-failure|agent-route-compiler|agent-execution-envelope|agent-bootstrap|agent-artifact|agent-tool-rounds|agent-openapi-provider|agent-resource-chunker|agent-resource-retention|agent-research-contract|plan-store|plan-cozo|plan-sqlite-continuation|tool-catalog|tool-adapters|tool-family-index|agent-tool-output-codec|agent-learning-corpus|agent-learning-trainer|agent-flydelta-training-admission)$")
             if (MSVC)
                 target_compile_options(${TEST_NAME} PRIVATE /UNDEBUG)
             else()
