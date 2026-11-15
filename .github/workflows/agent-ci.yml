@@ -62,7 +62,9 @@ jobs:
   agent-linux:
     name: Verify agent on Linux
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # The complete agent build pack and serial CTest suite exceed the old
+    # 45-minute cap on a cold GitHub runner.
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -152,7 +154,7 @@ jobs:
 
       - name: Run agent CTest label
         shell: bash
-        run: ctest --test-dir build-agent-ci -L agent --output-on-failure --timeout 900
+        run: ctest --test-dir build-agent-ci -L agent --output-on-failure --timeout 1800
 
       - name: Run Kubernetes sandbox CTest label
         shell: bash

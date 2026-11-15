@@ -52,7 +52,9 @@ jobs:
   linux-asan-ubsan:
     name: Analyze build on Linux with ASan/UBSan
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # The complete sanitizer build pack and agent CTest suite exceed the old
+    # 45-minute cap on a cold GitHub runner.
+    timeout-minutes: 120
 
     env:
       CC: clang
@@ -120,7 +122,7 @@ jobs:
           ctest \
             --test-dir build-agent-asan \
             --output-on-failure \
-            --timeout 900 \
+            --timeout 1800 \
             -L agent
 
       - name: Upload sanitizer diagnostics
