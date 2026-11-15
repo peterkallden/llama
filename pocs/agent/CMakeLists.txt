@@ -2173,6 +2173,7 @@ set(AGENT_TEST_PACK_CTEST_TARGETS
 # their executables before CTest runs. Keep this list in sync with the agent
 # CTest registrations rather than relying on binaries left in a reused build.
 list(APPEND AGENT_TEST_PACK_CTEST_TARGETS
+    test-agent-http-host-transport
     test-agent-artifact
     test-agent-artifact-sources
     test-agent-chat-routing
