@@ -15,6 +15,7 @@
 #ifdef __linux__
 #include <cerrno>
 #include <poll.h>
+#include <sys/stat.h>
 #include <sys/inotify.h>
 #include <unistd.h>
 #endif
@@ -43,10 +44,19 @@ bool watched_file(const fs::path & path, const std::vector<std::string> & extens
 struct file_stamp {
     fs::file_time_type modified{};
     uintmax_t size = 0;
+    uint64_t device = 0;
+    uint64_t inode = 0;
+    bool has_identity = false;
     friend bool operator==(const file_stamp & a, const file_stamp & b) {
-        return a.modified == b.modified && a.size == b.size;
+        return a.modified == b.modified && a.size == b.size &&
+            a.has_identity == b.has_identity && (!a.has_identity ||
+                (a.device == b.device && a.inode == b.inode));
     }
 };
+
+bool same_file_identity(const file_stamp & a, const file_stamp & b) {
+    return a.has_identity && b.has_identity && a.device == b.device && a.inode == b.inode;
+}
 
 bool path_within(const fs::path & root, const fs::path & candidate) {
     auto rel = candidate.lexically_relative(root);
@@ -139,6 +149,13 @@ struct agent_project_file_watch_service::impl {
     static bool stamp(const fs::path & path, file_stamp & result) {
         std::error_code ec;
         if (fs::is_symlink(fs::symlink_status(path, ec)) || ec || !fs::is_regular_file(path, ec) || ec) return false;
+#ifdef __linux__
+        struct stat info {};
+        if (::lstat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) return false;
+        result.device = static_cast<uint64_t>(info.st_dev);
+        result.inode = static_cast<uint64_t>(info.st_ino);
+        result.has_identity = true;
+#endif
         result.modified = fs::last_write_time(path, ec);
         if (ec) return false;
         result.size = fs::file_size(path, ec);
@@ -336,6 +353,35 @@ struct agent_project_file_watch_service::impl {
                         if (old == group.snapshot.end()) created.insert(item.first);
                         else if (!(old->second == item.second)) changes.push_back({agent_project_file_change_kind::changed, item.first, {}, 0});
                     }
+#ifdef __linux__
+                    // Inotify can miss a file operation while a newly-created
+                    // directory is being attached to the watch. Correlate the
+                    // polling diff by stable file identity so rename semantics
+                    // survive that handoff instead of degrading to remove+create.
+                    for (auto old = removed.begin(); old != removed.end();) {
+                        const auto old_stamp = group.snapshot.find(*old);
+                        if (old_stamp == group.snapshot.end() || !old_stamp->second.has_identity) {
+                            ++old;
+                            continue;
+                        }
+                        auto match = created.end();
+                        bool ambiguous = false;
+                        for (auto candidate = created.begin(); candidate != created.end(); ++candidate) {
+                            const auto new_stamp = current.find(*candidate);
+                            if (new_stamp != current.end() && same_file_identity(old_stamp->second, new_stamp->second)) {
+                                if (match != created.end()) { ambiguous = true; break; }
+                                match = candidate;
+                            }
+                        }
+                        if (match == created.end() || ambiguous) {
+                            ++old;
+                            continue;
+                        }
+                        changes.push_back({agent_project_file_change_kind::moved, *match, *old, 0});
+                        created.erase(match);
+                        old = removed.erase(old);
+                    }
+#endif
                     for (const auto & path : created) changes.push_back({agent_project_file_change_kind::created, path, {}, 0});
                     for (const auto & path : removed) changes.push_back({agent_project_file_change_kind::removed, path, {}, 0});
 #ifdef __linux__

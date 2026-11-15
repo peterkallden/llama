@@ -80,7 +80,7 @@ int main() {
         fs::rename(source, renamed);
         {
             std::unique_lock<std::mutex> lock(mutex);
-            require(wait_for(cv, lock, [&] {
+            const bool move_reported = wait_for(cv, lock, [&] {
 #ifdef __linux__
                 return std::any_of(first_events.begin(), first_events.end(), [&](const auto & event) {
                     return event.kind == agent_project_file_change_kind::moved &&
@@ -95,7 +95,8 @@ int main() {
                 });
                 return removed && created;
 #endif
-            }), "atomic rename must be reported as a move");
+            });
+            require(move_reported, "atomic rename must be reported as a move");
         }
 
         write_file(root / "build" / "ignored.cpp", "int ignored;\n");
@@ -216,11 +217,15 @@ int main() {
         polling.root = polling_root.string();
         polling.force_polling = true;
         polling.poll_interval = std::chrono::milliseconds(150);
-        std::atomic<bool> polled{false};
+        std::atomic<bool> polled{false}, polling_move_seen{false};
         uint64_t polling_id = 0;
         require(watcher.subscribe(polling, [&](const auto & changes) {
-            for (const auto & change : changes)
+            for (const auto & change : changes) {
                 if (change.path == (polling_root / "poll.cpp").string()) polled = true;
+                if (change.kind == agent_project_file_change_kind::moved &&
+                        change.path == (polling_root / "poll-renamed.cpp").string() &&
+                        change.previous_path == (polling_root / "poll.cpp").string()) polling_move_seen = true;
+            }
             return true;
         }, polling_id, error), "polling backend subscription must succeed");
         require(watcher.backend(polling_id) == "polling", "forced portable backend must be reported");
@@ -229,6 +234,11 @@ int main() {
         while (!polled && std::chrono::steady_clock::now() < polling_deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         require(polled, "polling backend must discover file changes");
+        fs::rename(polling_root / "poll.cpp", polling_root / "poll-renamed.cpp");
+        const auto polling_move_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!polling_move_seen && std::chrono::steady_clock::now() < polling_move_deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        require(polling_move_seen, "polling backend must correlate a rename by stable file identity");
         watcher.unsubscribe(polling_id);
 
         const auto overflow_root = root / "overflow-root";
