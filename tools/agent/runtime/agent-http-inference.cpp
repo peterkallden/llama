@@ -165,8 +165,8 @@ bool normalize_response_schema(const json & input, json & output, bool & wrapped
 
 class http_inference final : public common_agent_inference {
 public:
-    explicit http_inference(common_agent_model_selection selection)
-        : selection_(std::move(selection)) {
+    explicit http_inference(common_agent_model_selection selection, common_agent_http_post post)
+        : selection_(std::move(selection)), post_(std::move(post)) {
         if (!selection_.token_env.empty()) {
             const char * token = std::getenv(selection_.token_env.c_str());
             if (token != nullptr) token_ = token;
@@ -187,7 +187,7 @@ public:
             result.error_message = "HTTP inference request cancelled before submission";
             return true;
         }
-        if (!selection_.token_env.empty() && token_.empty()) return fail("HTTP inference bearer-token environment variable is unset");
+        if (!post_ && !selection_.token_env.empty() && token_.empty()) return fail("HTTP inference bearer-token environment variable is unset");
         if (!request.grammar.empty()) {
             if ((selection_.tool_output_format_configured &&
                     selection_.tool_output_format != common_agent_tool_output_format::compact_dsl) ||
@@ -329,8 +329,25 @@ public:
             }
         }
         httplib::Result response;
+        int response_status = 0;
+        std::string response_body;
         const auto request_started = std::chrono::steady_clock::now();
-        if (endpoint.scheme == "http") {
+        if (post_) {
+            std::string transport_error;
+            std::string base = selection_.endpoint;
+            while (!base.empty() && base.back() == '/') base.pop_back();
+            if (!post_(base + "/v1/chat/completions", body.dump(),
+                    selection_.connect_timeout_ms, request_timeout_ms,
+                    response_status, response_body, transport_error)) {
+                if (request.options.should_stop && request.options.should_stop()) {
+                    result.status = common_agent_generation_status::cancelled;
+                    result.stop_reason = common_agent_generation_stop_reason::cancelled;
+                    result.error_message = "HTTP inference request cancelled while awaiting the remote server";
+                    return true;
+                }
+                return fail("HTTP inference transport failure: " + transport_error);
+            }
+        } else if (endpoint.scheme == "http") {
             httplib::Client client(endpoint.host, endpoint.port);
             set_timeouts(client, selection_.connect_timeout_ms, request_timeout_ms);
             response = client.Post(route, headers, body.dump(), "application/json");
@@ -343,7 +360,7 @@ public:
             return fail("HTTPS inference requires an OpenSSL-enabled HTTP transport");
 #endif
         }
-        if (!response) {
+        if (!post_ && !response) {
             if (request.options.should_stop && request.options.should_stop()) {
                 result.status = common_agent_generation_status::cancelled;
                 result.stop_reason = common_agent_generation_stop_reason::cancelled;
@@ -360,18 +377,19 @@ public:
             return fail(std::string(timeout ? "HTTP inference timeout: " : "HTTP inference transport failure: ") +
                 httplib::to_string(transport_error));
         }
-        if (response->status >= 200 && response->status < 300) trace_payload("response", response->body);
+        if (!post_) { response_status = response->status; response_body = response->body; }
+        if (response_status >= 200 && response_status < 300) trace_payload("response", response_body);
         if (request.options.should_stop && request.options.should_stop()) {
             result.status = common_agent_generation_status::cancelled;
             result.stop_reason = common_agent_generation_stop_reason::cancelled;
             result.error_message = "HTTP inference request cancelled while awaiting the remote server";
             return true;
         }
-        if (response->status < 200 || response->status >= 300) {
-            trace_payload("error response", response->body);
-            std::string detail = "HTTP inference server returned status " + std::to_string(response->status);
+        if (response_status < 200 || response_status >= 300) {
+            trace_payload("error response", response_body);
+            std::string detail = "HTTP inference server returned status " + std::to_string(response_status);
             try {
-                const auto error_body = json::parse(response->body);
+                const auto error_body = json::parse(response_body);
                 if (error_body.contains("error") && error_body["error"].is_object() &&
                         error_body["error"].contains("message") && error_body["error"]["message"].is_string()) {
                     const std::string server_message = error_body["error"]["message"].get<std::string>();
@@ -389,7 +407,7 @@ public:
             return fail(detail);
         }
         json payload;
-        try { payload = json::parse(response->body); }
+        try { payload = json::parse(response_body); }
         catch (...) { return fail("HTTP inference server returned invalid JSON"); }
         if (!payload.contains("choices") || !payload["choices"].is_array() || payload["choices"].empty() ||
                 !payload["choices"][0].is_object() || !payload["choices"][0].contains("message") ||
@@ -494,10 +512,11 @@ public:
 private:
     common_agent_model_selection selection_;
     std::string token_;
+    common_agent_http_post post_;
 };
 }
 
 std::unique_ptr<common_agent_inference> make_agent_http_inference(
-        const common_agent_model_selection & selection) {
-    return std::make_unique<http_inference>(selection);
+        const common_agent_model_selection & selection, common_agent_http_post post) {
+    return std::make_unique<http_inference>(selection, std::move(post));
 }

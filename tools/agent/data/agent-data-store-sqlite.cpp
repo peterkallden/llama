@@ -68,9 +68,126 @@ bool condition_matches(const json & row, const json & condition) {
 
 common_agent_sqlite_data_store::~common_agent_sqlite_data_store() { close(); }
 
-bool common_agent_sqlite_data_store::open(const std::string & path, std::string & error) { close(); if (!database_.open(path, error) || !database_.execute("PRAGMA journal_mode = WAL;", error) || !ensure_schema(error)) { close(); return false; } return true; }
-void common_agent_sqlite_data_store::close() { database_.close(); }
-bool common_agent_sqlite_data_store::ensure_schema(std::string & error) { return database_.execute("CREATE TABLE IF NOT EXISTS agent_dataset_metadata(dataset_uri TEXT PRIMARY KEY, descriptor_json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS agent_data_rows(dataset TEXT NOT NULL, row_id TEXT NOT NULL, row_seq INTEGER NOT NULL, row_json TEXT NOT NULL, PRIMARY KEY(dataset,row_id)); CREATE INDEX IF NOT EXISTS agent_data_rows_order ON agent_data_rows(dataset,row_seq);", error); }
+bool common_agent_sqlite_data_store::open(const std::string & path, std::string & error) {
+    close();
+    if (!database_.open(path, error) || !database_.execute("PRAGMA journal_mode = WAL;", error) || !ensure_schema(error) ||
+            !research_database_.open(path, error) || !research_database_.execute(
+                "CREATE TABLE IF NOT EXISTS agent_research_drafts(scope_key TEXT NOT NULL,draft_id TEXT NOT NULL,research_id TEXT NOT NULL,owner TEXT NOT NULL,base_revision INTEGER NOT NULL,revision INTEGER NOT NULL,payload_uri TEXT NOT NULL,fingerprint TEXT NOT NULL,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(scope_key,draft_id));"
+                "CREATE TABLE IF NOT EXISTS agent_research_revisions(scope_key TEXT NOT NULL,research_id TEXT NOT NULL,revision INTEGER NOT NULL,parent_revision INTEGER NOT NULL,payload_uri TEXT NOT NULL,fingerprint TEXT NOT NULL,publication_id TEXT NOT NULL,published_at_ms INTEGER NOT NULL,PRIMARY KEY(scope_key,research_id,revision));", error)) {
+        close(); return false;
+    }
+    return true;
+}
+void common_agent_sqlite_data_store::close() { research_database_.close(); database_.close(); }
+bool common_agent_sqlite_data_store::ensure_schema(std::string & error) { return database_.execute("CREATE TABLE IF NOT EXISTS agent_dataset_metadata(dataset_uri TEXT PRIMARY KEY, descriptor_json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS agent_data_rows(dataset TEXT NOT NULL, row_id TEXT NOT NULL, row_seq INTEGER NOT NULL, row_json TEXT NOT NULL, PRIMARY KEY(dataset,row_id)); CREATE INDEX IF NOT EXISTS agent_data_rows_order ON agent_data_rows(dataset,row_seq); CREATE TABLE IF NOT EXISTS agent_research_drafts(scope_key TEXT NOT NULL,draft_id TEXT NOT NULL,research_id TEXT NOT NULL,owner TEXT NOT NULL,base_revision INTEGER NOT NULL,revision INTEGER NOT NULL,payload_uri TEXT NOT NULL,fingerprint TEXT NOT NULL,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(scope_key,draft_id)); CREATE TABLE IF NOT EXISTS agent_research_revisions(scope_key TEXT NOT NULL,research_id TEXT NOT NULL,revision INTEGER NOT NULL,parent_revision INTEGER NOT NULL,payload_uri TEXT NOT NULL,fingerprint TEXT NOT NULL,publication_id TEXT NOT NULL,published_at_ms INTEGER NOT NULL,PRIMARY KEY(scope_key,research_id,revision));", error); }
+
+namespace {
+std::string sqlite_research_scope(const common_agent_scope & scope) {
+    const auto owner = scope.project_id.empty() ? json{{"session_id", scope.session_id}} : json{{"project_id", scope.project_id}};
+    return json{{"namespace_id", scope.namespace_id}, {"owner", owner}}.dump();
+}
+bool sqlite_draft_lookup(common_sqlite_database & db, const std::string & key, const std::string & id,
+        common_agent_research_draft_ref & out, bool & found, std::string & error) {
+    common_sqlite_statement s;
+    if (!db.prepare("SELECT research_id,owner,base_revision,revision,payload_uri,fingerprint,updated_at_ms FROM agent_research_drafts WHERE scope_key=?1 AND draft_id=?2;", s, error) ||
+            !s.bind_text(1, key, error) || !s.bind_text(2, id, error) || !s.step(found, error)) return false;
+    if (!found) return true;
+    out = {}; out.draft_id = id; out.research_id = text_column(s, 0); out.owner_session_id = text_column(s, 1);
+    out.base_revision = static_cast<uint64_t>(s.column_int64(2)); out.draft_revision = static_cast<uint64_t>(s.column_int64(3));
+    out.payload_uri = text_column(s, 4); out.payload_fingerprint = text_column(s, 5); out.updated_at_ms = s.column_int64(6);
+    return true;
+}
+bool sqlite_revision_lookup(common_sqlite_database & db, const std::string & key, const std::string & id,
+        uint64_t revision, common_agent_research_revision_ref & out, bool & found, std::string & error) {
+    common_sqlite_statement s;
+    const auto sql = revision == 0 ?
+        "SELECT revision,parent_revision,payload_uri,fingerprint,publication_id,published_at_ms FROM agent_research_revisions WHERE scope_key=?1 AND research_id=?2 ORDER BY revision DESC LIMIT 1;" :
+        "SELECT revision,parent_revision,payload_uri,fingerprint,publication_id,published_at_ms FROM agent_research_revisions WHERE scope_key=?1 AND research_id=?2 AND revision=?3;";
+    if (!db.prepare(sql, s, error) || !s.bind_text(1, key, error) || !s.bind_text(2, id, error) ||
+            (revision != 0 && !s.bind_int64(3, static_cast<int64_t>(revision), error)) || !s.step(found, error)) return false;
+    if (!found) return true;
+    out = {}; out.research_id = id; out.revision = static_cast<uint64_t>(s.column_int64(0));
+    out.parent_revision = static_cast<uint64_t>(s.column_int64(1)); out.payload_uri = text_column(s, 2);
+    out.payload_fingerprint = text_column(s, 3); out.publication_id = text_column(s, 4); out.published_at_ms = s.column_int64(5);
+    return true;
+}
+}
+
+bool common_agent_sqlite_data_store::get_research_draft(const std::string & id, const common_agent_scope & scope,
+        common_agent_research_draft_ref & out, std::string & error) {
+    std::lock_guard<std::mutex> lock(research_mutex_); out = {};
+    if (id.empty() || id.size() > 512 || scope.namespace_id.empty() || scope.session_id.empty()) { error = "research draft lookup identity is invalid"; return false; }
+    bool found = false;
+    if (!sqlite_draft_lookup(research_database_, sqlite_research_scope(scope), id, out, found, error)) return false;
+    if (!found) { error = "research draft was not found in this scope"; return false; }
+    if (out.owner_session_id != scope.session_id) { out = {}; error = "research draft belongs to a different chat session"; return false; }
+    error.clear(); return true;
+}
+
+bool common_agent_sqlite_data_store::save_research_draft(const common_agent_scope & scope,
+        const common_agent_research_draft_ref & input, uint64_t expected,
+        common_agent_research_draft_ref & saved, bool & already, std::string & error) {
+    std::lock_guard<std::mutex> lock(research_mutex_); saved = {}; already = false;
+    if (scope.namespace_id.empty() || scope.session_id.empty() || input.research_id.empty() || input.draft_id.empty() ||
+            input.owner_session_id != scope.session_id || input.payload_uri.empty() || input.payload_fingerprint.empty() ||
+            input.draft_revision != expected + 1 || input.research_id.size() > 512 || input.draft_id.size() > 512 || input.payload_uri.size() > 1024) {
+        error = "research draft publication is incomplete or not owned by this chat"; return false;
+    }
+    common_sqlite_transaction transaction(research_database_); if (!transaction.begin(error)) return false;
+    const auto key = sqlite_research_scope(scope); common_agent_research_draft_ref current; bool found = false;
+    if (!sqlite_draft_lookup(research_database_, key, input.draft_id, current, found, error)) return false;
+    if (found && current.research_id == input.research_id && current.owner_session_id == input.owner_session_id &&
+            current.base_revision == input.base_revision && current.draft_revision == input.draft_revision &&
+            current.payload_uri == input.payload_uri && current.payload_fingerprint == input.payload_fingerprint) {
+        saved = current; already = true; error.clear(); return true;
+    }
+    if ((found ? current.draft_revision : 0) != expected ||
+            (found && (current.research_id != input.research_id || current.owner_session_id != input.owner_session_id || current.base_revision != input.base_revision))) {
+        error = "research draft revision conflict"; return false;
+    }
+    common_sqlite_statement s; bool row = false;
+    if (!research_database_.prepare("INSERT INTO agent_research_drafts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(scope_key,draft_id) DO UPDATE SET research_id=excluded.research_id,owner=excluded.owner,base_revision=excluded.base_revision,revision=excluded.revision,payload_uri=excluded.payload_uri,fingerprint=excluded.fingerprint,updated_at_ms=excluded.updated_at_ms;", s, error) ||
+            !s.bind_text(1,key,error) || !s.bind_text(2,input.draft_id,error) || !s.bind_text(3,input.research_id,error) ||
+            !s.bind_text(4,input.owner_session_id,error) || !s.bind_int64(5,input.base_revision,error) ||
+            !s.bind_int64(6,input.draft_revision,error) || !s.bind_text(7,input.payload_uri,error) ||
+            !s.bind_text(8,input.payload_fingerprint,error) || !s.bind_int64(9,input.updated_at_ms,error) || !s.step(row,error) ||
+            !transaction.commit(error)) return false;
+    saved = input; error.clear(); return true;
+}
+
+bool common_agent_sqlite_data_store::get_research_revision(const std::string & id, uint64_t revision,
+        const common_agent_scope & scope, common_agent_research_revision_ref & out, std::string & error) {
+    std::lock_guard<std::mutex> lock(research_mutex_); out = {};
+    if (id.empty() || id.size() > 512 || scope.namespace_id.empty() || scope.session_id.empty()) { error = "research revision lookup identity is invalid"; return false; }
+    bool found = false;
+    if (!sqlite_revision_lookup(research_database_, sqlite_research_scope(scope), id, revision, out, found, error)) return false;
+    if (!found) { error = "research workspace was not found in this scope"; return false; }
+    error.clear(); return true;
+}
+
+bool common_agent_sqlite_data_store::publish_research_revision(const common_agent_scope & scope,
+        const common_agent_research_revision_ref & input, uint64_t expected,
+        common_agent_research_revision_ref & published, bool & already, std::string & error) {
+    std::lock_guard<std::mutex> lock(research_mutex_); published = {}; already = false;
+    if (scope.namespace_id.empty() || scope.session_id.empty() || input.research_id.empty() || input.research_id.size() > 512 ||
+            input.payload_uri.empty() || input.payload_uri.size() > 1024 || input.payload_fingerprint.empty() ||
+            input.payload_fingerprint.size() > 128 || input.publication_id.empty() || input.publication_id.size() > 256 ||
+            input.revision != expected + 1 || input.parent_revision != expected) { error = "research revision publication is incomplete or has an invalid sequence"; return false; }
+    common_sqlite_transaction transaction(research_database_); if (!transaction.begin(error)) return false;
+    const auto key = sqlite_research_scope(scope); common_agent_research_revision_ref current; bool found = false;
+    if (!sqlite_revision_lookup(research_database_, key, input.research_id, 0, current, found, error)) return false;
+    if (found && current.publication_id == input.publication_id && current.revision == input.revision && current.payload_fingerprint == input.payload_fingerprint) {
+        published = current; already = true; error.clear(); return true;
+    }
+    if ((found ? current.revision : 0) != expected) { error = "research workspace revision conflict"; return false; }
+    common_sqlite_statement s; bool row = false;
+    if (!research_database_.prepare("INSERT INTO agent_research_revisions VALUES(?1,?2,?3,?4,?5,?6,?7,?8);", s, error) ||
+            !s.bind_text(1,key,error) || !s.bind_text(2,input.research_id,error) || !s.bind_int64(3,input.revision,error) ||
+            !s.bind_int64(4,input.parent_revision,error) || !s.bind_text(5,input.payload_uri,error) ||
+            !s.bind_text(6,input.payload_fingerprint,error) || !s.bind_text(7,input.publication_id,error) ||
+            !s.bind_int64(8,input.published_at_ms,error) || !s.step(row,error) || !transaction.commit(error)) return false;
+    published = input; error.clear(); return true;
+}
 
 bool common_agent_sqlite_data_store::put_row(const std::string & dataset, const std::string & row_id, const std::string & row_json, std::string & error) {
     const auto value = json::parse(row_json, nullptr, false); if (!value.is_object() || dataset.empty() || row_id.empty()) { error = "data row requires dataset, row id and JSON object"; return false; }

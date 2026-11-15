@@ -2,6 +2,7 @@ package com.arm.aichat.agent
 
 import java.io.Closeable
 import org.json.JSONArray
+import org.json.JSONObject
 
 /** Host-owned lifecycle facade; turn submission remains on the common runtime seam. */
 class AgentRuntime private constructor(private var nativeHandle: Long) : Closeable {
@@ -9,12 +10,12 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         init { System.loadLibrary("ai-chat") }
 
         @JvmStatic
-        fun create(storageDirectory: String, modelPath: String? = null): AgentRuntime? {
-            val handle = nativeCreate(storageDirectory, modelPath)
+        fun create(storageDirectory: String, modelPath: String? = null, httpProfile: String? = null): AgentRuntime? {
+            val handle = nativeCreate(storageDirectory, modelPath, httpProfile)
             return if (handle == 0L) null else AgentRuntime(handle)
         }
 
-        @JvmStatic private external fun nativeCreate(storageDirectory: String, modelPath: String?): Long
+        @JvmStatic private external fun nativeCreate(storageDirectory: String, modelPath: String?, httpProfile: String?): Long
         @JvmStatic private external fun nativeCancel(handle: Long, reason: String?): Boolean
         @JvmStatic private external fun nativeIsCancelled(handle: Long): Boolean
         @JvmStatic private external fun nativeResetCancellation(handle: Long): Boolean
@@ -36,6 +37,8 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         @JvmStatic private external fun nativePollEvent(handle: Long): String?
         @JvmStatic private external fun nativePollResult(handle: Long): String?
         @JvmStatic private external fun nativeState(handle: Long): String?
+        @JvmStatic private external fun nativeHistory(handle: Long, namespaceId: String, sessionId: String): String?
+        @JvmStatic private external fun nativeReadResource(handle: Long, uri: String, namespaceId: String, sessionId: String, projectId: String?, turnId: String?): ByteArray?
         @JvmStatic private external fun nativeClose(handle: Long)
     }
 
@@ -83,9 +86,12 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
         projectId: String? = null,
         turnId: String = "turn-${System.currentTimeMillis()}",
         resourceRefs: List<String> = emptyList(),
+        resourceMimeTypes: List<String?> = emptyList(),
     ): Boolean = nativeHandle != 0L && nativeSubmitTurn(
         nativeHandle, prompt, mode, sessionId, namespaceId, projectId, turnId,
-        JSONArray(resourceRefs).toString())
+        JSONArray().apply { resourceRefs.forEachIndexed { index, path ->
+            put(JSONObject().put("path", path).put("mime_type", resourceMimeTypes.getOrNull(index)))
+        } }.toString())
 
     /** Returns one queued structured event, or null when no event is available. */
     fun pollEvent(): String? = if (nativeHandle == 0L) null else nativePollEvent(nativeHandle)
@@ -94,6 +100,12 @@ class AgentRuntime private constructor(private var nativeHandle: Long) : Closeab
     fun pollResult(): String? = if (nativeHandle == 0L) null else nativePollResult(nativeHandle)
 
     fun state(): String? = if (nativeHandle == 0L) null else nativeState(nativeHandle)
+
+    fun history(namespaceId: String, sessionId: String): String? =
+        if (nativeHandle == 0L) null else nativeHistory(nativeHandle, namespaceId, sessionId)
+
+    fun readResource(uri: String, namespaceId: String, sessionId: String, projectId: String?, turnId: String?): ByteArray? =
+        if (nativeHandle == 0L) null else nativeReadResource(nativeHandle, uri, namespaceId, sessionId, projectId, turnId)
 
     override fun close() {
         if (nativeHandle != 0L) {

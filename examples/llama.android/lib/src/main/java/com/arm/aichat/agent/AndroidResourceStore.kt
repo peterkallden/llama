@@ -5,6 +5,7 @@ import android.net.Uri
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.UUID
 
 data class AndroidImportedResource(
     val uri: String,
@@ -15,9 +16,19 @@ data class AndroidImportedResource(
 
 /** Imports ContentResolver data into the existing path-based agent resource seam. */
 class AndroidResourceStore(private val context: Context) {
+    /** Save a new editable text revision without modifying its source. */
+    fun saveText(name: String, text: String): AndroidImportedResource {
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        require(bytes.size <= 10 * 1024 * 1024) { "Text exceeds the local resource limit" }
+        val root = File(context.filesDir, "agent/resources").apply { mkdirs() }
+        val target = File(root, "${UUID.randomUUID()}-${safeName(name)}")
+        target.writeBytes(bytes)
+        return AndroidImportedResource(Uri.fromFile(target).toString(), target.absolutePath, "text/plain", bytes.size.toLong())
+    }
+
     fun import(uri: Uri, name: String = "resource-${System.currentTimeMillis()}"): AndroidImportedResource {
         val root = File(context.filesDir, "agent/resources").apply { mkdirs() }
-        val target = File(root, safeName(name))
+        val target = File(root, "${UUID.randomUUID()}-${safeName(name)}")
         val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
             target.outputStream().use { output -> input.copyTo(output) }
             target.length()

@@ -25,6 +25,8 @@ object AndroidMcpTransport {
             connection.connectTimeout = connectTimeoutMs.coerceAtLeast(1)
             connection.readTimeout = readTimeoutMs.coerceAtLeast(1)
             connection.requestMethod = "POST"
+            // Do not forward authorization to a redirected host.
+            connection.instanceFollowRedirects = false
             connection.doOutput = true
             val headersJsonObject = JSONObject(headersJson)
             headersJsonObject.keys().forEach { key ->

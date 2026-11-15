@@ -13,6 +13,8 @@
         android:theme="@style/Theme.AiChatSample"
         >
 
+        <activity android:name=".AgentServerActivity" android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

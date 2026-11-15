@@ -1,4 +1,5 @@
 #include "agent-runtime-session.h"
+#include "agent-model-residency.h"
 
 #include "../cli/agent-cli-inference.h"
 #ifndef LLAMA_AGENT_ANDROID_CLI_ONLY
@@ -310,16 +311,33 @@ bool initialize_agent_runtime_session_from_resident_model(
     common_agent_runtime_session & session,
     std::string & error) {
 #ifdef LLAMA_AGENT_ANDROID_CLI_ONLY
-    // Android owns the daemon-like lifecycle through AgentRuntimeService, but
-    // this profile has no standalone resident-model/server-context loader.
-    // Keep the unsupported path explicit so shared sources do not pull
-    // desktop loader symbols into the APK.
-    (void) options;
-    (void) backend;
-    (void) resident_model;
+    if (backend != agent_inference_backend::http || !resident_model) {
+        error = "resident backend is unavailable in the Android runtime";
+        return false;
+    }
+    if (session.inference_context.initialized &&
+            session.loaded_model.residency_owner == resident_model) {
+        error.clear();
+        return true;
+    }
+    auto inference = resident_model->create_inference();
+    if (!inference) {
+        error = "resident HTTP model could not create inference";
+        return false;
+    }
     session.reset();
-    error = "resident model loading is unavailable in the Android CLI-only runtime";
-    return false;
+    session.loaded_model.residency_owner = resident_model;
+    session.loaded_model.loaded = true;
+    session.loaded_model.backend = backend;
+    session.loaded_model.externally_owned = true;
+    session.inference_context.key = make_agent_inference_context_key(options, backend);
+    session.inference_context.session.backend = backend;
+    session.inference_context.session.inference = std::move(inference);
+    session.inference_context.session.capabilities.json_schema = resident_model->supports_json_schema();
+    session.inference_context.session.capabilities.native_tool_calls = resident_model->supports_native_tool_calls();
+    session.inference_context.initialized = true;
+    error.clear();
+    return true;
 #else
     error.clear();
     const auto loaded = common_agent_runtime_loaded_model_cast(resident_model);

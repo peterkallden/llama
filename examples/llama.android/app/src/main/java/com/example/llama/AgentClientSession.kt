@@ -50,14 +50,22 @@ class AgentClientSession(context: Context) : Closeable {
     }
 
     fun configureModel(modelPath: String?): Boolean {
-        val directory = appContext.filesDir.resolve("agent").absolutePath
+        val directory = appContext.filesDir.resolve("agent").apply { mkdirs() }.absolutePath
         return service?.configureModel(directory, modelPath) ?: false
     }
 
     fun configureAndPrepareModel(modelPath: String?): Boolean {
-        val directory = appContext.filesDir.resolve("agent").absolutePath
+        val directory = appContext.filesDir.resolve("agent").apply { mkdirs() }.absolutePath
         return service?.configureAndPrepareModel(directory, modelPath) ?: false
     }
+
+    fun configureAndPrepareHttp(profile: String): Boolean {
+        val directory = appContext.filesDir.resolve("agent").apply { mkdirs() }.absolutePath
+        return service?.configureAndPrepareHttp(directory, profile) ?: false
+    }
+
+    fun putCredential(reference: String, secret: String) = service?.putCredential(reference, secret)
+    fun removeCredential(reference: String) = service?.removeCredential(reference)
 
     fun pauseModel(): Boolean = service?.pauseModel() ?: false
 
@@ -70,6 +78,9 @@ class AgentClientSession(context: Context) : Closeable {
     fun capabilities(): String? = service?.capabilities()
 
     fun state(): String? = service?.state()
+    fun history(namespaceId: String, sessionId: String): String? = service?.history(namespaceId, sessionId)
+    fun readResource(uri: String, namespaceId: String, sessionId: String, projectId: String?, turnId: String?): ByteArray? =
+        service?.readResource(uri, namespaceId, sessionId, projectId, turnId)
 
     fun lifecycleState(): String = service?.lifecycleState() ?: "disconnected"
 
@@ -93,8 +104,9 @@ class AgentClientSession(context: Context) : Closeable {
         projectId: String? = null,
         turnId: String = "turn-${System.currentTimeMillis()}",
         resourceRefs: List<String> = emptyList(),
+        resourceMimeTypes: List<String?> = emptyList(),
     ): Boolean = service?.submitTurn(
-        prompt, mode, sessionId, namespaceId, projectId, turnId, resourceRefs) ?: false
+        prompt, mode, sessionId, namespaceId, projectId, turnId, resourceRefs, resourceMimeTypes) ?: false
 
     fun cancel(reason: String = "cancelled"): Boolean = service?.cancel(reason) ?: false
 

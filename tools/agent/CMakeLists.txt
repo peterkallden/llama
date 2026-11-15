@@ -140,6 +140,7 @@ set(AGENT_RUNTIME_HOST_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/openapi/dynamic/agent-openapi-dynamic-admission.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-chat-driver.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-host.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-research-workspace-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-resident.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-runtime-session-host.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/runtime/agent-session-context-store.cpp
@@ -241,6 +242,7 @@ list(REMOVE_ITEM AGENT_RUNTIME_SOURCES ${AGENT_DAEMON_SOURCES})
 
 set(AGENT_MCP_CLIENT_SOURCES
     ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-http-client.cpp
+    ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-resource-materializer.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-http-transport.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-stdio-client.cpp
     ${PROJECT_SOURCE_DIR}/tools/agent/mcp/agent-mcp-client-factory.cpp
@@ -680,6 +682,7 @@ target_link_libraries(llama-agent-runtime-host
         llama-agent-runtime-adapters
         llama-agent-runtime-selection
         llama-agent-runtime-packages
+        vendor::hash
         Threads::Threads
 )
 if (BUILD_SHARED_LIBS)
@@ -827,6 +830,7 @@ target_link_libraries(llama-agent-mcp-client-library
         llama-common
         Threads::Threads
     PRIVATE
+        vendor::hash
         cpp-httplib
 )
 if (BUILD_SHARED_LIBS)

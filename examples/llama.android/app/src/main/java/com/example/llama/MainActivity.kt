@@ -1,6 +1,7 @@
 package com.example.llama
 
 import android.net.Uri
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.app.AlertDialog
@@ -45,7 +46,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var resourceStore: AndroidResourceStore
     private var isModelReady = false
     private var turnActive = false
+    private var currentTurnId: String? = null
+    private var lastReplyAvailable = false
     private var pendingModelPath: String? = null
+    private val profilePrefs by lazy { getSharedPreferences("agent-http-profile", MODE_PRIVATE) }
+    private val sessionPrefs by lazy { getSharedPreferences("agent-session", MODE_PRIVATE) }
     private val attachments = mutableListOf<AndroidImportedResource>()
 
     private val messages = mutableListOf<Message>()
@@ -90,16 +95,23 @@ class MainActivity : AppCompatActivity() {
             showRuntimeStatus()
         }
         findViewById<Button>(R.id.mcp_button).setOnClickListener { showMcpTools() }
+        findViewById<Button>(R.id.server_button).setOnClickListener {
+            startActivity(Intent(this, AgentServerActivity::class.java))
+        }
         findViewById<Button>(R.id.attachment_button).setOnClickListener {
             showAttachmentManager()
         }
+        findViewById<Button>(R.id.edit_button).setOnClickListener { chooseEditableResource() }
+        findViewById<Button>(R.id.save_reply_button).setOnClickListener { saveLastReply() }
         modelManager = AndroidModelManager(this)
         resourceStore = AndroidResourceStore(this)
         agentSession = AgentClientSession(this)
         restoreClientState(savedInstanceState)
 
         agentSession.bind {
-            pendingModelPath?.let { path -> prepareModelAsync(path) }
+            val profile = profilePrefs.getString("active", null)
+            if (profile != null) prepareHttpAsync(profile)
+            else pendingModelPath?.let { path -> prepareModelAsync(path) }
             refreshRuntimeStatus()
             agentSession.startPolling(lifecycleScope, ::handleAgentEvent, ::handleAgentResult)
         }
@@ -127,8 +139,13 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 attachments.addAll(imported)
                 updateAttachmentButton()
+                val unsupported = imported.any { item ->
+                    val type = item.mimeType.orEmpty()
+                    !type.startsWith("text/") && type != "application/json"
+                }
                 Toast.makeText(this@MainActivity,
-                    "Attached ${imported.size} resource(s)", Toast.LENGTH_SHORT).show()
+                    if (unsupported) "Attached files; some formats have no local text processor. Use an agent server for document conversion."
+                    else "Attached ${imported.size} resource(s)", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -140,6 +157,64 @@ class MainActivity : AppCompatActivity() {
     private fun updateAttachmentButton() {
         findViewById<Button>(R.id.attachment_button).text =
             if (attachments.isEmpty()) "Attach" else "Attach (${attachments.size})"
+    }
+
+    private fun chooseEditableResource() {
+        val editable = attachments.filter { it.mimeType?.startsWith("text/") == true || it.mimeType == "application/json" }
+        if (editable.isEmpty()) {
+            Toast.makeText(this, "Attach a text document first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this).setTitle("Edit a copy")
+            .setItems(editable.map { it.path.substringAfterLast('/') }.toTypedArray()) { _, index ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val text = runCatching {
+                        val file = java.io.File(editable[index].path)
+                        require(file.length() <= 1024 * 1024) { "Document is too large for the text editor" }
+                        file.readText(Charsets.UTF_8)
+                    }
+                    withContext(Dispatchers.Main) {
+                        text.onSuccess { showTextEditor(editable[index], it) }
+                            .onFailure { Toast.makeText(this@MainActivity, it.message ?: "Unable to open document", Toast.LENGTH_LONG).show() }
+                    }
+                }
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun saveLastReply() {
+        val reply = if (lastReplyAvailable) messages.lastOrNull { !it.isUser && it.content.isNotBlank() }?.content else null
+        if (reply == null) {
+            Toast.makeText(this, "There is no reply to save", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = runCatching { resourceStore.saveText("agent-reply.txt", reply) }
+            withContext(Dispatchers.Main) {
+                result.onSuccess { attachments.add(it); updateAttachmentButton() }
+                    .onFailure { Toast.makeText(this@MainActivity, it.message ?: "Unable to save reply", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private fun showTextEditor(source: AndroidImportedResource, text: String) {
+        val editor = EditText(this).apply {
+            setText(text)
+            gravity = android.view.Gravity.TOP
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            minLines = 12
+        }
+        AlertDialog.Builder(this).setTitle("Edit text copy")
+            .setView(editor).setNegativeButton("Cancel", null)
+            .setPositiveButton("Save and attach") { _, _ ->
+                val revision = editor.text.toString()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val result = runCatching { resourceStore.saveText("edited-${source.path.substringAfterLast('/')}.txt", revision) }
+                    withContext(Dispatchers.Main) {
+                        result.onSuccess { attachments.add(it); updateAttachmentButton() }
+                            .onFailure { Toast.makeText(this@MainActivity, it.message ?: "Unable to save document", Toast.LENGTH_LONG).show() }
+                    }
+                }
+            }.show()
     }
 
     private fun showAttachmentManager() {
@@ -183,6 +258,7 @@ class MainActivity : AppCompatActivity() {
 
                 val modelName = metadata.filename() + FILE_EXTENSION_GGUF
                 val imported = modelManager.importGguf(uri, modelName)
+                profilePrefs.edit().remove("active").apply()
                 pendingModelPath = imported.path
                 withContext(Dispatchers.Main) {
                     prepareModelAsync(imported.path)
@@ -216,6 +292,7 @@ class MainActivity : AppCompatActivity() {
                 isModelReady = ready
                 if (ready) {
                     updateModelReadyUi()
+                    restoreHistory()
                 } else {
                     modelProgress.visibility = android.view.View.GONE
                     runtimeStatusTv.text = "Agent runtime: failed"
@@ -244,11 +321,18 @@ class MainActivity : AppCompatActivity() {
         messagesRv.scrollToPosition(messages.lastIndex)
 
         val resourceRefs = attachments.map { it.path }
-        if (!agentSession.submitTurn(userMsg, resourceRefs = resourceRefs)) {
+        val turnId = "turn-${UUID.randomUUID()}"
+        currentTurnId = turnId
+        if (!agentSession.submitTurn(userMsg,
+                sessionId = sessionPrefs.getString("session_id", "android") ?: "android",
+                projectId = sessionPrefs.getString("project_id", "")?.ifBlank { null },
+                turnId = turnId,
+                resourceRefs = resourceRefs, resourceMimeTypes = attachments.map { it.mimeType })) {
             messages.removeAt(messages.lastIndex)
             messages.removeAt(messages.lastIndex)
             messageAdapter.notifyDataSetChanged()
             turnActive = false
+            currentTurnId = null
             userInputEt.isEnabled = true
             userActionFab.isEnabled = true
             Toast.makeText(this, "Unable to start agent turn", Toast.LENGTH_SHORT).show()
@@ -256,7 +340,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleAgentEvent(message: String) {
-        val event = AgentClientMessages.parseEvent(message) ?: return
+        val parsed = AgentClientMessages.parseEvent(message) ?: return
+        val event = if (currentTurnId != null) parsed.copy(json = runCatching {
+            JSONObject(parsed.json).put("turn_id", currentTurnId).toString()
+        }.getOrDefault(parsed.json)) else parsed
         events.add(AgentEventRow(UUID.randomUUID().toString(), event))
         eventAdapter.notifyItemInserted(events.lastIndex)
         eventsRv.scrollToPosition(events.lastIndex)
@@ -277,7 +364,15 @@ class MainActivity : AppCompatActivity() {
     private fun exportArtifact(event: AgentClientEvent, destination: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                resourceStore.copyTo(event.resourceUri, destination)
+                if (event.resourceUri.startsWith("agent-resource://")) {
+                    val bytes = agentSession.readResource(event.resourceUri, "default",
+                        sessionPrefs.getString("session_id", "android") ?: "android",
+                        sessionPrefs.getString("project_id", "")?.ifBlank { null },
+                        runCatching { JSONObject(event.json).optString("turn_id").ifBlank { null } }.getOrNull())
+                        ?: error("The artifact is unavailable in this session")
+                    contentResolver.openOutputStream(destination)?.use { it.write(bytes) }
+                        ?: error("Unable to open destination document")
+                } else resourceStore.copyTo(event.resourceUri, destination)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(this@MainActivity, "Artifact saved", Toast.LENGTH_SHORT).show()
                 }
@@ -293,6 +388,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleAgentResult(message: String) {
         val result = AgentClientMessages.parseResult(message) ?: return
+        lastReplyAvailable = result.ok && result.response.isNotBlank()
         val response = if (result.ok) result.response else result.error
 
         if (messages.isNotEmpty() && !messages.last().isUser) {
@@ -328,13 +424,195 @@ class MainActivity : AppCompatActivity() {
             append(prettyJson(capabilities))
             append("\n\nAttachments: ")
             append(attachments.size)
+            append("\nSession: ")
+            append(sessionPrefs.getString("session_id", "android"))
+            append("\nProject: ")
+            append(sessionPrefs.getString("project_id", "").orEmpty().ifBlank { "none" })
         }
         AlertDialog.Builder(this)
             .setTitle("Agent runtime")
             .setMessage(content)
             .setNeutralButton("Configure MCP") { _, _ -> showMcpConfiguration() }
-            .setPositiveButton("OK", null)
+            .setNegativeButton("HTTP model") { _, _ -> showHttpConfiguration() }
+            .setPositiveButton("Session") { _, _ -> showSessionSettings() }
             .show()
+    }
+
+    private fun showSessionSettings() {
+        if (turnActive) {
+            Toast.makeText(this, "Wait for the current turn before switching sessions", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val session = EditText(this).apply {
+            hint = "Session ID"
+            setText(sessionPrefs.getString("session_id", "android"))
+            setSingleLine()
+        }
+        val project = EditText(this).apply {
+            hint = "Project ID (optional)"
+            setText(sessionPrefs.getString("project_id", ""))
+            setSingleLine()
+        }
+        val fields = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 8, 32, 0)
+            addView(session)
+            addView(project)
+        }
+        AlertDialog.Builder(this).setTitle("Local session")
+            .setView(fields)
+            .setNeutralButton("New session") { _, _ ->
+                sessionPrefs.edit().putString("session_id", "android-${UUID.randomUUID()}")
+                    .putString("project_id", project.text.toString().trim()).apply()
+                messages.clear()
+                lastReplyAvailable = false
+                messageAdapter.notifyDataSetChanged()
+            }
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val id = session.text.toString().trim()
+                if (id.isNotEmpty()) {
+                    sessionPrefs.edit().putString("session_id", id)
+                        .putString("project_id", project.text.toString().trim()).apply()
+                    messages.clear()
+                    lastReplyAvailable = false
+                    messageAdapter.notifyDataSetChanged()
+                    restoreHistory()
+                } else Toast.makeText(this, "Session ID is required", Toast.LENGTH_SHORT).show()
+            }.show()
+    }
+
+    private fun showHttpConfiguration() {
+        val old = runCatching { JSONObject(profilePrefs.getString("active", "{}") ?: "{}") }
+            .getOrDefault(JSONObject())
+        fun field(label: String, value: String = "", secret: Boolean = false) = EditText(this).apply {
+            hint = label
+            setText(value)
+            setSingleLine()
+            if (secret) inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val endpoint = field("HTTPS endpoint", old.optString("endpoint"))
+        val profileName = field("Profile name", old.optString("name", "HTTP model"))
+        val model = field("Model ID", old.optString("model_id"))
+        val context = field("Context tokens", old.optString("context_size", "32768"))
+        context.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        val maxOutput = field("Maximum output tokens", old.optString("max_output_tokens", "1024"))
+        maxOutput.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        val token = field("API key (leave empty to retain)", secret = true)
+        val tokenParameter = field("Token limit parameter", old.optString("token_limit_parameter", "max_tokens"))
+        val outputFormat = field("Tool output format: json, jsonl or dsl", old.optString("tool_output_format", "json"))
+        val reasoning = field("Reasoning effort (optional)", old.optString("reasoning_effort"))
+        fun option(label: String, checked: Boolean) = android.widget.CheckBox(this).apply {
+            text = label
+            isChecked = checked
+        }
+        val schema = option("Supports JSON schema", old.optBoolean("supports_json_schema", true))
+        val tools = option("Supports native tool calls", old.optBoolean("supports_native_tool_calls", true))
+        val mapNames = option("Map tool names for provider", old.optBoolean("map_tool_names", false))
+        val strict = option("Use strict JSON schema", old.optBoolean("strict_json_schema", true))
+        val fields = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 8, 32, 0)
+            listOf(profileName, endpoint, model, context, maxOutput, token, tokenParameter, outputFormat, reasoning, schema, tools, mapNames, strict).forEach { addView(it) }
+        }
+        val scroll = android.widget.ScrollView(this).apply { addView(fields) }
+        AlertDialog.Builder(this).setTitle("HTTP inference")
+            .setView(scroll)
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Profiles") { _, _ -> showHttpProfiles() }
+            .setPositiveButton("Save") { _, _ ->
+                val url = Uri.parse(endpoint.text.toString().trim())
+                val modelId = model.text.toString().trim()
+                val size = context.text.toString().toLongOrNull()
+                val output = maxOutput.text.toString().toIntOrNull()
+                val parameter = tokenParameter.text.toString().trim()
+                val format = outputFormat.text.toString().trim()
+                val name = profileName.text.toString().trim()
+                if (url.scheme != "https" || url.host.isNullOrBlank() || url.userInfo != null ||
+                    name.isEmpty() || name.length > 128 || modelId.isBlank() || size == null || size <= 0 || size > 1_048_576 ||
+                    output == null || output !in 1..32768 || output.toLong() >= size ||
+                    parameter !in setOf("max_tokens", "max_completion_tokens") || format !in setOf("json", "jsonl", "dsl")) {
+                    Toast.makeText(this, "Enter a valid HTTPS endpoint, model, context and token parameter", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                val sameEndpoint = old.optString("endpoint") == url.toString().trimEnd('/')
+                val reference = if (sameEndpoint && old.optString("credential_ref").isNotEmpty())
+                    old.optString("credential_ref") else "android-http-${UUID.randomUUID()}"
+                if (token.text.isNotEmpty()) agentSession.putCredential(reference, token.text.toString())
+                val hasCredential = token.text.isNotEmpty() ||
+                    (sameEndpoint && old.optString("credential_ref").isNotEmpty())
+                val json = JSONObject().put("name", name).put("endpoint", url.toString().trimEnd('/'))
+                    .put("model_id", modelId).put("context_size", size)
+                    .put("max_output_tokens", output)
+                    .put("tool_output_format", format)
+                    .put("credential_ref", if (hasCredential) reference else "")
+                    .put("supports_json_schema", schema.isChecked).put("supports_native_tool_calls", tools.isChecked)
+                    .put("map_tool_names", mapNames.isChecked)
+                    .put("strict_json_schema", strict.isChecked)
+                    .put("token_limit_parameter", parameter)
+                    .put("reasoning_effort", reasoning.text.toString().trim()).toString()
+                profilePrefs.edit().putString("profile:$name", json).putString("active", json).apply()
+                prepareHttpAsync(json)
+            }.show()
+    }
+
+    private fun showHttpProfiles() {
+        val names = profilePrefs.all.keys.filter { it.startsWith("profile:") }
+            .map { it.removePrefix("profile:") }.sorted()
+        if (names.isEmpty()) {
+            Toast.makeText(this, "No saved HTTP profiles", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this).setTitle("HTTP profiles")
+            .setItems(names.toTypedArray()) { _, index ->
+                val profile = profilePrefs.getString("profile:${names[index]}", null) ?: return@setItems
+                profilePrefs.edit().putString("active", profile).apply()
+                prepareHttpAsync(profile)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun prepareHttpAsync(profile: String) {
+        isModelReady = false
+        modelProgress.visibility = android.view.View.VISIBLE
+        userInputEt.isEnabled = false
+        userActionFab.isEnabled = false
+        lifecycleScope.launch(Dispatchers.IO) {
+            val ready = agentSession.configureAndPrepareHttp(profile)
+            withContext(Dispatchers.Main) {
+                isModelReady = ready
+                if (ready) { updateModelReadyUi(); restoreHistory() } else {
+                    modelProgress.visibility = android.view.View.GONE
+                    runtimeStatusTv.text = "HTTP model: unavailable"
+                    userActionFab.isEnabled = true
+                }
+                refreshRuntimeStatus()
+            }
+        }
+    }
+
+    private fun restoreHistory() {
+        val sessionId = sessionPrefs.getString("session_id", "android") ?: "android"
+        lifecycleScope.launch(Dispatchers.IO) {
+            val raw = agentSession.history("default", sessionId)
+            val records = runCatching { JSONArray(raw ?: "[]") }.getOrDefault(JSONArray())
+            val restored = (0 until records.length()).mapNotNull { index ->
+                val record = records.optJSONObject(index) ?: return@mapNotNull null
+                val role = record.optString("role")
+                if (role != "user" && role != "assistant") return@mapNotNull null
+                Message(record.optString("id").ifBlank { UUID.randomUUID().toString() },
+                    record.optString("content"), role == "user")
+            }
+            withContext(Dispatchers.Main) {
+                if (!turnActive && sessionId == (sessionPrefs.getString("session_id", "android") ?: "android")) {
+                    messages.clear()
+                    messages.addAll(restored)
+                    lastReplyAvailable = restored.lastOrNull()?.let { !it.isUser && it.content.isNotBlank() } == true
+                    messageAdapter.notifyDataSetChanged()
+                    if (messages.isNotEmpty()) messagesRv.scrollToPosition(messages.lastIndex)
+                }
+            }
+        }
     }
 
     private fun prettyJson(value: String): String = runCatching {
@@ -474,9 +752,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (::agentSession.isInitialized && agentSession.isConnected &&
-                pendingModelPath != null && !agentSession.hasRuntime()) {
-            prepareModelAsync(pendingModelPath!!, resume = true)
+        if (::agentSession.isInitialized && agentSession.isConnected && !agentSession.hasRuntime()) {
+            val profile = profilePrefs.getString("active", null)
+            if (profile != null) prepareHttpAsync(profile)
+            else pendingModelPath?.let { prepareModelAsync(it, resume = true) }
         }
     }
 
@@ -484,9 +763,10 @@ class MainActivity : AppCompatActivity() {
         pendingModelPath = state?.getString(KEY_MODEL_PATH)
         val paths = state?.getStringArrayList(KEY_ATTACHMENT_PATHS).orEmpty()
         val uris = state?.getStringArrayList(KEY_ATTACHMENT_URIS).orEmpty()
+        val mimeTypes = state?.getStringArrayList(KEY_ATTACHMENT_MIMES).orEmpty()
         paths.forEachIndexed { index, path ->
             if (java.io.File(path).isFile) attachments.add(
-                AndroidImportedResource(uris.getOrNull(index).orEmpty(), path, null,
+                AndroidImportedResource(uris.getOrNull(index).orEmpty(), path, mimeTypes.getOrNull(index)?.ifBlank { null },
                     java.io.File(path).length())
             )
         }
@@ -499,6 +779,8 @@ class MainActivity : AppCompatActivity() {
             ArrayList(attachments.map { it.path }))
         outState.putStringArrayList(KEY_ATTACHMENT_URIS,
             ArrayList(attachments.map { it.uri }))
+        outState.putStringArrayList(KEY_ATTACHMENT_MIMES,
+            ArrayList(attachments.map { it.mimeType.orEmpty() }))
         super.onSaveInstanceState(outState)
     }
 
@@ -530,6 +812,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_MODEL_PATH = "android_client_model_path"
         private const val KEY_ATTACHMENT_PATHS = "android_client_attachment_paths"
         private const val KEY_ATTACHMENT_URIS = "android_client_attachment_uris"
+        private const val KEY_ATTACHMENT_MIMES = "android_client_attachment_mimes"
     }
 }
 

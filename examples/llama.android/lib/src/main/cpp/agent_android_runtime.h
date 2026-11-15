@@ -3,7 +3,7 @@
 #include <jni.h>
 
 extern "C" {
-JNIEXPORT jlong JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv *, jclass, jstring, jstring);
+JNIEXPORT jlong JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv *, jclass, jstring, jstring, jstring);
 JNIEXPORT jboolean JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeCancel(JNIEnv *, jclass, jlong, jstring);
 JNIEXPORT jboolean JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeIsCancelled(JNIEnv *, jclass, jlong);
 JNIEXPORT jboolean JNICALL Java_com_arm_aichat_agent_AgentRuntime_nativeResetCancellation(JNIEnv *, jclass, jlong);

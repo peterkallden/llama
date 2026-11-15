@@ -23,6 +23,7 @@ class AgentRuntimeService : Service() {
     private var runtime: AgentRuntime? = null
     private var storageDirectory: String? = null
     private var modelPath: String? = null
+    private var httpProfile: String? = null
     @Volatile private var lifecycleState = "idle"
 
     override fun onCreate() {
@@ -51,7 +52,7 @@ class AgentRuntimeService : Service() {
     @Synchronized
     fun configureModel(directory: String, selectedModelPath: String?): Boolean {
         if (directory.isBlank()) return false
-        if (runtime != null && storageDirectory == directory && modelPath == selectedModelPath) {
+        if (runtime != null && storageDirectory == directory && modelPath == selectedModelPath && httpProfile == null) {
             return true
         }
 
@@ -61,8 +62,25 @@ class AgentRuntimeService : Service() {
         runtime = AgentRuntime.create(directory, selectedModelPath)
         storageDirectory = directory
         modelPath = selectedModelPath
+        httpProfile = null
         if (runtime == null) lifecycleState = "failed"
         return runtime != null
+    }
+
+    /** Replace the host profile while retaining durable session storage. */
+    @Synchronized
+    fun configureAndPrepareHttp(directory: String, profile: String): Boolean {
+        if (directory.isBlank() || profile.isBlank()) return false
+        lifecycleState = "loading"
+        runtime?.cancel("model_reconfigured")
+        runtime?.close()
+        runtime = AgentRuntime.create(directory, null, profile)
+        storageDirectory = directory
+        modelPath = null
+        httpProfile = profile
+        val prepared = runtime?.prepareModel() == true
+        lifecycleState = if (prepared) "ready" else "failed"
+        return prepared
     }
 
     /** Configure and load the model; callers must invoke this off the UI thread. */
@@ -93,7 +111,7 @@ class AgentRuntimeService : Service() {
         if (runtime != null) return true
         val directory = storageDirectory ?: return false
         lifecycleState = "loading"
-        runtime = AgentRuntime.create(directory, modelPath)
+        runtime = AgentRuntime.create(directory, modelPath, httpProfile)
         if (runtime == null) lifecycleState = "failed"
         return runtime != null
     }
@@ -118,14 +136,18 @@ class AgentRuntimeService : Service() {
         projectId: String? = null,
         turnId: String = "turn-${System.currentTimeMillis()}",
         resourceRefs: List<String> = emptyList(),
+        resourceMimeTypes: List<String?> = emptyList(),
     ): Boolean = runtime?.submitTurn(
-        prompt, mode, sessionId, namespaceId, projectId, turnId, resourceRefs) ?: false
+        prompt, mode, sessionId, namespaceId, projectId, turnId, resourceRefs, resourceMimeTypes) ?: false
 
     fun pollEvent(): String? = runtime?.pollEvent()
 
     fun pollResult(): String? = runtime?.pollResult()
 
     fun state(): String? = runtime?.state()
+    fun history(namespaceId: String, sessionId: String): String? = runtime?.history(namespaceId, sessionId)
+    fun readResource(uri: String, namespaceId: String, sessionId: String, projectId: String?, turnId: String?): ByteArray? =
+        runtime?.readResource(uri, namespaceId, sessionId, projectId, turnId)
 
     fun lifecycleState(): String = lifecycleState
 
@@ -153,6 +175,7 @@ class AgentRuntimeService : Service() {
         runtime = null
         storageDirectory = null
         modelPath = null
+        httpProfile = null
         lifecycleState = "idle"
         super.onDestroy()
     }

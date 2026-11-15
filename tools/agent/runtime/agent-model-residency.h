@@ -2,6 +2,7 @@
 
 #include "agent/runtime/model-catalog.h"
 #include "agent/runtime/model-profile-cache.h"
+#include "agent/agent-inference.h"
 
 #include <condition_variable>
 #include <cstddef>
@@ -17,6 +18,11 @@
 // needs to know which backend-specific object it contains.
 struct common_agent_runtime_resident_model {
     virtual ~common_agent_runtime_resident_model() = default;
+    // Platforms may supply a host-owned inference implementation with their
+    // own transport. The resident object retains its configuration and secrets.
+    virtual std::unique_ptr<common_agent_inference> create_inference() const { return {}; }
+    virtual bool supports_json_schema() const { return false; }
+    virtual bool supports_native_tool_calls() const { return false; }
 };
 
 class common_agent_runtime_model_loader {

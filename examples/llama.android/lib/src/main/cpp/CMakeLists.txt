@@ -63,6 +63,7 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-chat-driver.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-execution.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-host.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-research-workspace-host.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-route-compiler.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-plan-orchestration.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-dataset-workflow-adapter.cpp
@@ -70,12 +71,16 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/runtime/agent-workflow-transition.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-resident.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-model-residency.cpp
+        ${LLAMA_SRC}/tools/agent/runtime/agent-http-inference.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-session-host.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-session-context-store.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-turn-driver.cpp
         ${LLAMA_SRC}/tools/agent/runtime/agent-runtime-package-io.cpp
         ${LLAMA_SRC}/tools/agent/resource/agent-resource-chunker.cpp
+        ${LLAMA_SRC}/tools/agent/resource/agent-resource-catalog.cpp
+        ${LLAMA_SRC}/tools/agent/resource/agent-resource-store.cpp
+        ${LLAMA_SRC}/tools/agent/data/agent-data-store-sqlite.cpp
         ${LLAMA_SRC}/tools/agent/resource/agent-resource-evidence-session.cpp
         ${LLAMA_SRC}/tools/agent/openapi/agent-openapi-catalog.cpp
         ${LLAMA_SRC}/tools/agent/openapi/dynamic/agent-openapi-dynamic-admission.cpp
@@ -86,6 +91,7 @@ add_library(llama-agent-android-runtime STATIC
         ${LLAMA_SRC}/tools/agent/tooling/agent-tool-runtime-adapter.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-protocol.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-client.cpp
+        ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-resource-materializer.cpp
         ${LLAMA_SRC}/tools/agent/mcp/agent-mcp-http-transport.cpp
         ${CMAKE_CURRENT_LIST_DIR}/agent_android_credentials.cpp
         ${CMAKE_CURRENT_LIST_DIR}/agent_android_mcp_transport.cpp)
@@ -120,12 +126,14 @@ target_link_libraries(llama-agent-android-runtime PUBLIC
         llama-agent-plan
         llama-agent-storage-sqlite
         cpp-httplib
+        vendor::hash
         llama-common
         llama)
 
 add_library(${CMAKE_PROJECT_NAME} SHARED
         ai_chat.cpp
         agent_android_runtime.cpp
+        agent_android_resource_catalog.cpp
         agent_android_storage.cpp)
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE

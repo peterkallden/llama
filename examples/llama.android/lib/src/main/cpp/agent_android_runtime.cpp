@@ -8,6 +8,8 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <filesystem>
+#include <fstream>
 
 #include "agent/runtime/agent-event-queue.h"
 #include "agent/contracts/agent-request.h"
@@ -16,11 +18,133 @@
 #include "plan/sqlite/plan-sqlite.h"
 #include "tools/agent/runtime/agent-runtime-control.h"
 #include "tools/agent/runtime/agent-runtime-session-host.h"
+#include "tools/agent/runtime/agent-session-context-store.h"
+#include "tools/agent/runtime/agent-research-workspace-host.h"
+#include "tools/agent/runtime/agent-http-inference.h"
+#include "tools/agent/mcp/agent-mcp-resource-materializer.h"
 #include "tools/agent/tooling/agent-tool-provider.h"
+#include "tools/agent/resource/agent-resource-store.h"
+#include "tools/agent/data/agent-data-store-sqlite.h"
+#include "agent/tooling/adapters/adapter-bindings.h"
 #include "agent_android_mcp_transport.h"
 #include "agent_android_credentials.h"
+#include "agent_android_resource_catalog.h"
 
 namespace {
+// Keep the local resource namespace unambiguous while preserving access to
+// resources returned by an attached MCP provider under distinct names.
+class android_mcp_client_view final : public agent_mcp_tool_client {
+public:
+    android_mcp_client_view(std::shared_ptr<agent_mcp_http_client> client, agent_resource_store * store,
+            std::shared_ptr<void> store_owner)
+        : client_(std::move(client)), store_(store), store_owner_(std::move(store_owner)) {}
+    bool list_tools(const agent_tool_context & context, std::vector<mcp_agent_tool_definition> & tools,
+            std::string & error) override {
+        if (!client_->list_tools(context, tools, error)) return false;
+        for (auto & tool : tools) if (local_family(tool.name)) tool.name = "remote_" + tool.name;
+        return true;
+    }
+    bool call_tool(const agent_tool_context & context, const mcp_agent_tool_definition & tool,
+            const std::string & arguments, mcp_agent_tool_call_result & result, std::string & error) override {
+        auto original = tool;
+        if (original.name.rfind("remote_", 0) == 0 && local_family(original.name.substr(7)))
+            original.name.erase(0, 7);
+        if (!client_->call_tool(context, original, arguments, result, error)) return false;
+        std::string materialization_error;
+        if (!agent_materialize_mcp_resources(*client_, *store_, context, "android-mcp", original.name, result, materialization_error)) {
+            result = {};
+            result.failure_code = "mcp.resource_materialization_failed";
+            result.safe_summary = "The remote resource could not be saved completely for this session.";
+            result.raw_diagnostic = materialization_error;
+        }
+        error.clear();
+        return true;
+    }
+    bool read_resource(const std::string & uri, mcp_agent_resource_read_result & result, std::string & error) override {
+        return client_->read_resource(uri, result, error);
+    }
+private:
+    static bool local_family(const std::string & name) {
+        return name.rfind("resource.", 0) == 0 || name.rfind("dataset.", 0) == 0 ||
+            name.rfind("data.", 0) == 0 || name.rfind("statistics.", 0) == 0;
+    }
+    std::shared_ptr<agent_mcp_http_client> client_;
+    agent_resource_store * store_;
+    std::shared_ptr<void> store_owner_;
+};
+
+class android_http_resident final : public common_agent_runtime_resident_model {
+public:
+    common_agent_model_selection selection;
+    std::shared_ptr<agent_mcp_http_transport> transport;
+    std::shared_ptr<common_agent_credential_provider> credentials;
+    std::string credential_ref;
+
+    bool supports_json_schema() const override { return selection.supports_json_schema; }
+    bool supports_native_tool_calls() const override { return selection.supports_native_tool_calls; }
+    std::unique_ptr<common_agent_inference> create_inference() const override {
+        auto channel = transport;
+        auto provider = credentials;
+        auto reference = credential_ref;
+        return make_agent_http_inference(selection, [channel, provider, reference](
+                const std::string & url, const std::string & body, uint32_t connect_ms,
+                uint32_t request_ms, int & status, std::string & output, std::string & error) {
+            if (!channel) { error = "Android HTTPS transport is unavailable"; return false; }
+            agent_mcp_http_request request;
+            request.url = url;
+            request.body = body;
+            request.connect_timeout_ms = connect_ms;
+            request.request_timeout_ms = request_ms;
+            request.max_result_bytes = 16U * 1024U * 1024U;
+            request.headers["Content-Type"] = "application/json";
+            if (!reference.empty()) {
+                std::string secret;
+                if (!provider || !provider->resolve(reference, secret, error) || secret.empty()) {
+                    error = "HTTP model credential is unavailable";
+                    return false;
+                }
+                request.headers["Authorization"] = "Bearer " + secret;
+            }
+            agent_mcp_http_response response;
+            if (!channel->post(request, response, error)) return false;
+            status = response.status;
+            output = std::move(response.body);
+            return true;
+        });
+    }
+};
+
+class android_http_loader final : public common_agent_runtime_model_loader {
+public:
+    std::shared_ptr<agent_mcp_http_transport> transport;
+    std::shared_ptr<common_agent_credential_provider> credentials;
+    std::string credential_ref;
+    bool load(const common_agent_model_selection & selection,
+            std::shared_ptr<common_agent_runtime_resident_model> & model,
+            std::string & error) override {
+        if (!transport || selection.backend != "http" || selection.endpoint.rfind("https://", 0) != 0 ||
+                selection.model_id.empty() || selection.context_size_tokens == 0) {
+            error = "Android HTTP model requires HTTPS, model ID and context size";
+            return false;
+        }
+        if (!credential_ref.empty()) {
+            std::string secret;
+            if (!credentials || !credentials->resolve(credential_ref, secret, error) || secret.empty()) {
+                error = "HTTP model credential is unavailable";
+                return false;
+            }
+        }
+        auto loaded = std::make_shared<android_http_resident>();
+        loaded->selection = selection;
+        loaded->transport = transport;
+        loaded->credentials = credentials;
+        loaded->credential_ref = credential_ref;
+        model = std::move(loaded);
+        error.clear();
+        return true;
+    }
+};
+
 struct android_agent_runtime_handle {
     android_agent_runtime_handle(std::string directory, std::string model)
         : storage_directory(std::move(directory)),
@@ -28,10 +152,15 @@ struct android_agent_runtime_handle {
           cancellation(std::make_shared<common_agent_runtime_cancellation_state>()) {}
     std::string storage_directory;
     std::string model_path;
+    bool http_model = false;
+    int max_output_tokens = 384;
     std::shared_ptr<common_agent_runtime_cancellation_state> cancellation;
     common_agent_event_queue events;
     common_memory_sqlite_store memory_store;
     common_plan_sqlite_store plan_store;
+    common_agent_sqlite_data_store data_store;
+    common_tool_catalog catalog;
+    std::unique_ptr<agent_resource_store> resources;
     std::unique_ptr<common_agent_runtime_session_host> session_host;
     bool storage_ready = false;
     std::shared_ptr<agent_mcp_http_client> mcp_client;
@@ -122,11 +251,16 @@ std::string mcp_tools_json(const std::vector<mcp_agent_tool_definition> & tools)
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstring directory, jstring model) {
+Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstring directory, jstring model, jstring http_config) {
     const std::string storage_directory = to_string(env, directory);
     if (storage_directory.empty()) return 0;
     const std::string model_path = to_string(env, model);
     auto runtime = std::make_shared<android_agent_runtime_handle>(storage_directory, model_path);
+    const std::string http_json = to_string(env, http_config);
+    const auto profile = http_json.empty() ? nlohmann::json() : nlohmann::json::parse(http_json, nullptr, false);
+    if (!http_json.empty() && (!profile.is_object() || !profile.contains("endpoint") ||
+            !profile.contains("model_id") || !profile.contains("context_size"))) return 0;
+    runtime->http_model = !http_json.empty();
     JavaVM * java_vm = nullptr;
     if (env->GetJavaVM(&java_vm) == JNI_OK) {
         jclass transport_class = env->FindClass("com/arm/aichat/agent/AndroidMcpTransport");
@@ -158,11 +292,18 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstrin
     }
     std::string error;
     if (!runtime->memory_store.open(storage_directory + "/memory.sqlite", error) ||
-            !runtime->plan_store.open(storage_directory + "/plan.sqlite", error)) {
+            !runtime->plan_store.open(storage_directory + "/plan.sqlite", error) ||
+            !runtime->data_store.open(storage_directory + "/datasets.sqlite", error)) {
         runtime->plan_store.close();
         runtime->memory_store.close();
         return 0;
     }
+    common_tool_bootstrap_result bootstrap;
+    if (!runtime->catalog.bootstrap("research", bootstrap, error)) return 0;
+    auto catalog = std::make_unique<android_resource_catalog>();
+    if (!catalog->open(storage_directory + "/resources.sqlite", error)) return 0;
+    auto blobs = std::make_shared<agent_filesystem_blob_store>(storage_directory + "/resource-blobs");
+    runtime->resources = std::make_unique<agent_catalogued_resource_store>(std::move(blobs), std::move(catalog));
 
     common_agent_runtime_session_host_build_config host_build_config{
         runtime->memory_store,
@@ -182,6 +323,52 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstrin
     host_build_config.resident_request.n_threads = 4;
     host_build_config.resident_request.context_size_tokens = 3072;
     host_build_config.resident_request.n_predict = 384;
+    host_build_config.context_resource_store = runtime->resources.get();
+    host_build_config.context_resource_store_persistent = true;
+    if (runtime->http_model) {
+      try {
+        if (!profile["endpoint"].is_string() || !profile["model_id"].is_string() ||
+                !profile["context_size"].is_number_unsigned()) return 0;
+        common_agent_model_catalog catalog;
+        common_agent_model_base_spec base;
+        base.backend = "http";
+        base.endpoint = profile["endpoint"].get<std::string>();
+        base.model_id = profile["model_id"].get<std::string>();
+        base.supports_json_schema = profile.value("supports_json_schema", true);
+        base.supports_native_tool_calls = profile.value("supports_native_tool_calls", true);
+        base.map_tool_names = profile.value("map_tool_names", false);
+        base.token_limit_parameter = profile.value("token_limit_parameter", std::string("max_tokens"));
+        base.reasoning_effort = profile.value("reasoning_effort", std::string());
+        base.strict_json_schema = profile.value("strict_json_schema", true);
+        base.connect_timeout_ms = profile.value("connect_timeout_ms", 5000U);
+        base.request_timeout_ms = profile.value("request_timeout_ms", 120000U);
+        common_agent_model_profile_spec model_profile;
+        model_profile.base_model_id = "android-http";
+        model_profile.context_size_tokens = profile["context_size"].get<size_t>();
+        const auto output_format = profile.value("tool_output_format", std::string("json"));
+        if (output_format == "json") model_profile.tool_output_format = common_agent_tool_output_format::native;
+        else if (output_format == "jsonl") model_profile.tool_output_format = common_agent_tool_output_format::jsonl;
+        else if (output_format == "dsl") model_profile.tool_output_format = common_agent_tool_output_format::compact_dsl;
+        else return 0;
+        model_profile.tool_output_format_configured = true;
+        catalog.bases["android-http"] = base;
+        catalog.profiles[catalog.default_profile] = model_profile;
+        auto loader = std::make_shared<android_http_loader>();
+        loader->transport = runtime->android_https_transport;
+        loader->credentials = runtime->android_credential_provider;
+        loader->credential_ref = profile.value("credential_ref", std::string());
+        host_build_config.model_residency = std::make_shared<common_agent_runtime_model_residency>(
+            std::move(catalog), std::unordered_map<std::string, std::shared_ptr<common_agent_runtime_model_loader>>{{"http", loader}});
+        host_build_config.resident_request.inference_backend = "http";
+        host_build_config.resident_request.context_size_tokens = model_profile.context_size_tokens;
+        runtime->max_output_tokens = profile.value("max_output_tokens", 1024);
+        if (runtime->max_output_tokens < 1 || runtime->max_output_tokens > 32768) return 0;
+        host_build_config.resident_request.n_predict = runtime->max_output_tokens;
+      } catch (const std::exception &) {
+        // Corrupt host configuration must not cross JNI as a C++ exception.
+        return 0;
+      }
+    }
     const std::weak_ptr<android_agent_runtime_handle> weak_runtime = runtime;
     host_build_config.tooling_resolver = [weak_runtime](
             const common_agent_runtime_resident_runtime *,
@@ -199,12 +386,6 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstrin
             std::lock_guard<std::mutex> lock(runtime->mcp_mutex);
             client = runtime->mcp_client;
         }
-        if (!client) {
-            tooling = {};
-            error.clear();
-            return true;
-        }
-
         agent_tool_context context;
         context.request_id = request.request_id.empty() ? request.turn_id : request.request_id;
         context.turn_id = request.turn_id;
@@ -214,21 +395,60 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCreate(JNIEnv * env, jclass, jstrin
         context.scope.turn_id = request.turn_id;
         context.memory_scope = request.memory_scope;
         context.plan_scope = request.plan_scope;
-        context.profile_id = "android-mcp";
+        context.profile_id = "research";
         context.allowed_exposed_tool_names = request.allowed_exposed_tool_names;
         context.allow_network = true;
         context.max_calls = 4;
         context.execution_control = request.execution_control;
 
-        mcp_agent_tool_provider provider("android-mcp", *client);
-        auto view = provider.resolve_tools(context, error);
+        auto mcp_view = client ? std::make_shared<android_mcp_client_view>(client, runtime->resources.get(), runtime) : nullptr;
+        if (context.allowed_exposed_tool_names.empty()) {
+            context.allowed_exposed_tool_names = {"resource.inspect", "resource.read", "dataset.list",
+                "dataset.select", "dataset.inspect", "dataset.schema", "dataset.sample", "dataset.validate",
+                "data.query", "data.filter", "data.aggregate", "data.join", "data.transform",
+                "statistics.describe", "statistics.outliers", "statistics.value_counts"};
+            if (client) {
+                std::vector<mcp_agent_tool_definition> remote;
+                if (!mcp_view->list_tools(context, remote, error)) return false;
+                for (const auto & tool : remote) {
+                    context.allowed_exposed_tool_names.push_back(tool.name.find('.') == std::string::npos
+                        ? "android-mcp_" + tool.name : tool.name);
+                }
+            }
+        }
+        agent_resource_runtime resource_runtime;
+        resource_runtime.store = runtime->resources.get();
+        resource_runtime.namespace_id = request.namespace_id;
+        resource_runtime.session_id = request.session_id;
+        resource_runtime.project_id = request.project_id;
+        resource_runtime.turn_id = request.turn_id;
+        native_agent_tool_provider native(runtime->catalog,
+            [resource_runtime, runtime](const agent_tool_context & tool_context, common_native_tool_bindings & bindings, std::string & binding_error) {
+                bindings.resource_runtime = resource_runtime;
+                bindings.data_store = &runtime->data_store;
+                bindings.tool_scope = tool_context.scope;
+                bindings.allow_network = tool_context.allow_network;
+                bindings.memory_store = &runtime->memory_store;
+                bindings.plan_store = &runtime->plan_store;
+                binding_error.clear();
+                return true;
+            });
+        composite_agent_tool_provider providers;
+        providers.add_provider(native);
+        std::unique_ptr<mcp_agent_tool_provider> remote_provider;
+        if (client) {
+            remote_provider = std::make_unique<mcp_agent_tool_provider>("android-mcp", *mcp_view, "android-mcp");
+            providers.add_provider(*remote_provider);
+        }
+        auto view = providers.resolve_tools(context, error);
         if (!view) return false;
         auto shared_view = std::shared_ptr<agent_tool_view>(std::move(view));
         tooling.tools = shared_view->chat_tools();
         tooling.profile_tools_active = true;
         tooling.tool_view = shared_view.get();
-        tooling.owned_resources.push_back(std::static_pointer_cast<void>(client));
+        if (mcp_view) tooling.owned_resources.push_back(std::static_pointer_cast<void>(mcp_view));
         tooling.owned_resources.push_back(std::static_pointer_cast<void>(shared_view));
+        tooling.resource_runtime = resource_runtime;
         error.clear();
         return true;
     };
@@ -276,7 +496,7 @@ Java_com_arm_aichat_agent_AgentRuntime_nativePrepareModel(JNIEnv *, jclass, jlon
         std::lock_guard<std::mutex> lock(handles_mutex);
         runtime = find_handle(handle);
     }
-    if (!runtime || !runtime->session_host || runtime->model_path.empty()) return JNI_FALSE;
+    if (!runtime || !runtime->session_host || (!runtime->http_model && runtime->model_path.empty())) return JNI_FALSE;
 
     common_agent_runtime_session_host_turn_request request;
     request.mode = common_agent_runtime_host_mode::chat;
@@ -288,7 +508,7 @@ Java_com_arm_aichat_agent_AgentRuntime_nativePrepareModel(JNIEnv *, jclass, jlon
     request.execution_control.cancellation = runtime->cancellation;
     common_agent_event loading;
     loading.type = common_agent_event_type::model_loading;
-    loading.detail = "loading configured GGUF model";
+    loading.detail = runtime->http_model ? "preparing HTTP model" : "loading configured GGUF model";
     runtime->events.push(loading);
     std::string error;
     const bool prepared = runtime->session_host->prepare_model(request, error);
@@ -341,7 +561,7 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeCapabilities(JNIEnv * env, jclass, 
         ",\"mcp_remote_configured\":" + (mcp_configured ? "true" : "false") +
         ",\"mcp_https_supported\":" + (runtime->android_https_supported ? "true" : "false") +
         ",\"credential_provider_supported\":" + (runtime->android_credentials_supported ? "true" : "false") +
-        ",\"inference_backend\":\"cli\"}";
+        ",\"inference_backend\":\"" + (runtime->http_model ? "http" : "cli") + "\"}";
     return env->NewStringUTF(json.c_str());
 }
 
@@ -433,7 +653,34 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
         std::lock_guard<std::mutex> lock(handles_mutex);
         runtime = find_handle(handle);
     }
-    if (!runtime || !runtime->session_host || runtime->model_path.empty()) return JNI_FALSE;
+    if (!runtime || !runtime->session_host || (!runtime->http_model && runtime->model_path.empty())) return JNI_FALSE;
+
+    common_agent_jsonl_turn_request wire_request;
+    wire_request.prompt = to_string(env, prompt);
+    wire_request.mode = to_string(env, mode);
+    wire_request.session_id = to_string(env, session_id);
+    wire_request.namespace_id = to_string(env, namespace_id);
+    wire_request.project_id = to_string(env, project_id);
+    wire_request.turn_id = to_string(env, turn_id);
+    wire_request.n_predict = runtime->max_output_tokens;
+
+    const auto resource_refs = nlohmann::json::parse(
+        to_string(env, resource_refs_json), nullptr, false);
+    if (!resource_refs.is_array() || resource_refs.size() > 32) return JNI_FALSE;
+    std::vector<std::string> resource_types;
+    for (const auto & value : resource_refs) {
+        if (value.is_string()) {
+            if (value.get<std::string>().empty()) return JNI_FALSE;
+            wire_request.resource_refs.push_back(value.get<std::string>());
+            resource_types.emplace_back();
+        } else if (value.is_object() && value.contains("path") && value["path"].is_string() &&
+                !value["path"].get<std::string>().empty() &&
+                (!value.contains("mime_type") || value["mime_type"].is_null() || value["mime_type"].is_string())) {
+            wire_request.resource_refs.push_back(value["path"].get<std::string>());
+            resource_types.push_back(value.contains("mime_type") && value["mime_type"].is_string()
+                ? value["mime_type"].get<std::string>() : "");
+        } else return JNI_FALSE;
+    }
 
     std::thread previous_worker;
     uint64_t request_id = 0;
@@ -446,23 +693,6 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
     }
     if (previous_worker.joinable()) previous_worker.join();
 
-    common_agent_jsonl_turn_request wire_request;
-    wire_request.prompt = to_string(env, prompt);
-    wire_request.mode = to_string(env, mode);
-    wire_request.session_id = to_string(env, session_id);
-    wire_request.namespace_id = to_string(env, namespace_id);
-    wire_request.project_id = to_string(env, project_id);
-    wire_request.turn_id = to_string(env, turn_id);
-    wire_request.n_predict = 384;
-
-    const auto resource_refs = nlohmann::json::parse(
-        to_string(env, resource_refs_json), nullptr, false);
-    if (!resource_refs.is_array() || resource_refs.size() > 32) return JNI_FALSE;
-    for (const auto & value : resource_refs) {
-        if (!value.is_string() || value.get<std::string>().empty()) return JNI_FALSE;
-        wire_request.resource_refs.push_back(value.get<std::string>());
-    }
-
     common_agent_runtime_session_host_turn_request request;
     request.mode = wire_request.mode == "agent" ?
         common_agent_runtime_host_mode::agent : common_agent_runtime_host_mode::chat;
@@ -472,12 +702,40 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
     request.project_id = wire_request.project_id;
     request.turn_id = wire_request.turn_id;
     request.n_predict = wire_request.n_predict;
-    for (const auto & uri : wire_request.resource_refs) {
-        common_agent_input_resource input;
-        input.resource.uri = uri;
-        input.resource.name = uri.substr(uri.find_last_of("/\\") + 1);
-        input.required = false;
-        request.input_resources.push_back(std::move(input));
+    for (size_t resource_index = 0; resource_index < wire_request.resource_refs.size(); ++resource_index) {
+        const auto & uri = wire_request.resource_refs[resource_index];
+        std::error_code ec;
+        const auto root = std::filesystem::weakly_canonical(
+            std::filesystem::path(runtime->storage_directory) / "resources", ec);
+        if (ec) { std::lock_guard<std::mutex> lock(runtime->turn_mutex); runtime->turn_active = false; return JNI_FALSE; }
+        const auto file = std::filesystem::canonical(uri, ec);
+        if (ec || file.parent_path() != root || !std::filesystem::is_regular_file(file, ec) || ec ||
+                std::filesystem::file_size(file, ec) > 10U * 1024U * 1024U || ec) {
+            std::lock_guard<std::mutex> lock(runtime->turn_mutex); runtime->turn_active = false; return JNI_FALSE;
+        }
+        std::ifstream stream(file, std::ios::binary);
+        if (!stream) { std::lock_guard<std::mutex> lock(runtime->turn_mutex); runtime->turn_active = false; return JNI_FALSE; }
+        std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+        if (stream.bad() || bytes.size() > 10U * 1024U * 1024U) {
+            std::lock_guard<std::mutex> lock(runtime->turn_mutex); runtime->turn_active = false; return JNI_FALSE;
+        }
+        agent_resource_put_request put;
+        put.name = file.filename().string();
+        put.mime_type = resource_types[resource_index].empty() ? "application/octet-stream" : resource_types[resource_index];
+        put.bytes = std::move(bytes);
+        put.bytes_are_authoritative = true;
+        put.scope = common_runtime_resource_scope::session;
+        put.namespace_id = request.namespace_id;
+        put.session_id = request.session_id;
+        put.project_id = request.project_id;
+        put.source_provider = "android";
+        put.source_tool = "attachment";
+        agent_resource_descriptor descriptor;
+        std::string resource_error;
+        if (!runtime->resources->put_bytes(put, descriptor, resource_error)) {
+            std::lock_guard<std::mutex> lock(runtime->turn_mutex); runtime->turn_active = false; return JNI_FALSE;
+        }
+        request.input_resources.push_back({descriptor, "attachment_question", true});
     }
     request.execution_control.cancellation = runtime->cancellation;
     request.event_sink = [runtime](const common_agent_event & event) {
@@ -487,7 +745,34 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
     runtime->turn_worker = std::thread([runtime, request_id, request = std::move(request)]() mutable {
         common_agent_runtime_session_host_turn_result result;
         std::string error;
-        runtime->session_host->run_turn(request, result, error);
+        agent_research_host_resources research{&runtime->data_store, runtime->resources.get()};
+        if (agent_prepare_research_workspace(research, request, error)) {
+            std::map<std::string, agent_resource_descriptor> retained;
+            if (request.research_draft) {
+                request.research_progress_sink = [&](const common_agent_research_workspace & workspace, std::string & sink_error) {
+                    common_agent_runtime_session_host_turn_result checkpoint_result;
+                    auto recoverable = workspace;
+                    for (auto & task : recoverable.tasks)
+                        if (task.status == common_agent_research_task_status::active) task.status = common_agent_research_task_status::failed;
+                    for (auto & gap : recoverable.gaps)
+                        if (gap.status == common_agent_research_gap_status::investigating) gap.status = common_agent_research_gap_status::open;
+                    checkpoint_result.research_workspace_checkpoint = make_common_agent_research_workspace_checkpoint(
+                        recoverable, static_cast<size_t>(workspace.iterations_completed) + 1, sink_error);
+                    if (!sink_error.empty()) return false;
+                    common_agent_research_draft_ref advanced;
+                    if (!agent_persist_research_workspace(research, request, checkpoint_result, sink_error, &advanced, &retained)) return false;
+                    request.research_draft = std::move(advanced);
+                    return true;
+                };
+            }
+            runtime->session_host->run_turn(request, result, error);
+            std::string persistence_error;
+            if (!agent_persist_research_workspace(research, request, result, persistence_error, nullptr, &retained)) {
+                result.ok = false;
+                if (!result.error.empty()) result.error += "; ";
+                result.error += "research draft persistence failed: " + persistence_error;
+            }
+        }
         if (!error.empty() && result.error.empty()) result.error = error;
         {
             std::lock_guard<std::mutex> lock(runtime->turn_mutex);
@@ -496,6 +781,49 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeSubmitTurn(
         }
     });
     return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_arm_aichat_agent_AgentRuntime_nativeHistory(
+        JNIEnv * env, jclass, jlong handle, jstring namespace_id, jstring session_id) {
+    std::shared_ptr<android_agent_runtime_handle> runtime;
+    { std::lock_guard<std::mutex> lock(handles_mutex); runtime = find_handle(handle); }
+    if (!runtime || !runtime->resources) return nullptr;
+    const auto ns = to_string(env, namespace_id);
+    const auto session = to_string(env, session_id);
+    if (ns.empty() || session.empty()) return nullptr;
+    agent_session_context_store store(runtime->resources.get(), ns, session, true);
+    std::vector<common_agent_conversation_segment> segments;
+    std::optional<common_agent_context_checkpoint> checkpoint;
+    uint64_t epoch = 0;
+    std::string error;
+    if (!store.load(segments, checkpoint, epoch, error)) return nullptr;
+    nlohmann::json history = nlohmann::json::array();
+    for (const auto & segment : segments) {
+        history.push_back({{"id", segment.request_id},
+            {"role", common_agent_conversation_role_name(segment.role)}, {"content", segment.content}});
+    }
+    return env->NewStringUTF(history.dump().c_str());
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_arm_aichat_agent_AgentRuntime_nativeReadResource(
+        JNIEnv * env, jclass, jlong handle, jstring uri, jstring namespace_id,
+        jstring session_id, jstring project_id, jstring turn_id) {
+    std::shared_ptr<android_agent_runtime_handle> runtime;
+    { std::lock_guard<std::mutex> lock(handles_mutex); runtime = find_handle(handle); }
+    if (!runtime || !runtime->resources) return nullptr;
+    agent_resource_read_authority authority;
+    authority.namespace_id = to_string(env, namespace_id);
+    authority.session_id = to_string(env, session_id);
+    authority.project_id = to_string(env, project_id);
+    authority.turn_id = to_string(env, turn_id);
+    std::string bytes, error;
+    if (!runtime->resources->read_bytes(to_string(env, uri), authority, 10U * 1024U * 1024U, bytes, error)) return nullptr;
+    auto result = env->NewByteArray(static_cast<jsize>(bytes.size()));
+    if (result && !bytes.empty()) env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()),
+        reinterpret_cast<const jbyte *>(bytes.data()));
+    return result;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -537,7 +865,7 @@ Java_com_arm_aichat_agent_AgentRuntime_nativeState(JNIEnv * env, jclass, jlong h
     }
     if (!runtime) return nullptr;
     const std::string state = "{\"storage_directory\":\"" + json_escape(runtime->storage_directory) +
-        "\",\"model_configured\":" + (runtime->model_path.empty() ? "false" : "true") +
+        "\",\"model_configured\":" + (runtime->model_path.empty() && !runtime->http_model ? "false" : "true") +
         ",\"storage_ready\":" + (runtime->storage_ready ? "true" : "false") +
         ",\"cancelled\":" + (runtime->cancellation->is_cancelled() ? "true" : "false") +
         ",\"queued_events\":" + std::to_string(runtime->events.size()) +

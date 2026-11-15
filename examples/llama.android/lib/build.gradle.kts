@@ -11,6 +11,9 @@ android {
 
     ndkVersion = "29.0.13113456"
 
+    // Package the shared starter library directly from its canonical source.
+    sourceSets.getByName("main").assets.srcDir("../../pocs/memory/bootstrap")
+
     defaultConfig {
         minSdk = 33
 
