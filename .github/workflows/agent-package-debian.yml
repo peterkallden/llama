@@ -78,6 +78,7 @@ jobs:
             git \
             libssl-dev \
             libcmark-gfm-dev \
+            libcmark-gfm-extensions-dev \
             libxml2-dev \
             ninja-build \
             nodejs \
