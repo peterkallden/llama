@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <stdexcept>
 
 namespace {
@@ -18,6 +19,9 @@ int main() {
         ("llama-code-projection-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try {
         std::filesystem::create_directories(root);
+        std::filesystem::create_directories(root / "src");
+        { std::ofstream source(root / "src" / u8"file å#.cpp"); source << "int target;\n"; }
+        { std::ofstream source(root / "src" / "caller.cpp"); source << "int caller;\n"; }
         const auto selected = json{{"uri", agent_clangd_file_uri(root / "src" / u8"file å#.cpp")},
             {"range", range(0, 0)}, {"selectionRange", range(3, 5)}, {"name", "target"}};
         const auto other = json{{"uri", agent_clangd_file_uri(root / "src" / "caller.cpp")},
@@ -25,8 +29,9 @@ int main() {
         json projected;
         std::string error;
         require(agent_clangd_project_location(selected, root.string(), projected, error), "encoded source location must be accepted");
-        require(projected["path"] == u8"src/file å#.cpp" && projected["line"] == 4 && projected["column"] == 6,
-            "projection must decode the path and use the symbol selection range");
+        if (!(projected["path"] == u8"src/file å#.cpp" && projected["line"] == 4 && projected["column"] == 6)) {
+            throw std::runtime_error("projection must decode the path and use the symbol selection range; got " + projected.dump());
+        }
         require(agent_clangd_project_call({{"from", other}, {"fromRanges", json::array({range(8, 11)})}},
             selected, true, root.string(), projected, error), "raw incoming call must obtain its selected target");
         require(projected["from"]["name"] == "caller" && projected["to"]["name"] == "target" &&

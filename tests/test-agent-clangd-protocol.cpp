@@ -13,8 +13,18 @@
 #include <sstream>
 #include <thread>
 #include <utility>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 static int fake_clangd() {
+#ifdef _WIN32
+    // LSP framing is byte-oriented. The CRT's default text mode rewrites
+    // CRLF on stdin/stdout and corrupts Content-Length framed messages.
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     agent_clangd_message_decoder decoder;
     std::string error;
     agent_clangd_json message;

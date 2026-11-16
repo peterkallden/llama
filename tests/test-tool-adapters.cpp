@@ -682,7 +682,8 @@ int main() {
     assert(result.ok && result.output.find("sample.txt") != std::string::npos);
     std::filesystem::create_directories(repository / "long-status");
     for (size_t i = 0; i < 400; ++i) {
-        std::ofstream file(repository / "long-status" / (std::to_string(i) + std::string(180, 'x')));
+        std::ofstream file(repository / "long-status" / (std::to_string(i) + std::string(80, 'x')));
+        assert(file.good());
         file << "large bounded Git status fixture\n";
     }
     result = developer_registry.execute({"repository.changed_files", "{}"});

@@ -42,6 +42,7 @@ sys.exit(0)
         return subprocess.run(["bash", str(REPO / "scripts" / name)], env=self.environment,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
 
+    @unittest.skipUnless(os.name == "posix", "the shell runner contract uses POSIX paths and process semantics")
     def test_paired_profile_records_exact_commands_before_execution(self):
         # The fake process emits no arms: the summary must fail coverage even
         # though both processes exit successfully.

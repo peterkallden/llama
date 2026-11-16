@@ -33,12 +33,14 @@ bool wait_for(std::condition_variable & cv, std::unique_lock<std::mutex> & lock,
 
 int main() {
     namespace fs = std::filesystem;
-    const auto root = fs::temp_directory_path() /
+    auto root = fs::temp_directory_path() /
         ("llama-project-file-watch-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    const auto outside = root.parent_path() / (root.filename().string() + "-compile-db");
+    auto outside = root.parent_path() / (root.filename().string() + "-compile-db");
     try {
         fs::create_directories(root);
+        root = fs::canonical(root);
         write_file(outside, "[]");
+        outside = fs::canonical(outside);
         agent_project_file_watch_service watcher;
         std::mutex mutex;
         std::condition_variable cv;
