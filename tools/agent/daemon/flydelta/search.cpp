@@ -17,6 +17,14 @@
 
 namespace agent_daemon_flydelta_internal {
 
+static void flydelta_gmtime_utc(const std::time_t & value, std::tm & utc) {
+#ifdef _WIN32
+    gmtime_s(&utc, &value);
+#else
+    gmtime_r(&value, &utc);
+#endif
+}
+
 // Resolve descriptive metadata through the same scoped resource authority as
 // the intervention. No posterior or proposal policy consumes these features.
 static bool resolve_synthesis_features(
@@ -1558,7 +1566,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
                 const auto now = std::chrono::system_clock::now();
                 const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
                 std::tm utc{};
-                gmtime_r(&now_time, &utc);
+                flydelta_gmtime_utc(now_time, utc);
                 std::ostringstream timestamp;
                 timestamp << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
                 event_context.created_at = timestamp.str();
@@ -2082,7 +2090,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
             event.scope = job.seed.scope;
             const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
             std::tm utc{};
-            gmtime_r(&now, &utc);
+            flydelta_gmtime_utc(now, utc);
             std::ostringstream timestamp;
             timestamp << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
             event.created_at = timestamp.str();
@@ -2144,7 +2152,7 @@ bool daemon_flydelta_run_post_bootstrap_slice(
         const auto now = std::chrono::system_clock::now();
         const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
         std::tm utc{};
-        gmtime_r(&now_time, &utc);
+        flydelta_gmtime_utc(now_time, utc);
         std::ostringstream timestamp;
         timestamp << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
         lifecycle_context.created_at = timestamp.str();

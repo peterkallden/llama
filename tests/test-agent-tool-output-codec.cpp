@@ -327,8 +327,10 @@ void test_condition_expressions_and_continuations() {
     assert(common_agent_dataset_parse_condition_expression(
         R"(title = "A AND B OR C & D" and amount ">=" 4)", result, error));
     assert(result[0]["value"] == "A AND B OR C & D");
+    const std::string quoted_or_condition =
+        R"query(title = "A\" OR B" OR title = "C")query";
     assert(common_agent_dataset_parse_condition_expression(
-        R"query(title = "A\" OR B" OR title = "C")query", result, error));
+        quoted_or_condition, result, error));
     assert(result[0]["value"][0] == "A\" OR B");
     assert(common_agent_dataset_parse_condition_expression(
         "region = north or region = north OR region in [\"east\"]", result, error));

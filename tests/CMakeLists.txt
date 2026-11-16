@@ -558,6 +558,12 @@ test-agent-flydelta-alpha-response-search.cpp
         test-agent-web-presentation.cpp
         test-agent-mcp-app-bridge.cpp
     )
+        # This contract drives llama's private grammar implementation directly.
+        # The required internal symbols are intentionally not exported by the
+        # Windows shared llama DLL, matching the core internal-test policy above.
+        if (TEST_SOURCE STREQUAL "test-agent-dsl-grammar.cpp" AND WIN32 AND BUILD_SHARED_LIBS)
+            continue()
+        endif()
         # The Cozo plan-store test references the optional implementation,
         # which is only compiled when the plan Cozo backend is enabled.
         if (TEST_SOURCE STREQUAL "test-plan-cozo.cpp" AND NOT LLAMA_PLAN_COZO)
