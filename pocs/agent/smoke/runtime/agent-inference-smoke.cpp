@@ -1991,6 +1991,8 @@ static void test_truncated_tool_call_is_not_dispatched() {
 }
 
 static void test_runtime_cancellation_contract() {
+    std::fprintf(stderr, "runtime-cancellation checkpoint=begin\n");
+    std::fflush(stderr);
     // Even a stream which always has another token available must honour
     // cancellation before consuming that token and cancel its server task.
     server_queue tasks;
@@ -2874,7 +2876,11 @@ static bool run_named_test(const std::string & name) {
 }
 
 int main(int argc, char ** argv) {
+    std::fprintf(stderr, "agent-inference-smoke checkpoint=main argc=%d\n", argc);
+    std::fflush(stderr);
     if (argc > 1) {
+        std::fprintf(stderr, "agent-inference-smoke checkpoint=named-test\n");
+        std::fflush(stderr);
         if (!run_named_test(argv[1])) {
             return 2;
         }

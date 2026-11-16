@@ -113,7 +113,7 @@ int main(int argc, char ** argv) {
         std::filesystem::create_directories(root);
         const auto file = root / "main.cpp";
         const auto log_path = root / "lsp.log";
-        { std::ofstream output(file); output << "int old_value;\n"; }
+        { std::ofstream output(file, std::ios::binary); output << "int old_value;\n"; }
 #ifdef _WIN32
         _putenv_s("LLAMA_TEST_CLANGD_LOG", log_path.string().c_str());
 #else
@@ -123,7 +123,7 @@ int main(int argc, char ** argv) {
             agent_clangd_session fake({std::filesystem::absolute(argv[0]).string(), root.string(), "", 5000, 1000, "", "", {}});
             const auto uri = agent_clangd_file_uri(file);
             assert(fake.open_document(uri, "cpp", "int old_value;\n", error));
-            { std::ofstream output(file); output << "int new_value;\n"; }
+            { std::ofstream output(file, std::ios::binary); output << "int new_value;\n"; }
             assert(fake.apply_file_changes({{agent_project_file_change_kind::changed, file.string(), {}, 1}}, error));
             std::filesystem::remove(file);
             assert(fake.apply_file_changes({{agent_project_file_change_kind::removed, file.string(), {}, 2}}, error));

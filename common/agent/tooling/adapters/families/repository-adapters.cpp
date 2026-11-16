@@ -65,19 +65,21 @@ std::string legacy_workspace_content_token(const std::string & content) {
     return "host:" + std::to_string(std::hash<std::string>{}(content));
 }
 
-bool write_file_atomically(const std::filesystem::path & path, const std::string & content) {
+bool write_file_atomically(const std::filesystem::path & path, const std::string & content,
+        std::string & error) {
     static std::atomic<uint64_t> temp_sequence{0};
     auto temporary = path;
     temporary += ".agent-tmp-" + std::to_string(temp_sequence.fetch_add(1, std::memory_order_relaxed));
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-        if (!file) return false;
+        if (!file) { error = "temporary file could not be opened"; return false; }
         file.write(content.data(), static_cast<std::streamsize>(content.size()));
         file.flush();
         if (!file) {
             file.close();
             std::error_code ignored;
             std::filesystem::remove(temporary, ignored);
+            error = "temporary file could not be written";
             return false;
         }
     }
@@ -89,6 +91,7 @@ bool write_file_atomically(const std::filesystem::path & path, const std::string
         if (status_error) {
             std::error_code ignored;
             std::filesystem::remove(temporary, ignored);
+            error = "could not preserve the target file permissions: " + status_error.message();
             return false;
         }
     }
@@ -96,10 +99,12 @@ bool write_file_atomically(const std::filesystem::path & path, const std::string
 #ifdef _WIN32
     replaced = MoveFileExW(temporary.c_str(), path.c_str(),
         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    if (!replaced) error = std::system_category().message(static_cast<int>(GetLastError()));
 #else
     std::error_code rename_error;
     std::filesystem::rename(temporary, path, rename_error);
     replaced = !rename_error;
+    if (rename_error) error = rename_error.message();
 #endif
     if (!replaced) {
         std::error_code ignored;
@@ -649,7 +654,11 @@ bool common_try_register_repository_tool_adapter(
             const auto before_hash = "sha256:" + hash_sha256_hex(content.data(), content.size());
             const auto after_hash = "sha256:" + hash_sha256_hex(updated_content.data(), updated_content.size());
             const bool changed = content != updated_content;
-            if (changed && !write_file_atomically(path, updated_content)) return common_adapter_execution_failure("tool.workspace.patch.write_failed", "workspace.patch could not atomically replace the target", "Workspace patch could not be written.");
+            std::string write_error;
+            if (changed && !write_file_atomically(path, updated_content, write_error))
+                return common_adapter_execution_failure("tool.workspace.patch.write_failed",
+                    "workspace.patch could not atomically replace the target: " + write_error,
+                    "Workspace patch could not be written.");
             json patch_receipt = {{"schema", "workspace-change-receipt.v1"},
                 {"path", std::filesystem::relative(path, bindings.repository_root).generic_string()},
                 {"source_snapshot_ref", source_snapshot_ref.empty() ? json(nullptr) : json(source_snapshot_ref)},

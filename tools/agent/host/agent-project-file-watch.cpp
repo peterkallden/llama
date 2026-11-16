@@ -19,6 +19,10 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 #endif
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace {
 namespace fs = std::filesystem;
@@ -155,6 +159,20 @@ struct agent_project_file_watch_service::impl {
         result.device = static_cast<uint64_t>(info.st_dev);
         result.inode = static_cast<uint64_t>(info.st_ino);
         result.has_identity = true;
+#elif defined(_WIN32)
+        HANDLE file = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (file != INVALID_HANDLE_VALUE) {
+            BY_HANDLE_FILE_INFORMATION info{};
+            if (GetFileInformationByHandle(file, &info)) {
+                result.device = static_cast<uint64_t>(info.dwVolumeSerialNumber);
+                result.inode = (static_cast<uint64_t>(info.nFileIndexHigh) << 32) |
+                    static_cast<uint64_t>(info.nFileIndexLow);
+                result.has_identity = true;
+            }
+            CloseHandle(file);
+        }
 #endif
         result.modified = fs::last_write_time(path, ec);
         if (ec) return false;
@@ -353,11 +371,10 @@ struct agent_project_file_watch_service::impl {
                         if (old == group.snapshot.end()) created.insert(item.first);
                         else if (!(old->second == item.second)) changes.push_back({agent_project_file_change_kind::changed, item.first, {}, 0});
                     }
-#ifdef __linux__
-                    // Inotify can miss a file operation while a newly-created
-                    // directory is being attached to the watch. Correlate the
-                    // polling diff by stable file identity so rename semantics
-                    // survive that handoff instead of degrading to remove+create.
+                    // A scan can miss a native file operation while a newly-created
+                    // directory is being attached to the watch. Correlate the diff
+                    // by stable file identity where the platform provides it, so
+                    // rename semantics survive instead of degrading to remove+create.
                     for (auto old = removed.begin(); old != removed.end();) {
                         const auto old_stamp = group.snapshot.find(*old);
                         if (old_stamp == group.snapshot.end() || !old_stamp->second.has_identity) {
@@ -381,7 +398,6 @@ struct agent_project_file_watch_service::impl {
                         created.erase(match);
                         old = removed.erase(old);
                     }
-#endif
                     for (const auto & path : created) changes.push_back({agent_project_file_change_kind::created, path, {}, 0});
                     for (const auto & path : removed) changes.push_back({agent_project_file_change_kind::removed, path, {}, 0});
 #ifdef __linux__
