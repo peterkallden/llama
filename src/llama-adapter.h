@@ -182,11 +182,11 @@ struct llama_adapter_cvec_batch {
     size_t resident_basis_bytes() const { return resident_basis_bytes_value; }
     size_t composed_overlay_bytes() const { return composed_overlay_bytes_value; }
     bool callback_applied() const { return callback_applied_flag.load(); }
-    std::string callback_failure_reason() const;
+    LLAMA_API std::string callback_failure_reason() const;
     // Start a fresh graph observation without discarding device buffers. The
     // server calls this before each decode so a callback from an earlier graph
     // cannot make a later no-op graph look successful.
-    void begin_graph_observation();
+    LLAMA_API void begin_graph_observation();
 
     const llama_adapter_cvec_batch_ref & ref() const { return batch_ref; }
 
