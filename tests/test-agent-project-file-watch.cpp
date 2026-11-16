@@ -83,7 +83,12 @@ int main() {
         {
             std::unique_lock<std::mutex> lock(mutex);
             const bool move_reported = wait_for(cv, lock, [&] {
-#ifdef __linux__
+#if defined(__linux__)
+                return std::any_of(first_events.begin(), first_events.end(), [&](const auto & event) {
+                    return event.kind == agent_project_file_change_kind::moved &&
+                        event.path == renamed.string() && event.previous_path == source.string();
+                });
+#elif defined(_WIN32)
                 return std::any_of(first_events.begin(), first_events.end(), [&](const auto & event) {
                     return event.kind == agent_project_file_change_kind::moved &&
                         event.path == renamed.string() && event.previous_path == source.string();

@@ -1991,26 +1991,35 @@ static void test_truncated_tool_call_is_not_dispatched() {
 }
 
 static void test_runtime_cancellation_contract() {
-    std::fprintf(stderr, "runtime-cancellation checkpoint=begin\n");
-    std::fflush(stderr);
+    auto checkpoint = [](const char * name) {
+        std::fprintf(stderr, "runtime-cancellation checkpoint=%s\n", name);
+        std::fflush(stderr);
+    };
+    checkpoint("begin");
     // Even a stream which always has another token available must honour
     // cancellation before consuming that token and cancel its server task.
     server_queue tasks;
+    checkpoint("queue-created");
     server_response responses;
+    checkpoint("responses-created");
     server_response_reader reader(tasks, responses, 1);
+    checkpoint("reader-created");
     server_task task(SERVER_TASK_TYPE_COMPLETION);
+    checkpoint("task-created");
     task.id = reader.get_new_id();
+    checkpoint("id-allocated");
     const int id = task.id;
     reader.post_task(std::move(task));
-    std::fprintf(stderr, "runtime-cancellation checkpoint=server-reader-posted\n");
+    checkpoint("server-reader-posted");
     auto partial = std::make_unique<server_task_result_cmpl_partial>();
     partial->id = id;
     partial->index = 0;
     responses.send(std::move(partial));
+    checkpoint("partial-enqueued");
     if (reader.next([] { return true; }) || !reader.cancelled) {
         throw std::runtime_error("server reader consumed a token after cancellation");
     }
-    std::fprintf(stderr, "runtime-cancellation checkpoint=server-reader-cancelled\n");
+    checkpoint("server-reader-cancelled");
 
     fake_agent_inference inference;
     inference.queued = {make_success("4", 1)};
@@ -2023,19 +2032,20 @@ static void test_runtime_cancellation_contract() {
     turn.generation_options.n_predict = 8;
     turn.execution_control = make_common_agent_runtime_execution_control({});
     const auto control = turn.execution_control;
+    checkpoint("turn-prepared");
     common_agent_runtime_tooling tooling;
     common_agent_runtime_host_inputs inputs{
         common_agent_runtime_host_mode::chat, memories, nullptr, turn,
         nullptr, nullptr, nullptr, tooling, false, {},
     };
     auto execution = make_agent_runtime_host_execution(inputs, inference);
-    std::fprintf(stderr, "runtime-cancellation checkpoint=runtime-host-built\n");
+    checkpoint("runtime-host-built");
     common_agent_result result;
     if (!run_agent_runtime_host(execution, result, error) || inference.seen.size() != 1 ||
             !inference.seen[0].options.should_stop || inference.seen[0].options.should_stop()) {
         throw std::runtime_error("runtime host did not bind request-scoped cancellation: " + error);
     }
-    std::fprintf(stderr, "runtime-cancellation checkpoint=runtime-host-ran\n");
+    checkpoint("runtime-host-ran");
     control.cancellation->request_cancel("fixture cancellation");
     if (!inference.seen[0].options.should_stop()) {
         throw std::runtime_error("backend callback did not observe cancellation of its turn");

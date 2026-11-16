@@ -18,6 +18,17 @@
 #include <io.h>
 #endif
 
+// Keep Windows CI failures actionable: MSVC's assert abort is surfaced by CTest
+// as STATUS_STACK_BUFFER_OVERRUN, which otherwise hides the failed expression.
+#undef assert
+#define assert(...) do { \
+    if (!(__VA_ARGS__)) { \
+        std::fprintf(stderr, "assertion failed at %s:%d: %s\n", __FILE__, __LINE__, #__VA_ARGS__); \
+        std::fflush(stderr); \
+        std::abort(); \
+    } \
+} while (false)
+
 static int fake_clangd() {
 #ifdef _WIN32
     // LSP framing is byte-oriented. The CRT's default text mode rewrites

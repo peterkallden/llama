@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <iostream>
 #include <cstdlib>
@@ -28,6 +29,17 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+
+// MSVC's assert abort is reported by CTest as STATUS_STACK_BUFFER_OVERRUN.
+// Print the expression first so a Windows-only contract failure is diagnosable.
+#undef assert
+#define assert(...) do { \
+    if (!(__VA_ARGS__)) { \
+        std::fprintf(stderr, "assertion failed at %s:%d: %s\n", __FILE__, __LINE__, #__VA_ARGS__); \
+        std::fflush(stderr); \
+        std::abort(); \
+    } \
+} while (false)
 
 class test_resource_store final : public agent_resource_store {
 public:

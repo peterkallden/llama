@@ -20,16 +20,18 @@ int main() {
     try {
         std::filesystem::create_directories(root);
         std::filesystem::create_directories(root / "src");
-        { std::ofstream source(root / "src" / u8"file \u00e5#.cpp"); source << "int target;\n"; }
+        const auto utf8_name = std::filesystem::u8path("file \xc3\xa5#.cpp");
+        const std::string utf8_relative = std::string("src/file ") + "\xc3\xa5" + "#.cpp";
+        { std::ofstream source(root / "src" / utf8_name, std::ios::binary); source << "int target;\n"; }
         { std::ofstream source(root / "src" / "caller.cpp"); source << "int caller;\n"; }
-        const auto selected = json{{"uri", agent_clangd_file_uri(root / "src" / u8"file \u00e5#.cpp")},
+        const auto selected = json{{"uri", agent_clangd_file_uri(root / "src" / utf8_name)},
             {"range", range(0, 0)}, {"selectionRange", range(3, 5)}, {"name", "target"}};
         const auto other = json{{"uri", agent_clangd_file_uri(root / "src" / "caller.cpp")},
             {"range", range(1, 0)}, {"selectionRange", range(2, 4)}, {"name", "caller"}};
         json projected;
         std::string error;
         require(agent_clangd_project_location(selected, root.string(), projected, error), "encoded source location must be accepted");
-        if (!(projected["path"] == u8"src/file \u00e5#.cpp" && projected["line"] == 4 && projected["column"] == 6)) {
+        if (!(projected["path"] == utf8_relative && projected["line"] == 4 && projected["column"] == 6)) {
             throw std::runtime_error("projection must decode the path and use the symbol selection range; got " + projected.dump());
         }
         require(agent_clangd_project_call({{"from", other}, {"fromRanges", json::array({range(8, 11)})}},
@@ -40,7 +42,7 @@ int main() {
         require(agent_clangd_project_call({{"to", other}, {"fromRanges", json::array({range(9, 2)})}},
             selected, false, root.string(), projected, error), "raw outgoing call must obtain its selected caller");
         require(projected["from"]["name"] == "target" && projected["to"]["name"] == "caller" &&
-            projected["call_sites"][0]["path"] == u8"src/file \u00e5#.cpp", "outgoing call sites belong to the selected caller");
+            projected["call_sites"][0]["path"] == utf8_relative, "outgoing call sites belong to the selected caller");
         auto invalid = selected;
         invalid["selectionRange"]["start"]["line"] = "3";
         require(!agent_clangd_project_location(invalid, root.string(), projected, error), "malformed coordinate must be rejected");
