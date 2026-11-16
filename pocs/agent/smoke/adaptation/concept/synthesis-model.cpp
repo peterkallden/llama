@@ -20,8 +20,13 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <unistd.h>
 #include <vector>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 using ordered_json = nlohmann::ordered_json;
 
@@ -32,6 +37,14 @@ constexpr const char * kDefaultConfig =
 constexpr const char * kTokenizerFingerprint = "daemon:tokenizer-unspecified-v1";
 constexpr const char * kTemplateFingerprint = "daemon:template-unspecified-v1";
 constexpr const char * kExecutionContextFingerprint = "daemon:server-context-v1";
+
+long long current_process_id() {
+#ifdef _WIN32
+    return static_cast<long long>(_getpid());
+#else
+    return static_cast<long long>(getpid());
+#endif
+}
 
 struct smoke_args {
     std::string config_path = kDefaultConfig;
@@ -586,7 +599,7 @@ int main(int argc, char ** argv) {
     configure_model_catalog(options, args);
 
     const std::string suffix = "concept-synthesis-model-smoke-" +
-        std::to_string(static_cast<long long>(getpid()));
+        std::to_string(current_process_id());
     options.adaptation_capture = true;
     options.adaptation_collection_allowed = false;
     options.adaptation_flydelta_enabled = true;
