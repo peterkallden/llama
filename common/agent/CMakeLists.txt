@@ -1,8 +1,8 @@
 set(TARGET llama-agent-core)
 
 # Parse Markdown with the GFM AST implementation used by the editor contract.
-# Prefer the pinned system library for reproducible/offline package builds;
-# otherwise fetch the exact release and disable its spec/test corpus.
+# Prefer the supported distro library for package builds; otherwise fetch the
+# exact release and disable its spec/test corpus.
 find_path(LLAMA_AGENT_CMARK_INCLUDE_DIR cmark-gfm.h PATH_SUFFIXES cmark-gfm)
 find_library(LLAMA_AGENT_CMARK_CORE_LIBRARY NAMES cmark-gfm)
 find_library(LLAMA_AGENT_CMARK_EXT_LIBRARY NAMES cmark-gfm-extensions)
@@ -79,6 +79,12 @@ target_include_directories(llama-agent-artifact PRIVATE ${LLAMA_AGENT_CMARK_INCL
 target_link_libraries(llama-agent-artifact PUBLIC llama-common llama-agent-plan
     llama-agent-visualization-contracts
     PRIVATE vendor::hash ${LLAMA_AGENT_CMARK_TARGETS})
+if (BUILD_SHARED_LIBS)
+    set_target_properties(llama-agent-artifact PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
 
 # Transport-neutral JSONL/SSE framing. Keep this small so daemon, web and
 # mobile clients can share the wire contract without linking agent semantics.
