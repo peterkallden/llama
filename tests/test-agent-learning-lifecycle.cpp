@@ -73,7 +73,7 @@ int main() {
     std::vector<std::thread> writers;
     writers.reserve(thread_count);
     for (size_t thread = 0; thread < thread_count; ++thread) {
-        writers.emplace_back([&concurrent, thread]() {
+        writers.emplace_back([&concurrent, thread, records_per_thread]() {
             for (size_t index = 0; index < records_per_thread; ++index) {
                 std::string append_error;
                 const auto value = record(

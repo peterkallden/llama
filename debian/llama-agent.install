@@ -14,3 +14,4 @@ usr/lib/*/*.so* usr/lib
 usr/share/llama-agent/requirements/* usr/share/llama-agent/requirements
 usr/share/llama-agent/converter/* usr/share/llama-agent/converter
 usr/share/llama-agent/examples/* usr/share/doc/llama-agent/examples
+usr/share/doc/llama-agent/third-party/* usr/share/doc/llama-agent/third-party

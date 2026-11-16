@@ -592,6 +592,9 @@ test-agent-flydelta-alpha-response-search.cpp
         if (TEST_NAME STREQUAL "test-agent-flydelta-collection")
             target_link_libraries(${TEST_NAME} PRIVATE vendor::hash)
         endif()
+        if (TEST_NAME STREQUAL "test-agent-flydelta-progress-anchor-adviser")
+            target_link_libraries(${TEST_NAME} PRIVATE vendor::hash)
+        endif()
         if (TEST_NAME STREQUAL "test-agent-openapi-provider")
             target_sources(${TEST_NAME} PRIVATE test-agent-openalex-provider.cpp)
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
@@ -608,10 +611,10 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME STREQUAL "test-tool-adapters")
             target_include_directories(${TEST_NAME} PRIVATE ${PROJECT_SOURCE_DIR})
+            target_link_libraries(${TEST_NAME} PRIVATE vendor::hash)
         endif()
         if (TEST_SOURCE STREQUAL "test-memory-cozo.cpp")
-            target_include_directories(${TEST_NAME} PRIVATE ${COZO_INCLUDE_DIR})
-            target_link_libraries(${TEST_NAME} PRIVATE ${COZO_LIBRARY})
+            llama_link_cozo(${TEST_NAME})
         endif()
         # These contract tests use assert() for both checks and setup. Keep
         # assertions enabled even when the surrounding build is RelWithDebInfo.
@@ -751,6 +754,10 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
         if (TEST_NAME STREQUAL "test-agent-dsl-grammar")
             target_compile_definitions(${TEST_NAME} PRIVATE NDEBUG)
+            target_sources(${TEST_NAME} PRIVATE
+                ${PROJECT_SOURCE_DIR}/src/llama-grammar.cpp
+                ${PROJECT_SOURCE_DIR}/src/unicode.cpp
+            )
             set_property(TEST ${TEST_NAME} APPEND PROPERTY LABELS "orchestration;model-free")
         endif()
         if (TEST_NAME STREQUAL "test-agent-code-projection")
@@ -967,7 +974,7 @@ test-agent-flydelta-alpha-response-search.cpp
     set_property(TEST test-agent-visualization-contract PROPERTY LABELS "agent;visualization;model-free")
 
     add_executable(test-agent-visualization-tool test-agent-visualization-tool.cpp)
-    target_link_libraries(test-agent-visualization-tool PRIVATE llama-agent-core llama-agent-tool-provider)
+    target_link_libraries(test-agent-visualization-tool PRIVATE llama-agent-core llama-agent-tool-provider vendor::hash)
     add_test(NAME test-agent-visualization-tool COMMAND test-agent-visualization-tool)
     set_property(TEST test-agent-visualization-tool PROPERTY LABELS "agent;visualization;model-free")
 
@@ -996,8 +1003,9 @@ test-agent-flydelta-alpha-response-search.cpp
 
     if (LLAMA_MEMORY_COZO)
         llama_build_and_test(test-agent-data-store-cozo.cpp)
-        target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo ${COZO_LIBRARY})
-        target_include_directories(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data ${COZO_INCLUDE_DIR})
+        target_link_libraries(test-agent-data-store-cozo PRIVATE llama-agent-storage-cozo)
+        target_include_directories(test-agent-data-store-cozo PRIVATE ${PROJECT_SOURCE_DIR}/tools/agent/data)
+        llama_link_cozo(test-agent-data-store-cozo)
         set_property(TEST test-agent-data-store-cozo PROPERTY LABELS agent)
 
         add_executable(llama-agent-data-store-cozo-seed

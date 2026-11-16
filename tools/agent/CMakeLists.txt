@@ -316,6 +316,7 @@ target_link_libraries(llama-agent-resource PUBLIC
     llama-agent-core
     Threads::Threads
 )
+target_link_libraries(llama-agent-resource PRIVATE vendor::hash)
 if (LLAMA_MEMORY_COZO)
     target_include_directories(llama-agent-resource PRIVATE ${COZO_INCLUDE_DIR})
     llama_link_cozo(llama-agent-resource)

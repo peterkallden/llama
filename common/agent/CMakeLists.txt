@@ -443,7 +443,7 @@ if (LLAMA_MEMORY_COZO)
     target_compile_features(llama-agent-storage-cozo PUBLIC cxx_std_17)
     target_link_libraries(llama-agent-storage-cozo
         PUBLIC llama-agent-core
-        PRIVATE Threads::Threads
+        PRIVATE Threads::Threads vendor::hash
     )
     llama_link_cozo(llama-agent-storage-cozo)
     if (BUILD_SHARED_LIBS)
