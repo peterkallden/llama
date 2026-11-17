@@ -2886,6 +2886,7 @@ static bool run_named_test(const std::string & name) {
 }
 
 int main(int argc, char ** argv) {
+    ggml_time_init();
     std::fprintf(stderr, "agent-inference-smoke checkpoint=main argc=%d\n", argc);
     std::fflush(stderr);
     if (argc > 1) {

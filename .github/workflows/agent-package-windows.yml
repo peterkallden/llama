@@ -183,7 +183,7 @@ jobs:
             }
           }
           $configSmoke = Join-Path $env:RUNNER_TEMP 'llama-agent-config-bootstrap.json'
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File package-root\bin\llama-agent-config-bootstrap.ps1 -Output $configSmoke
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File package-root\bin\llama-agent-config-bootstrap.ps1 -Output $configSmoke -DisableBootstrapImport
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Create ZIP and MSI

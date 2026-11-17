@@ -48,9 +48,30 @@ bool repository_path(const std::string & root, const std::string & relative,
     std::error_code fs_error;
     const auto base = std::filesystem::weakly_canonical(root, fs_error);
     if (fs_error) { error = "repository root could not be resolved"; return false; }
-    const auto requested = relative.empty()
-        ? base : std::filesystem::weakly_canonical(base / relative, fs_error);
-    if (fs_error) { error = "repository path could not be resolved"; return false; }
+    auto requested = base;
+    if (!relative.empty()) {
+        auto unresolved = (base / relative).lexically_normal();
+        std::vector<std::filesystem::path> suffix;
+        while (!unresolved.empty()) {
+            std::error_code status_error;
+            const auto status = std::filesystem::symlink_status(unresolved, status_error);
+            if (!status_error && std::filesystem::exists(status)) break;
+            if (status_error && status_error != std::errc::no_such_file_or_directory &&
+                    status_error != std::errc::not_a_directory) {
+                error = "repository path could not be resolved";
+                return false;
+            }
+            suffix.push_back(unresolved.filename());
+            const auto parent = unresolved.parent_path();
+            if (parent == unresolved) break;
+            unresolved = parent;
+        }
+        if (unresolved.empty()) { error = "repository path could not be resolved"; return false; }
+        requested = std::filesystem::weakly_canonical(unresolved, fs_error);
+        if (fs_error) { error = "repository path could not be resolved"; return false; }
+        for (auto it = suffix.rbegin(); it != suffix.rend(); ++it) requested /= *it;
+        requested = requested.lexically_normal();
+    }
     const auto base_text = base.generic_string();
     const auto requested_text = requested.generic_string();
     if (requested_text != base_text && requested_text.rfind(base_text + "/", 0) != 0) {

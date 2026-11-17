@@ -1243,7 +1243,7 @@ int main() {
         const auto deleted_manifest = nlohmann::json::parse(
             foundation_resources.contents.at(deleted_result.at("resource_uri").get<std::string>()));
         assert(deleted_manifest.at("deleted_paths") == nlohmann::json::array({"src/sample.txt"}));
-        { std::ofstream restored(repository / "src" / "sample.txt"); restored << foundation_resources.contents.at(sample_snapshot_uri); }
+        { std::ofstream restored(repository / "src" / "sample.txt", std::ios::binary); restored << foundation_resources.contents.at(sample_snapshot_uri); }
 #ifndef _WIN32
         std::filesystem::create_symlink("sample.txt", repository / "src" / "alias.txt");
         const auto symlink_snapshot = foundation_registry.execute({"repository.snapshot", "{}"});
@@ -1468,9 +1468,7 @@ int main() {
     result = foundation_registry.execute({"workspace.patch", nlohmann::json{
         {"path", "src/sample.txt"}, {"expected_hash", expected_hash}, {"source_snapshot_ref", manifest_uri},
         {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "patched"}}})}}.dump()});
-    if (!result.ok) {
-        throw std::runtime_error("workspace.patch failed: " + result.failure_code + ": " + result.safe_summary);
-    }
+    assert(result.ok);
     const auto patch_receipt = nlohmann::json::parse(result.output);
     assert(patch_receipt.contains("content_hash") && patch_receipt["content_hash"] == patch_receipt["after_sha256"] &&
         patch_receipt["content_hash"].get<std::string>().rfind("sha256:", 0) == 0 &&
@@ -1497,6 +1495,7 @@ int main() {
     std::ifstream crlf_file(crlf_path, std::ios::binary);
     const std::string crlf_result((std::istreambuf_iterator<char>(crlf_file)), std::istreambuf_iterator<char>());
     assert(crlf_result == "first\r\nupdated\r\n");
+    crlf_file.close();
     result = foundation_registry.execute({"code.inspect", "{}"});
     assert(result.ok && result.output.find("code-capabilities.v1") != std::string::npos &&
            result.output.find("semantic") != std::string::npos && result.output.find("bounded_semantic") != std::string::npos);

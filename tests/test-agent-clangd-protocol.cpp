@@ -171,7 +171,10 @@ int main(int argc, char ** argv) {
             }
         }
         assert(saw_versioned_change && saw_delete_notification);
-        std::filesystem::remove_all(root);
+        input.close();
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(root, cleanup_error);
+        assert(!cleanup_error);
     }
 
     {
@@ -213,8 +216,11 @@ int main(int argc, char ** argv) {
             assert(status["compile_commands_sync_error"].is_string());
             std::ifstream copy(cached);
             assert(agent_clangd_json::parse(copy) == entries);
+            copy.close();
         }
-        fs::remove_all(root);
+        std::error_code cleanup_error;
+        fs::remove_all(root, cleanup_error);
+        assert(!cleanup_error);
     }
 
     if (std::getenv("LLAMA_AGENT_CLANGD_LIVE_TEST") != nullptr) {

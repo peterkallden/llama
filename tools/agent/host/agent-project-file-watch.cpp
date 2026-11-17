@@ -45,6 +45,28 @@ bool watched_file(const fs::path & path, const std::vector<std::string> & extens
         std::find(names.begin(), names.end(), name) != names.end();
 }
 
+bool canonicalize_configured_path(const fs::path & path, fs::path & result, std::error_code & ec) {
+    auto candidate = fs::absolute(path, ec).lexically_normal();
+    if (ec) return false;
+    std::vector<fs::path> missing_components;
+    while (true) {
+        const auto status = fs::symlink_status(candidate, ec);
+        if (!ec && status.type() != fs::file_type::not_found) break;
+        if (ec && ec != std::errc::no_such_file_or_directory && ec != std::errc::not_a_directory) return false;
+        ec.clear();
+        const auto component = candidate.filename();
+        if (component.empty() || candidate == candidate.root_path()) return false;
+        missing_components.push_back(component);
+        candidate = candidate.parent_path();
+    }
+    candidate = fs::canonical(candidate, ec);
+    if (ec) return false;
+    for (auto it = missing_components.rbegin(); it != missing_components.rend(); ++it)
+        candidate /= *it;
+    result = candidate.lexically_normal();
+    return true;
+}
+
 struct file_stamp {
     fs::file_time_type modified{};
     uintmax_t size = 0;
@@ -498,8 +520,12 @@ bool agent_project_file_watch_service::subscribe(const agent_project_file_watch_
     if (ec || !fs::is_directory(root, ec) || ec) { error = "file watch root is unavailable"; return false; }
     std::set<std::string> explicit_files;
     for (const auto & item : config.explicit_files) {
-        const auto file = fs::weakly_canonical(item, ec);
-        if (ec) { error = "explicit file watch path could not be resolved"; return false; }
+        fs::path file;
+        if (!canonicalize_configured_path(item, file, ec)) {
+            if (ec) { error = "explicit file watch path could not be resolved: " + ec.message(); return false; }
+            error = "explicit file watch path could not be resolved";
+            return false;
+        }
         // Explicit paths are host configuration (for example a compilation
         // database in a separate build tree), never tool-supplied paths.
         explicit_files.insert(file.string());
