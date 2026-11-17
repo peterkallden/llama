@@ -370,7 +370,12 @@ jobs:
             dpkg-dev \
             git \
             libssl-dev \
+            libcmark-gfm-dev \
+            libcmark-gfm-extensions-dev \
+            libxml2-dev \
             ninja-build \
+            nodejs \
+            npm \
             pkg-config \
             zlib1g-dev
 
@@ -597,6 +602,20 @@ jobs:
             throw 'Release source must be an ancestor of origin/master'
           }
 
+      - name: Provision LibXml2 with vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = 'C:\vcpkg'
+          if (-not (Test-Path (Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake'))) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg $vcpkgRoot
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & (Join-Path $vcpkgRoot 'bootstrap-vcpkg.bat') -disableMetrics
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & (Join-Path $vcpkgRoot 'vcpkg.exe') install libxml2:x64-windows-static-md --disable-metrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File $env:GITHUB_ENV -Append
+
       - name: Provision Cozo C API
         shell: pwsh
         run: |
@@ -627,7 +646,18 @@ jobs:
         if: matrix.backend == 'cuda'
         uses: ./.github/actions/windows-setup-cuda
         with:
-          cuda_version: '13.3'
+          cuda_version: '13.4'
+          cuda_arch: x64
+
+      - name: Verify CUDA Toolkit
+        if: matrix.backend == 'cuda'
+        shell: pwsh
+        run: |
+          if (-not $env:CUDA_PATH -or -not (Test-Path (Join-Path $env:CUDA_PATH 'bin\nvcc.exe'))) {
+            throw 'CUDA Toolkit installation did not provide nvcc.exe'
+          }
+          & (Join-Path $env:CUDA_PATH 'bin\nvcc.exe') --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install Ninja for CUDA generator
         if: matrix.backend == 'cuda'
@@ -669,7 +699,7 @@ jobs:
           }
           $backendExactVersion = switch ('${{ matrix.backend }}') {
             'cpu' { 'native' }
-            'cuda' { '13.3' }
+            'cuda' { '13.4' }
             'vulkan' { '1.4.357.0' }
             default { throw 'Unsupported Windows release backend' }
           }
@@ -722,6 +752,7 @@ jobs:
             '-DLLAMA_TOOLS_INSTALL=OFF -DLLAMA_MEMORY_COZO=ON',
             '-DLLAMA_PLAN_COZO=ON -DLLAMA_AGENT_RUNTIME=ON',
             '-DLLAMA_AGENT_TOOLS_CLANG=ON -DLLAMA_SUBPROCESS=ON',
+            '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static-md',
             $backendFlags,
             "-DCPACK_PACKAGE_NAME=${{ steps.metadata.outputs.package_name }}",
             "-DCPACK_PACKAGE_VERSION=${{ steps.metadata.outputs.agent_version }}",
@@ -785,7 +816,7 @@ jobs:
           }
           $configSmoke = Join-Path $env:RUNNER_TEMP 'llama-agent-config-bootstrap-release.json'
           & powershell.exe -NoProfile -ExecutionPolicy Bypass `
-            -File package-root\bin\llama-agent-config-bootstrap.ps1 -Output $configSmoke
+            -File package-root\bin\llama-agent-config-bootstrap.ps1 -Output $configSmoke -DisableBootstrapImport
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path $configSmoke)) { throw 'Windows release config smoke did not produce output' }
 
