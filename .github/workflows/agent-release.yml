@@ -564,7 +564,7 @@ jobs:
             "upstream_build=${{ steps.metadata.outputs.upstream_build }}" \
             "cozo_version=$COZO_VERSION" \
             "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > debian-release-artifacts/AGENT-DEBIAN-RELEASE-MANIFEST.txt
+            > "debian-release-artifacts/AGENT-DEBIAN-${BACKEND}-RELEASE-MANIFEST.txt"
 
       - name: Upload Debian backend package
         uses: actions/upload-artifact@v6
@@ -841,7 +841,7 @@ jobs:
             "commit_sha=$(git rev-parse HEAD)"
             "cozo_version=$env:COZO_VERSION"
             "created_at=$([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))"
-          ) | Set-Content AGENT-WINDOWS-RELEASE-MANIFEST.txt
+          ) | Set-Content "AGENT-WINDOWS-${{ matrix.backend }}-RELEASE-MANIFEST.txt"
           Get-FileHash "$packageName.zip","$packageName.msi" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } |
             Set-Content SHA256SUMS
@@ -853,7 +853,7 @@ jobs:
           path: |
             llama-agent-${{ steps.metadata.outputs.backend_label }}-windows-x64-*.zip
             llama-agent-${{ steps.metadata.outputs.backend_label }}-windows-x64-*.msi
-            AGENT-WINDOWS-RELEASE-MANIFEST.txt
+            AGENT-WINDOWS-${{ matrix.backend }}-RELEASE-MANIFEST.txt
             SHA256SUMS
           if-no-files-found: error
           retention-days: 30
