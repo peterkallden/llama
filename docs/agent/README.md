@@ -97,7 +97,7 @@ establishing factual truth, independent corroboration or causality.
   ```
 
   Windows artifact names use the short backend labels `cuda13` and `vulkan1.4`;
-  the exact toolkit/SDK versions (`13.3` and `1.4.357.0`) are recorded in the
+  the exact toolkit/SDK versions (`13.4` and `1.4.357.0`) are recorded in the
   release manifest.
 
   The Debian package names are `llama-agent-cpu`, `llama-agent-cuda`, and
@@ -278,6 +278,62 @@ The entrypoint bootstraps `/etc/llama-agent/config.json` only when it is
 missing. Published images are
 available through the owner's [Packages](https://github.com/users/peterkallden/packages?repo_name=peterkallden%2Fllama)
 page when the corresponding workflows have completed successfully.
+
+### GPU access in release containers
+
+The release images use separate CPU, CUDA and Vulkan builds. Exposing a device
+to a container and selecting GPU layers in the agent configuration are both
+required. These examples assume a host `models` directory with `model.gguf`
+and `embedding.gguf`, and start in daemon mode. Use the actual model paths and
+configure the network and persistent data mounts for your deployment.
+
+For NVIDIA CUDA, install a compatible host driver and NVIDIA Container Toolkit.
+For Docker, configure the NVIDIA runtime and request the GPU:
+
+```sh
+docker run --rm --gpus all \
+  -e LLAMA_AGENT_MODE=daemon -e LLAMA_AGENT_GPU_LAYERS=99 \
+  -v "$PWD/models:/models:ro" \
+  ghcr.io/peterkallden/llama/llama-agent:cuda13-amd64-latest
+```
+
+For Podman, configure NVIDIA CDI and request the CDI device:
+
+```sh
+podman run --rm --device nvidia.com/gpu=all \
+  -e LLAMA_AGENT_MODE=daemon -e LLAMA_AGENT_GPU_LAYERS=99 \
+  -v "$PWD/models:/models:ro" \
+  ghcr.io/peterkallden/llama/llama-agent:cuda13-amd64-latest
+```
+
+For Intel or AMD Vulkan, the Vulkan image includes Mesa Vulkan drivers. Pass
+the render device and its numeric group ID; replace `renderD128` with the
+host device you intend to use:
+
+```sh
+render_device=/dev/dri/renderD128
+render_gid=$(stat -c '%g' "$render_device")
+podman run --rm --device "$render_device:$render_device" --group-add "$render_gid" \
+  -e LLAMA_AGENT_MODE=daemon -e LLAMA_AGENT_GPU_LAYERS=99 \
+  -v "$PWD/models:/models:ro" \
+  ghcr.io/peterkallden/llama/llama-agent:vulkan1.4-amd64-latest
+```
+
+The same device and group options can be used with Docker. Rootless device and
+supplementary-group handling depends on the host's container configuration;
+verify that the `llama-agent` user in the container can open the render node.
+NVIDIA Vulkan requires a compatible NVIDIA Vulkan ICD and driver libraries in
+the container in addition to device access; the Mesa installation is for
+Intel/AMD and does not establish NVIDIA Vulkan support.
+
+The release entrypoint applies `LLAMA_AGENT_GPU_LAYERS` only while creating a
+missing configuration. With a persisted or explicitly mounted configuration,
+set `runtime.n_gpu_layers` in that file instead. The development image copies
+its own configuration on first start, so edit that configuration as well. The
+default is `0`; `99` is the project's convention for requesting full offload.
+The bootstrap script accepts non-negative values. Device
+access alone does not prove that inference is using the GPU: inspect startup
+logs and verify with a real model on the intended host.
 
 ## Testing and assurance
 

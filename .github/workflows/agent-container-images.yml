@@ -173,8 +173,8 @@ jobs:
             base_image: ubuntu:24.04
           - backend: cuda
             backend_label: cuda13
-            backend_version: 13.3
-            base_image: nvidia/cuda:13.3.0-runtime-ubuntu24.04
+            backend_version: 13.4
+            base_image: nvidia/cuda:13.4.1-runtime-ubuntu24.04
           - backend: vulkan
             backend_label: vulkan1.4
             backend_version: 1.4.357.0

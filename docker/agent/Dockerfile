@@ -35,6 +35,9 @@ RUN apt-get update \
         gettext-base \
         python3 \
         zlib1g \
+    && if [ "$BACKEND" = "vulkan" ]; then \
+        apt-get install --no-install-recommends --yes mesa-vulkan-drivers; \
+    fi \
     && if [ "$INSTALL_DEV_TOOLS" = "true" ]; then \
         apt-get install --no-install-recommends --yes \
             curl git build-essential cmake ninja-build pkg-config \

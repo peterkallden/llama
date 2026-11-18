@@ -85,7 +85,7 @@ override_dh_auto_build:
 
 ifeq ($(LLAMA_AGENT_BACKEND),cuda)
 # NVIDIA's CUDA packages do not provide Debian shlibs metadata. The release
-# workflow supplies cuda-cudart-13-3 explicitly in the CUDA package stanza.
+# workflow supplies cuda-cudart-13-4 explicitly in the CUDA package stanza.
 override_dh_shlibdeps:
 	dh_shlibdeps -Xlibggml-cuda.so
 endif

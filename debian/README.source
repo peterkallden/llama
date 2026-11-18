@@ -35,7 +35,7 @@ default.
 PPA remain portable. A downstream maintainer building for a controlled host
 may set it to `on`.
 
-The CUDA release package declares a dependency on `cuda-cudart-13-3`. It also
+The CUDA release package declares a dependency on `cuda-cudart-13-4`. It also
 requires a compatible NVIDIA driver on the target host; the driver remains a
 host-level choice because its Debian package name varies by distribution and
 hardware support policy.
