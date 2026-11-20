@@ -92,7 +92,7 @@ bool agent_clangd_session::ensure_started(std::string & error) {
     agent_clangd_json response;
     const auto root_uri = config_.repository_root.empty() ? agent_clangd_json(nullptr) : agent_clangd_json(agent_clangd_file_uri(std::filesystem::absolute(config_.repository_root)));
     const auto params = agent_clangd_json{{"processId", nullptr}, {"rootUri", root_uri},
-        {"capabilities", {{"window", {{"workDoneProgress", true}}},
+        {"capabilities", {{"textDocument", {{"documentSymbol", {{"hierarchicalDocumentSymbolSupport", true}}}}}, {"window", {{"workDoneProgress", true}}},
             {"workspace", {{"didChangeWatchedFiles", {{"dynamicRegistration", false}}}}}}},
         {"workspaceFolders", agent_clangd_json::array()}};
     if (!send_request("initialize", params, response, error)) return false;

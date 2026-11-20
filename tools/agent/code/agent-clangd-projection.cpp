@@ -139,21 +139,26 @@ agent_clangd_json agent_clangd_enclosing_function(const agent_clangd_json & symb
     auto visit = [&](auto && self, const json & entries, const std::string & container) -> void {
         if (!entries.is_array()) return;
         for (const auto & entry : entries) {
-            if (!entry.is_object() || !entry.contains("range")) continue;
+            if (!entry.is_object()) continue;
+            const bool flat = entry.contains("location") && entry["location"].is_object();
+            if (!entry.contains("range") && (!flat || !entry["location"].contains("range"))) continue;
+            const auto & range = entry.contains("range") ? entry["range"] : entry["location"]["range"];
             uint64_t first_line, first_column, last_line, last_column;
-            if (!position(entry["range"], "start", first_line, first_column) ||
-                    !position(entry["range"], "end", last_line, last_column)) continue;
+            if (!position(range, "start", first_line, first_column) ||
+                    !position(range, "end", last_line, last_column)) continue;
             const auto point = std::make_pair(line, column);
             if (point < std::make_pair(static_cast<int64_t>(first_line), static_cast<int64_t>(first_column)) ||
                     point >= std::make_pair(static_cast<int64_t>(last_line), static_cast<int64_t>(last_column))) continue;
             const auto name = entry.contains("name") && entry["name"].is_string() ? entry["name"].get<std::string>() : std::string{};
             const auto kind = entry.contains("kind") && entry["kind"].is_number_integer() && entry["kind"] >= 1 && entry["kind"] <= 26 ? entry["kind"].get<int>() : 0;
-            if ((kind == 6 || kind == 9 || kind == 12) && !name.empty() && name.size() <= 1024 && entry.contains("selectionRange")) {
+            if ((kind == 6 || kind == 9 || kind == 12) && !name.empty() && name.size() <= 1024 && (entry.contains("selectionRange") || flat)) {
                 std::string error;
                 json projected;
-                if (agent_clangd_project_location({{"uri", uri}, {"range", entry["selectionRange"]}}, repository_root, projected, error)) {
+                if (agent_clangd_project_location(flat ? entry["location"] : json{{"uri", uri}, {"range", entry["selectionRange"]}}, repository_root, projected, error) && projected.value("uri", std::string{}) == uri) {
                     projected["name"] = name; projected["kind"] = kind;
+                    if (flat) projected["position_kind"] = "range_start";
                     if (!container.empty()) projected["container_name"] = container;
+                    else if (flat && entry.contains("containerName") && entry["containerName"].is_string()) projected["container_name"] = entry["containerName"];
                     if (entry.contains("detail") && entry["detail"].is_string() && entry["detail"].get_ref<const std::string &>().size() <= 1024)
                         projected["detail"] = entry["detail"];
                     selected = std::move(projected);

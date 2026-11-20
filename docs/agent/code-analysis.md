@@ -311,3 +311,9 @@ references. Large enriched responses drop optional context from the end and
 mark it `omitted_output_budget`, preserving the reference locations. Base
 results can still require a lower `max_results` under existing output limits.
 These additions do not improve or establish project-wide index coverage.
+
+The extended reference contract is opt-in through `include_context: true`; the
+ordinary result remains compact. The clangd client advertises hierarchical
+`DocumentSymbol` support. If a provider nevertheless returns flat
+`SymbolInformation`, the reported function range is used and its projected
+position is marked `position_kind: range_start`; it is not a name position.

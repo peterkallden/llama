@@ -1,6 +1,7 @@
 #include "agent-clangd-protocol.h"
 #include "agent-clangd-session.h"
 #include "agent-clangd-provider.h"
+#include "agent-clangd-projection.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -39,6 +40,7 @@ static int fake_clangd() {
     agent_clangd_message_decoder decoder;
     std::string error;
     agent_clangd_json message;
+    bool hierarchical = false;
     auto send = [](const agent_clangd_json & value) {
         const auto encoded = agent_clangd_encode_message(value);
         std::fwrite(encoded.data(), 1, encoded.size(), stdout);
@@ -66,13 +68,18 @@ static int fake_clangd() {
                 {"range", range(1, 0, 4, 0)}, {"selectionRange", range(1, 4, 1, 11)}};
             const auto symbols = json::array({{{"name", "demo"}, {"kind", 3}, {"range", range(0, 0, 5, 0)},
                 {"selectionRange", range(0, 10, 0, 14)}, {"children", json::array({function})}}});
-            const auto result = method == "textDocument/documentSymbol" ? symbols : json::array({{
+            const auto flat = json::array({{{"name", "fixture"}, {"kind", 12}, {"containerName", "demo"},
+                {"location", {{"uri", message["params"]["textDocument"]["uri"]}, {"range", range(1, 0, 4, 0)}}}}});
+            const auto result = method == "textDocument/documentSymbol" ? (hierarchical ? symbols : flat) : json::array({{
                 {"uri", message["params"]["textDocument"]["uri"]}, {"range", range(2, 8, 2, 15)}}});
             send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", result}});
             continue;
         }
-        if (method == "initialize") send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", {{"capabilities", agent_clangd_json::object()}}}});
-        else if (method == "workspace/symbol") {
+        if (method == "initialize") {
+            hierarchical = message["params"]["capabilities"].value("textDocument", agent_clangd_json::object()).value("documentSymbol", agent_clangd_json::object()).value("hierarchicalDocumentSymbolSupport", false);
+            if (std::getenv("LLAMA_TEST_CLANGD_CONTEXT") && !hierarchical) return 2;
+            send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", {{"capabilities", agent_clangd_json::object()}}}});
+        } else if (method == "workspace/symbol") {
             send({{"jsonrpc", "2.0"}, {"id", 999}, {"method", "window/workDoneProgress/create"}, {"params", {{"token", "index"}}}});
             send(agent_clangd_notification("$/progress", {{"token", "index"}, {"value", {{"kind", "begin"}, {"title", "Background Index"}}}}));
             send(agent_clangd_notification("$/progress", {{"token", "index"}, {"value", {{"kind", "report"}}}}));
@@ -212,6 +219,11 @@ int main(int argc, char ** argv) {
             assert(item["context_status"] == "available" && item["context"]["lines"].size() == 5);
             assert(item["enclosing_function"]["name"] == "fixture" && item["enclosing_function"]["container_name"] == "demo");
             assert(item["enclosing_function_status"] == "found");
+            const auto uri = agent_clangd_file_uri(root / "source.cpp");
+            const agent_clangd_json flat = agent_clangd_json::array({{{"name", "fixture"}, {"kind", 12}, {"containerName", "demo"},
+                {"location", {{"uri", uri}, {"range", {{"start", {{"line", 1}, {"character", 0}}}, {"end", {{"line", 4}, {"character", 0}}}}}}}}});
+            const auto projected = agent_clangd_enclosing_function(flat, 2, 8, uri, root.string());
+            assert(projected["name"] == "fixture" && projected["position_kind"] == "range_start");
             const auto symbols = provider.symbol(R"({"symbol":"fixture","path_hint":"source.cpp"})");
             assert(symbols.ok);
             const auto definition = agent_clangd_json::parse(symbols.output)["definitions"][0];
