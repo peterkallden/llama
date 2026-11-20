@@ -95,6 +95,7 @@ int main(int argc, char ** argv) {
 
     agent_clangd_session unavailable({"__llama_missing_clangd__", "", "", 100, 100, "", "", {}});
     assert(unavailable.status_snapshot()["session"] == "not_running");
+    assert(unavailable.status_snapshot()["start_on"] == "semantic_query");
     assert(!unavailable.request("workspace/symbol", {{"query", "needle"}}, decoded, error));
     assert(unavailable.status_snapshot()["index_activity"] == "unknown");
 

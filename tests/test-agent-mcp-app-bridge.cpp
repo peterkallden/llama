@@ -43,6 +43,10 @@ public:
 class graph_fixture_store final : public common_agent_data_store {
 public:
     common_investigation_case_revision investigation;
+    common_context_graph_state graph;
+    bool get_context_graph(const common_agent_scope &, common_context_graph_state & out, std::string &) override {
+        out = graph; return true;
+    }
     bool execute(const std::string &, const std::string &, std::string &, std::string &) override { return false; }
     bool get_investigation_case(const std::string & id, const common_agent_scope & scope,
             common_investigation_case_revision & out, std::string & error) override {
@@ -280,6 +284,19 @@ int main() {
     agent_tool_context graph_context;
     graph_context.profile_id = "code-analysis"; graph_context.scope.namespace_id = "tenant-a";
     graph_context.scope.project_id = "project-a"; graph_context.max_calls = 10;
+    graph_store.graph.nodes.push_back({"node:source", "file", "source", "a.cpp"});
+    graph_store.graph.nodes[0].sources.push_back({"git", "unavailable-repo", "a.cpp", std::string(40, 'a')});
+    {
+        auto freshness_context = graph_context;
+        freshness_context.allowed_exposed_tool_names = {"graph.get"};
+        auto freshness_view = graph_provider.resolve_tools(freshness_context, error);
+        assert(freshness_view);
+        const auto read = freshness_view->call({"freshness", "graph.get", R"({"id":"node:source"})"}, error);
+        assert(read.ok);
+        const auto content = nlohmann::json::parse(read.content_json);
+        assert(content["result"]["node"]["sources"][0]["currentness"]["reason"] == "source_read_unavailable");
+        assert(content["result"]["node"]["freshness"] == "unknown");
+    }
     graph_context.allowed_exposed_tool_names = {"graph.source"};
     auto graph_view = graph_provider.resolve_tools(graph_context, error);
     if (!graph_view) return 41;

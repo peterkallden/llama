@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/context-graph/source-reference.h"
+
 #include <cstdint>
 #include <cstddef>
 
@@ -15,6 +17,7 @@ struct common_context_graph_node_observation {
     int64_t line = 0;
     std::string source_revision;
     std::string source_ref;
+    std::vector<common_source_reference> sources = {};
 };
 
 struct common_context_graph_description {
@@ -22,6 +25,7 @@ struct common_context_graph_description {
     std::string source = "model";
     std::string source_revision;
     std::vector<std::string> evidence_refs;
+    std::vector<common_source_reference> sources = {};
 };
 
 struct common_context_graph_node {
@@ -38,6 +42,7 @@ struct common_context_graph_node {
     std::vector<common_context_graph_node_observation> observations;
     // Append-only proposed descriptions; the last entry is the current proposal.
     std::vector<common_context_graph_description> descriptions;
+    std::vector<common_source_reference> sources = {};
 };
 
 struct common_context_graph_assertion {
@@ -45,6 +50,7 @@ struct common_context_graph_assertion {
     std::string rationale;
     std::vector<std::string> evidence_refs;
     std::string source_revision;
+    std::vector<common_source_reference> sources = {};
 };
 
 struct common_context_graph_edge {

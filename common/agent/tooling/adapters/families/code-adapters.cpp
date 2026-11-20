@@ -2,6 +2,7 @@
 
 #include "agent/tooling/adapters/support/adapter-support.h"
 #include "agent/visualization/visualization-contract.h"
+#include "agent/tooling/adapters/families/repository-adapters.h"
 
 #include <algorithm>
 #include <chrono>
@@ -16,6 +17,57 @@
 namespace {
 
 using json = common_adapter_json;
+
+bool register_code_definition(const common_native_tool_bindings & bindings,
+        const common_tool_definition & definition, common_tool_registry & registry,
+        std::function<common_tool_execution_result(const std::string &)> handler, std::string & error) {
+    return common_adapter_register_definition(definition, registry, [bindings, handler](const std::string & input) {
+        const auto args = json::parse(input, nullptr, false);
+        std::string path;
+        if (args.is_object()) for (const auto * key : {"path", "definition_path", "path_hint"})
+            if (args.contains(key) && args[key].is_string() && !args[key].get_ref<const std::string &>().empty()) {
+                path = args[key].get<std::string>(); break;
+            }
+        const auto before = common_repository_observation(bindings.repository_root, path);
+        auto result = handler(input);
+        if (!result.ok) return result;
+        auto output = json::parse(result.output, nullptr, false);
+        if (!output.is_object() || (output.value("schema", std::string{}) != "code-analysis.v1" &&
+                output.value("schema", std::string{}) != "code-capabilities.v1")) return result;
+        const auto after = common_repository_observation(bindings.repository_root, path);
+        output["source"] = before;
+        output["source_after"] = after;
+        output["revision_unchanged_during_query"] = before.value("status", std::string{}) == "observed" &&
+            after.value("status", std::string{}) == "observed" && before["revision"] == after["revision"];
+        if (bindings.code_status) {
+            const auto status = bindings.code_status();
+            if (status.ok) {
+                const auto parsed = json::parse(status.output, nullptr, false);
+                if (parsed.is_object()) output["provider_status"] = parsed;
+            }
+        }
+        std::set<std::string> paths;
+        bool paths_truncated = false;
+        std::function<void(const json &)> collect = [&](const json & value) {
+            if (value.is_array()) { for (const auto & item : value) collect(item); }
+            else if (value.is_object()) for (const auto & item : value.items()) {
+                if ((item.key() == "path" || item.key() == "definition_path") && item.value().is_string()) {
+                    const auto file = item.value().get<std::string>();
+                    if (paths.size() < 16) paths.insert(file);
+                    else if (!paths.count(file)) paths_truncated = true;
+                }
+                else if (item.key() != "source" && item.key() != "source_after" && item.key() != "provider_status") collect(item.value());
+            }
+        };
+        collect(output);
+        output["source_files"] = json::array();
+        for (const auto & file : paths) if (!file.empty())
+            output["source_files"].push_back(common_repository_observation(bindings.repository_root, file));
+        output["source_files_truncated"] = paths_truncated;
+        result.output = output.dump();
+        return result;
+    }, error);
+}
 
 void add_limitation(std::vector<std::string> & limitations, const std::string & value) {
     if (std::find(limitations.begin(), limitations.end(), value) != limitations.end()) return;
@@ -633,7 +685,7 @@ bool common_try_register_code_tool_adapter(
     if (!inspect && !refresh && !symbols && !references && !calls && !impact) return false;
 
     if (refresh) {
-        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+        installed = register_code_definition(bindings, definition, registry, [bindings](const std::string & input) {
             json args;
             std::string parse_error;
             if (!common_adapter_parse_object(input, args, parse_error) || !args.empty())
@@ -643,7 +695,7 @@ bool common_try_register_code_tool_adapter(
             return bindings.code_refresh();
         }, error);
     } else if (inspect) {
-        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+        installed = register_code_definition(bindings, definition, registry, [bindings](const std::string & input) {
             json args;
             std::string parse_error;
             if (!common_adapter_parse_object(input, args, parse_error) ||
@@ -735,7 +787,7 @@ bool common_try_register_code_tool_adapter(
         }, error);
     } else if (symbols || references) {
         const bool legacy = id.rfind("builtin.diagnostics.", 0) == 0;
-        installed = common_adapter_register_definition(definition, registry, [bindings, references, legacy](const std::string & input) {
+        installed = register_code_definition(bindings, definition, registry, [bindings, references, legacy](const std::string & input) {
             std::string parse_error;
             json args;
             if (!common_adapter_parse_object(input, args, parse_error) || !args.contains("symbol") ||
@@ -811,7 +863,7 @@ bool common_try_register_code_tool_adapter(
             return symbols_fallback(bindings, args, references, legacy);
         }, error);
     } else if (impact) {
-        installed = common_adapter_register_definition(definition, registry,
+        installed = register_code_definition(bindings, definition, registry,
                 [bindings, timeout_ms = definition.timeout_ms](const std::string & input) {
             std::string parse_error;
             json args;
@@ -879,7 +931,7 @@ bool common_try_register_code_tool_adapter(
         }, error);
     } else if (calls) {
         const bool legacy = id.rfind("builtin.diagnostics.", 0) == 0;
-        installed = common_adapter_register_definition(definition, registry, [bindings, legacy](const std::string & input) {
+        installed = register_code_definition(bindings, definition, registry, [bindings, legacy](const std::string & input) {
             std::string parse_error;
             json args;
             if (!common_adapter_parse_object(input, args, parse_error) || !args.contains("symbol") ||

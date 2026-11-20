@@ -63,8 +63,9 @@ With an explicitly configured compilation database it reports whether that
 database can be read, and an optional repository-relative `path` reports
 whether the source is present, or null when this cannot be determined. It also
 reports the number of unique source paths and whether invalid entries were
-encountered; that count is not an index coverage measurement. `provider_status`
-is a non-blocking snapshot of the session and last observed clangd index
+encountered; that count is not an index coverage measurement. `provider_status` reports `start_on: semantic_query`: inspection does not start clangd.
+A `not_running` session before the first semantic query is expected.
+`provider_status` is a non-blocking snapshot of the session and last observed clangd index
 activity. Progress notifications are read during requests, so the observation
 may be stale even when an activity reports that it ended.
 
@@ -259,3 +260,23 @@ These contracts do not establish model or browser smoke coverage.
 `path` limits the result, and `include_untracked: true` adds bounded previews of
 new files. `truncated` and `omitted_files` report incomplete output; binary and
 non-UTF-8 untracked files are identified without exposing their bytes.
+
+### Repository observations
+
+`code.inspect` and canonical `code.symbols`, `code.references`, `code.calls` and
+`code.impact` responses include a `source` observation before the query and a
+`source_after` observation afterwards. Available Git observations contain the
+canonical local repository ID (`id`, the Git common directory), checkout root,
+HEAD (`revision`), branch, requested location, local-change flag and Unix
+observation time. Failure to inspect Git produces `status: unknown` and does
+not prevent an otherwise authorized analysis. `revision_unchanged_during_query`
+compares HEAD before and after; it does not promise an atomic content snapshot.
+`source_files` adds bounded observations for returned paths, with an explicit
+truncation flag. Dirty worktrees are identified rather than hashed.
+
+The response also retains the provider's available status: compilation-database
+configuration and stale/sync diagnostics, file-watch generations and last
+observed index activity. A database source count, delivered file event or ended
+progress notification never establishes complete semantic index coverage.
+Use these observations to qualify results and to populate graph `sources`;
+verify source contents when stronger evidence is required.

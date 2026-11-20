@@ -52,6 +52,7 @@ agent_clangd_json agent_clangd_session::status_snapshot() const {
     const auto observed = index_observed_ms_.load();
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     return {{"session", session == 2 ? "initialized" : session == 1 ? "starting" : "not_running"},
+        {"start_on", "semantic_query"},
         {"index_activity", progress == 1 ? "started" : progress == 2 ? "active" : progress == 3 ? "ended" : "unknown"},
         {"observation_age_ms", observed ? agent_clangd_json(now - observed) : agent_clangd_json(nullptr)},
         {"observation_may_be_stale", true}};

@@ -80,6 +80,38 @@ int main() {
     common_context_graph_state published_graph;
     TEST_ASSERT(store.publish_context_graph(graph_scope, 0, graph, published_graph, error) == common_agent_publication_status::published);
     TEST_ASSERT(store.publish_context_graph(graph_scope, 0, graph, published_graph, error) == common_agent_publication_status::conflict);
+    {
+        auto source_scope = graph_scope; source_scope.project_id = "source-roundtrip";
+        auto sourced = published_graph;
+        const common_source_reference source{"document", "doc:one", "section:a", "2", 100};
+        sourced.nodes[0].sources = {source};
+        common_context_graph_node symbol;
+        symbol.id = "node:sourced-symbol"; symbol.kind = "symbol"; symbol.name = "function";
+        symbol.path = "src/sample.cpp"; symbol.line = 1; symbol.symbol_key = "repo:symbol";
+        symbol.observations.push_back({symbol.path, 1, "2", "document:one", {source}});
+        sourced.nodes.push_back(symbol);
+        sourced.nodes[0].descriptions.push_back({"document evidence", "model", "2", {}, {source}});
+        sourced.edges[0].assertions.push_back({"model", "multiple sources", {}, "2", {source, {"dataset", "dataset://one"}}});
+        common_context_graph_state restored;
+        TEST_ASSERT(store.publish_context_graph(source_scope, 0, sourced, restored, error) == common_agent_publication_status::published);
+        TEST_ASSERT(store.get_context_graph(source_scope, restored, error));
+        TEST_ASSERT(restored.nodes[0].sources == std::vector<common_source_reference>{source});
+        TEST_ASSERT(restored.nodes[0].descriptions[0].sources == std::vector<common_source_reference>{source});
+        TEST_ASSERT(restored.edges[0].assertions[0].sources.size() == 2);
+        const auto sourced_symbol = std::find_if(restored.nodes.begin(), restored.nodes.end(), [](const auto & node) { return node.id == "node:sourced-symbol"; });
+        TEST_ASSERT(sourced_symbol != restored.nodes.end() && sourced_symbol->observations[0].sources[0] == source);
+        auto tampered = restored; tampered.revision = 2;
+        tampered.edges[0].assertions[0].sources[0].revision = "3";
+        TEST_ASSERT(store.publish_context_graph(source_scope, 1, tampered, restored, error) == common_agent_publication_status::invalid);
+        TEST_ASSERT(store.get_context_graph(source_scope, restored, error));
+        tampered = restored; tampered.revision = 2; tampered.nodes[0].descriptions[0].sources.clear();
+        TEST_ASSERT(store.publish_context_graph(source_scope, 1, tampered, restored, error) == common_agent_publication_status::invalid);
+        auto appended = restored; appended.revision = 2;
+        appended.nodes[0].sources.push_back({"dataset", "dataset://additional"});
+        TEST_ASSERT(store.publish_context_graph(source_scope, 1, appended, restored, error) == common_agent_publication_status::published);
+        auto removed = restored; removed.revision = 3; removed.nodes[0].sources.erase(removed.nodes[0].sources.begin());
+        TEST_ASSERT(store.publish_context_graph(source_scope, 2, removed, restored, error) == common_agent_publication_status::invalid);
+    }
     auto other_graph_scope = graph_scope; other_graph_scope.project_id = "other-project";
     TEST_ASSERT(store.get_context_graph(other_graph_scope, published_graph, error) && published_graph.nodes.empty());
     auto session_graph_scope = graph_scope; session_graph_scope.session_id = "session-two";
@@ -540,6 +572,12 @@ int main() {
     TEST_ASSERT(store.get_context_graph(graph_scope, published_graph, error) && published_graph.revision == 3 &&
         published_graph.edges.size() == 2 && published_graph.edges[0].status == "retraction_proposed" && published_graph.edges[0].version == 2 &&
         published_graph.edges[0].rationale == "inspect this seam" && published_graph.edges[0].retraction_rationale == "recheck");
+    {
+        auto source_scope = graph_scope; source_scope.project_id = "source-roundtrip";
+        common_context_graph_state reopened;
+        TEST_ASSERT(store.get_context_graph(source_scope, reopened, error));
+        TEST_ASSERT(reopened.nodes[0].sources[0].revision == "2" && reopened.edges[0].assertions[0].sources.size() == 2);
+    }
     common_context_graph_state reloaded_symbols;
     TEST_ASSERT(store.get_context_graph(symbol_scope, reloaded_symbols, error) && reloaded_symbols.revision == 2 &&
         reloaded_symbols.nodes.size() == 1 && reloaded_symbols.nodes[0].symbol_key == "clang:usr:f-int" &&

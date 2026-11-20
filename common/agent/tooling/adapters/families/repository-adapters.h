@@ -10,3 +10,7 @@ bool common_try_register_repository_tool_adapter(
         common_tool_registry & registry,
         bool & installed,
         std::string & error);
+
+// These reads are restricted to the host-bound repository and never fetch.
+nlohmann::ordered_json common_repository_observation(const std::string & root, const std::string & path = {});
+nlohmann::ordered_json common_repository_source_check(const std::string & root, const common_source_reference & source);

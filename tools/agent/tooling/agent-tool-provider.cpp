@@ -5,6 +5,7 @@
 
 #include "agent/tooling/registry/tool-registry.h"
 #include "agent/tooling/adapters/families/investigation-adapters.h"
+#include "agent/tooling/adapters/families/graph-adapters.h"
 #include "agent/tooling/contracts/schema-contract.h"
 #include "agent/tooling/schema/tool-schema-compact.h"
 #include "agent/tooling/routing/tool-navigation.h"
@@ -342,8 +343,10 @@ public:
             common_tool_registry registry,
             std::vector<common_chat_tool> chat_tools,
             std::map<std::string, common_tool_definition> definitions,
-            common_tool_registry user_review_registry)
+            common_tool_registry user_review_registry,
+            common_native_tool_bindings source_bindings)
         : context(std::move(context))
+        , source_bindings(std::move(source_bindings))
         , registry(std::move(registry))
         , user_review_registry(std::move(user_review_registry))
         , chat_tool_list(std::move(chat_tools))
@@ -761,9 +764,19 @@ private:
         }
 
         const auto started_at = std::chrono::steady_clock::now();
-        const auto execution = user_review && call.name == "investigate.association.review"
+        auto execution = user_review && call.name == "investigate.association.review"
             ? user_review_registry.execute({call.name,call.arguments_json})
             : registry.execute({call.name, call.arguments_json});
+        if (execution.ok && (call.name == "graph.get" || call.name == "graph.find" || call.name == "graph.search" || call.name == "graph.expand")) {
+            auto data = json::parse(execution.output, nullptr, false);
+            if (data.is_object()) {
+                std::vector<std::string> readable;
+                for (const auto & tool : model_tool_list)
+                    if (is_read_only(tool.name) && !registry.is_policy_gated(tool.name)) readable.push_back(tool.name);
+                common_context_graph_check_sources(data, source_bindings, readable);
+                execution.output = data.dump();
+            }
+        }
         if (execution_context.execution_control.should_stop()) {
             auto result = make_execution_control_failure_result(execution_context, call);
             error = result.raw_diagnostic;
@@ -787,6 +800,7 @@ private:
         return result;
     }
     agent_tool_context context;
+    common_native_tool_bindings source_bindings;
     common_tool_registry registry;
     common_tool_registry user_review_registry;
     std::vector<common_chat_tool> chat_tool_list;
@@ -1620,7 +1634,8 @@ std::unique_ptr<agent_tool_view> native_agent_tool_provider::resolve_tools(
         std::move(registry),
         std::move(chat_tools),
         std::move(resolved_definitions),
-        std::move(user_review_registry));
+        std::move(user_review_registry),
+        std::move(bindings));
 }
 
 mcp_agent_tool_provider::mcp_agent_tool_provider(

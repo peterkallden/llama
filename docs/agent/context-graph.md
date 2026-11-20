@@ -28,7 +28,7 @@ revision is newest. To read the full bounded observation list, call `graph.get`
 with `observation_offset: 0` and follow `observation_page.next_offset` until it
 is null. Actor, claim, event and plan nodes require
 an opaque source reference, which distinguishes objects with the same name and
-does not grant access to their sources. Returned freshness is `unverified`.
+does not grant access to their sources. Legacy references have unknown freshness. Structured sources can carry per-source currentness as described below.
 
 Planning context prioritizes proposed relationships before relationships with
 a pending retraction. A pending retraction remains visible and is not an
@@ -208,3 +208,71 @@ The method-phase contract includes persisted reservation checks. The existing
 CLI graph smoke now covers standalone creation, a description over 512 bytes,
 idempotent replay and reading an isolated node through a separate tool view.
 These source changes have not yet been compiled or executed.
+
+## Source revisions and currentness
+
+Node endpoints, descriptions and relation assertions accept an optional `sources`
+array with at most 16 entries. Each entry records `type`, `id`, optional
+`location`, `revision`, `observed_at` (Unix seconds), `branch` and
+`local_changes`. Existing `source_ref`, `source_revision` and `evidence_refs`
+remain supported. Old records retain empty sources and unknown currentness;
+no source identity is inferred from their free-form references. Source metadata
+is submitted evidence, not proof that the submitter actually read that revision.
+Node source references are append-only, including when evidence is attached to
+a legacy node. Different assertion or description source metadata creates a distinct record rather
+than replacing historical evidence. Keyed symbols retain it per observation.
+
+The resolved native tool view checks sources on `graph.get`, `graph.find`,
+`graph.search` and `graph.expand`. Every checked entry has a `currentness`
+object. The view requires the corresponding model-visible, read-only tool:
+`repository.read`, `document.open`, `dataset.inspect` or `resource.inspect`.
+The existing host root and resource/dataset scope checks still apply. A source
+reference never grants access. A bare adapter registry cannot perform these
+checks and returns the saved sources with unknown freshness.
+
+Checks admit at most 16 distinct references within a two-second admission
+window, reuse duplicate checks within the response and report unknown for
+unavailable, unsupported or budget-exhausted sources. An admitted provider read
+may finish after that window. No network fetch is initiated. Results describe
+the check time and do not change saved graph data or proposal status.
+
+For Git, use the `id`, `revision`, `branch`, `location`, `observed_at` and
+`local_changes` returned by a code tool's `source` or `source_files` entry.
+The ID is the canonical local Git common directory, shared by linked worktrees;
+`root` in code observations identifies the particular checkout. A different
+local clone has a different ID. Currentness compares against the host-bound
+checkout's HEAD, not a remote branch tip. Branch names are context only.
+Full commit IDs are required. The response distinguishes `same_revision`,
+`newer_source`, `diverged` and `unknown`, with `commits_behind` only when the
+observed commit is an ancestor. `file_changed` compares the referenced path
+between commits; `local_changes` reports its current worktree/index state.
+An observation made with local changes has unknown currentness because its
+bytes cannot be reconstructed from the commit alone. A current local change
+is reported even when the commit is unchanged. No hash is required.
+
+For `document`, `id` is the host document ID and `revision` its numeric published
+revision. The existing authorized document-head lookup provides the current
+revision and, when newer, `revisions_behind`. Document sections belong in
+`location`. For `resource`, use an authorized immutable resource URI as both
+`id` and `revision` when referring to that exact revision. Neither check claims
+that no newer independent resource exists.
+
+Dataset descriptors currently expose retrieval time, not a mutable source
+revision or modification time. Authorized dataset sources therefore return
+`unknown`; retrieval time must not be treated as change time. The shared
+comparison helper supports `possibly_stale` when an authoritative modification
+time is later than `observed_at`, and `not_modified_since_observation` otherwise.
+Providers without comparable revision or modification metadata stay unknown.
+Currentness does not establish the truth or completeness of a graph claim.
+
+The functional `llama-agent-context-graph-smoke` supports `--no-model` and
+`--model PATH --n-gpu-layers -1`, with `--repository PATH` pointing to a local
+checkout. `--trace-file PATH` retains JSONL requests and results for all tool
+calls and the optional model generation; without it, those events go to stdout.
+Run either mode from the intended environment and retain backend diagnostics
+alongside the trace. The smoke exercises sourced graph search through the
+native view; it is not a model-quality or project-index coverage benchmark.
+
+Restart graph writers and reconnect MCP clients when upgrading so that both
+storage writers and advertised input schemas understand `sources`. Older
+writers do not preserve fields they do not understand.

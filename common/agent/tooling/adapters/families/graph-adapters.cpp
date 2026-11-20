@@ -2,6 +2,12 @@
 #include "agent/tooling/adapters/support/adapter-support.h"
 #include "agent/visualization/visualization-contract.h"
 #include "hash/hash.h"
+#include "agent/tooling/adapters/families/repository-adapters.h"
+#include "agent/tooling/adapters/families/document-adapters.h"
+#include "agent/tooling/adapters/families/data-adapters.h"
+#include <chrono>
+#include <map>
+#include <ctime>
 
 #include <algorithm>
 #include <cctype>
@@ -13,12 +19,19 @@
 namespace {
 using json = common_adapter_json;
 
+bool parse_sources(const json & input, std::vector<common_source_reference> & sources) {
+    try {
+        sources = input.value("sources", std::vector<common_source_reference>{});
+        return common_source_references_valid(sources);
+    } catch (const std::exception &) { return false; }
+}
+
 json description_json(const common_context_graph_description & d) {
     // Text is returned verbatim. Pagination applies to description records,
     // not a hidden continuation of an individual description's text.
     return {{"text", d.text}, {"text_bytes", d.text.size()}, {"text_complete", true},
         {"source", d.source}, {"status", "proposed"},
-        {"source_revision", d.source_revision}, {"evidence_refs", d.evidence_refs}};
+        {"source_revision", d.source_revision}, {"evidence_refs", d.evidence_refs}, {"sources", d.sources}, {"freshness", "unknown"}};
 }
 
 json node_json(const common_context_graph_node & n) {
@@ -27,7 +40,7 @@ json node_json(const common_context_graph_node & n) {
     for (size_t i = offset; i < n.observations.size(); ++i) {
         const auto & o = n.observations[i];
         observations.push_back({{"path", o.path}, {"line", o.line},
-            {"source_revision", o.source_revision}, {"source_ref", o.source_ref}});
+            {"source_revision", o.source_revision}, {"source_ref", o.source_ref}, {"sources", o.sources}, {"freshness", "unknown"}});
     }
     const auto * latest = n.observations.empty() ? nullptr : &n.observations.back();
     json descriptions = json::array();
@@ -39,7 +52,7 @@ json node_json(const common_context_graph_node & n) {
     return {{"id", n.id}, {"kind", n.kind}, {"name", n.name}, {"path", latest ? latest->path : n.path},
         {"line", latest ? latest->line : n.line}, {"source_revision", latest ? latest->source_revision : n.source_revision},
         {"source_ref", latest ? latest->source_ref : n.source_ref},
-        {"symbol_key", n.symbol_key}, {"observations", observations}, {"observations_truncated", offset != 0},
+        {"sources", latest ? latest->sources : n.sources}, {"freshness", "unknown"}, {"symbol_key", n.symbol_key}, {"observations", observations}, {"observations_truncated", offset != 0},
         {"description", descriptions.empty() ? json(nullptr) : descriptions.back()}, {"descriptions", descriptions},
         {"descriptions_truncated", description_offset != 0}};
 }
@@ -51,7 +64,11 @@ json node_prompt_json(const common_context_graph_node & node) {
     if (value["description"].is_object()) {
         value["description"].erase("text_bytes");
         value["description"].erase("text_complete");
+        value["description"].erase("freshness");
+        if (value["description"]["sources"].empty()) value["description"].erase("sources");
     }
+    value.erase("freshness");
+    if (value["sources"].empty()) value.erase("sources");
     value.erase("observations");
     value.erase("observations_truncated");
     value.erase("descriptions");
@@ -63,7 +80,7 @@ json edge_json(const common_context_graph_edge & e) {
     json assertions = json::array();
     size_t bytes = 0;
     for (const auto & a : e.assertions) {
-        json item = {{"source", a.source}, {"rationale", a.rationale}, {"evidence_refs", a.evidence_refs}, {"source_revision", a.source_revision}};
+        json item = {{"source", a.source}, {"rationale", a.rationale}, {"evidence_refs", a.evidence_refs}, {"source_revision", a.source_revision}, {"sources", a.sources}, {"freshness", "unknown"}};
         const auto size = item.dump().size();
         if (assertions.size() >= 8 || bytes + size > 12000) break;
         bytes += size; assertions.push_back(std::move(item));
@@ -72,11 +89,11 @@ json edge_json(const common_context_graph_edge & e) {
         {"status", e.status}, {"source", e.source}, {"rationale", e.rationale},
         {"evidence_refs", e.evidence_refs}, {"source_revision", e.source_revision}, {"version", e.version},
         {"retraction_rationale", e.retraction_rationale}, {"assertions", assertions}, {"assertions_truncated", assertions.size() < e.assertions.size()},
-        {"freshness", "unverified"},
-        {"revision_validation", {{"status", "not_checked_against_current_repository"},
+        {"freshness", "unknown"},
+        {"revision_validation", {{"status", "legacy_references_not_checked"},
             {"observed_revision", e.source_revision},
             {"requires_live_verification", true},
-            {"next_step", "Use graph.source with the endpoint's current source location; saved evidence line numbers may have moved."}}}};
+            {"next_step", "Structured sources have per-source currentness in authorized graph reads; verify legacy references with the source provider."}}}};
 }
 json edge_prompt_json(const common_context_graph_edge & edge) {
     auto value = edge_json(edge);
@@ -128,9 +145,11 @@ bool resolve_endpoint(const json & input, const common_agent_scope & scope, comm
         error = "invalid graph endpoint"; return false;
     }
     for (auto it = input.begin(); it != input.end(); ++it)
-        if (it.key() != "kind" && it.key() != "name" && it.key() != "path" && it.key() != "line" && it.key() != "source_revision" && it.key() != "source_ref" && it.key() != "symbol_key") {
+        if (it.key() != "kind" && it.key() != "name" && it.key() != "path" && it.key() != "line" && it.key() != "source_revision" && it.key() != "source_ref" && it.key() != "symbol_key" && it.key() != "sources") {
             error = "unknown graph endpoint field"; return false;
         }
+    std::vector<common_source_reference> sources;
+    if (!parse_sources(input, sources)) { error = "invalid source references"; return false; }
     const auto kind = input["kind"].get<std::string>();
     if (kind != "file" && kind != "symbol" && kind != "component" && kind != "memory" && kind != "resource" &&
             kind != "actor" && kind != "claim" && kind != "event" && kind != "plan") {
@@ -158,16 +177,21 @@ bool resolve_endpoint(const json & input, const common_agent_scope & scope, comm
     id = identity("node:", identity_parts);
     auto found = std::find_if(graph.nodes.begin(), graph.nodes.end(), [&](const auto & node) { return node.id == id; });
     if (found == graph.nodes.end()) {
-        graph.nodes.push_back({id, kind, name, path, line, revision, ref, symbol_key, {}, {}});
+        graph.nodes.push_back({id, kind, name, path, line, revision, ref, symbol_key, {}, {}, sources});
         found = graph.nodes.end() - 1;
+    }
+    if (!(kind == "symbol" && !symbol_key.empty())) for (const auto & source : sources) {
+        if (std::find(found->sources.begin(), found->sources.end(), source) != found->sources.end()) continue;
+        if (found->sources.size() >= 16) { error = "node source limit reached"; return false; }
+        found->sources.push_back(source);
     }
     if (kind == "symbol" && !symbol_key.empty()) {
         const auto seen = std::find_if(found->observations.begin(), found->observations.end(), [&](const auto & o) {
-            return o.path == path && o.line == line && o.source_revision == revision && o.source_ref == ref;
+            return o.path == path && o.line == line && o.source_revision == revision && o.source_ref == ref && o.sources == sources;
         });
         if (seen == found->observations.end()) {
             if (found->observations.size() >= 256) { error = "symbol observation limit reached"; return false; }
-            found->observations.push_back({path, line, revision, ref});
+            found->observations.push_back({path, line, revision, ref, sources});
         }
     }
     return true;
@@ -220,7 +244,7 @@ std::string common_context_graph_prompt_projection(common_agent_data_store & sto
         if (ids.count(edge.from) && ids.count(edge.to)) result["edges"].push_back(edge_prompt_json(edge));
     }
     if (!result["edges"].empty()) result["revision_validation"] = {
-        {"status", "not_checked_against_current_repository"}, {"requires_live_verification", true},
+        {"status", "legacy_references_not_checked"}, {"requires_live_verification", true},
         {"next_step", "Verify saved references against current sources with graph.source."}};
     budget = std::min<size_t>(budget, 1800);
     while (result.dump().size() > budget && !result["edges"].empty()) { result["edges"].erase(result["edges"].end() - 1); result["truncated"] = true; }
@@ -304,7 +328,7 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                     json page = json::array();
                     for (size_t i = offset; i < node->observations.size() && i - offset < 8; ++i) {
                         const auto & o = node->observations[i];
-                        page.push_back({{"path", o.path}, {"line", o.line}, {"source_revision", o.source_revision}, {"source_ref", o.source_ref}});
+                        page.push_back({{"path", o.path}, {"line", o.line}, {"source_revision", o.source_revision}, {"source_ref", o.source_ref}, {"sources", o.sources}, {"freshness", "unknown"}});
                     }
                     const auto end = std::min(node->observations.size(), offset + page.size());
                     result["observation_page"] = {{"offset", offset}, {"items", page}, {"total", node->observations.size()},
@@ -323,7 +347,7 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                     json page = json::array();
                     if (offset < edge->assertions.size()) {
                         const auto & a = edge->assertions[offset];
-                        page.push_back({{"source", a.source}, {"rationale", a.rationale}, {"evidence_refs", a.evidence_refs}, {"source_revision", a.source_revision}});
+                        page.push_back({{"source", a.source}, {"rationale", a.rationale}, {"evidence_refs", a.evidence_refs}, {"source_revision", a.source_revision}, {"sources", a.sources}, {"freshness", "unknown"}});
                     }
                     const auto end = std::min(edge->assertions.size(), offset + page.size());
                     result["assertion_page"] = {{"offset", offset}, {"items", page}, {"total", edge->assertions.size()},
@@ -427,6 +451,8 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                 return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid description proposal");
             if (graph.revision != args["expected_revision"].get<uint64_t>())
                 return common_adapter_failure("tool.graph.conflict", common_tool_failure_class::conflict, true, "Graph has changed.", "graph revision conflict");
+            json old_nodes = json::array();
+            for (const auto & existing : graph.nodes) old_nodes.push_back(node_json(existing));
             std::string subject_id;
             if (args.contains("node")) {
                 if (!resolve_endpoint(args["node"], bindings.tool_scope, graph, subject_id, error))
@@ -440,22 +466,28 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                     return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid evidence reference");
                 refs.push_back(ref.get<std::string>());
             }
+            std::vector<common_source_reference> sources;
+            if (!parse_sources(args, sources)) return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid source references");
             const auto text = args["description"].get<std::string>();
             const auto source_revision = args.value("source_revision", std::string{});
+            bool reused_description = false;
             if (!node->descriptions.empty()) {
                 const auto & last = node->descriptions.back();
-                if (last.text == text && last.source == "model" && last.source_revision == source_revision && last.evidence_refs == refs)
+                reused_description = last.text == text && last.source == "model" && last.source_revision == source_revision && last.evidence_refs == refs && last.sources == sources;
+                json new_nodes = json::array();
+                for (const auto & existing : graph.nodes) new_nodes.push_back(node_json(existing));
+                if (reused_description && old_nodes == new_nodes)
                     return common_adapter_success_json({{"revision", graph.revision}, {"node", node_json(*node)}, {"reused", true}});
             }
-            if (node->descriptions.size() >= 64) return common_adapter_validation_failure("tool.graph.limit", "description limit reached");
-            node->descriptions.push_back({text, "model", source_revision, refs});
+            if (!reused_description && node->descriptions.size() >= 64) return common_adapter_validation_failure("tool.graph.limit", "description limit reached");
+            if (!reused_description) node->descriptions.push_back({text, "model", source_revision, refs, sources});
             const auto expected = graph.revision++;
             common_context_graph_state published;
             const auto result = bindings.data_store->publish_context_graph(bindings.tool_scope, expected, graph, published, error);
             if (result != common_agent_publication_status::published)
                 return common_adapter_failure("tool.graph.publish_failed", result == common_agent_publication_status::conflict ? common_tool_failure_class::conflict : common_tool_failure_class::execution,
                     result == common_agent_publication_status::conflict, "Graph description could not be saved.", error);
-            return common_adapter_success_json({{"revision", published.revision}, {"node", node_json(*node)}, {"reused", false}});
+            return common_adapter_success_json({{"revision", published.revision}, {"node", node_json(*node)}, {"reused", reused_description}});
         }
         if (operation == "graph.link.propose") {
             if (!args.contains("from") || !args.contains("to") || !text_value(args, "relation", 64) ||
@@ -469,6 +501,8 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
                     return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid evidence reference");
                 refs.push_back(value.get<std::string>());
             }
+            std::vector<common_source_reference> sources;
+            if (!parse_sources(args, sources)) return common_adapter_validation_failure("tool.graph.invalid_arguments", "invalid source references");
             json old_nodes = json::array();
             for (const auto & node : graph.nodes) old_nodes.push_back(node_json(node));
             std::string from, to;
@@ -479,13 +513,13 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
             edge.from = from; edge.to = to; edge.relation = relation; edge.rationale = args["rationale"].get<std::string>();
             edge.evidence_refs = refs; edge.source_revision = args.value("source_revision", std::string{});
             edge.id = identity("edge:", json::array({bindings.tool_scope.namespace_id, bindings.tool_scope.project_id, from, relation, to}));
-            edge.assertions.push_back({"model", edge.rationale, refs, edge.source_revision});
+            edge.assertions.push_back({"model", edge.rationale, refs, edge.source_revision, sources});
             auto prior = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto & item) { return item.id == edge.id; });
             if (prior != graph.edges.end()) {
                 const auto & assertion = edge.assertions.front();
                 const bool known = std::any_of(prior->assertions.begin(), prior->assertions.end(), [&](const auto & a) {
                     return a.source == assertion.source && a.rationale == assertion.rationale &&
-                        a.evidence_refs == assertion.evidence_refs && a.source_revision == assertion.source_revision;
+                        a.evidence_refs == assertion.evidence_refs && a.source_revision == assertion.source_revision && a.sources == assertion.sources;
                 });
                 if (!known && prior->status != "proposed")
                     return common_adapter_failure("tool.graph.conflict", common_tool_failure_class::conflict, true,
@@ -533,4 +567,95 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
         return common_adapter_validation_failure("tool.graph.invalid_operation", "unknown graph operation");
     }, error, !write, write);
     return true;
+}
+
+nlohmann::ordered_json common_source_revision_comparison(const common_source_reference & source,
+        const std::string & current_revision, int64_t modified_at) {
+    json result = {{"status", "unknown"}};
+    if (!source.revision.empty() && !current_revision.empty()) {
+        result["current_revision"] = current_revision;
+        result["status"] = source.revision == current_revision ? "same_revision" : "different_revision";
+    } else if (source.observed_at > 0 && modified_at > 0) {
+        result["modified_at"] = modified_at;
+        result["status"] = modified_at > source.observed_at ? "possibly_stale" : "not_modified_since_observation";
+    }
+    return result;
+}
+
+void common_context_graph_check_sources(json & result, const common_native_tool_bindings & bindings,
+        const std::vector<std::string> & source_tools) {
+    const auto allowed = [&](const std::string & name) {
+        return std::find(source_tools.begin(), source_tools.end(), name) != source_tools.end();
+    };
+    std::map<std::string, json> cache;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto check = [&](const common_source_reference & source) -> json {
+        if (source.type == "git") {
+            if (!allowed("repository.read")) return {{"status", "unknown"}, {"reason", "source_read_unavailable"}};
+            return common_repository_source_check(bindings.repository_root, source);
+        }
+        if (source.type == "document") {
+            if (!allowed("document.open")) return {{"status", "unknown"}, {"reason", "source_read_unavailable"}};
+            std::string uri, error;
+            uint64_t revision = 0;
+            if (!common_adapter_document_current_revision(bindings, source.id, uri, revision, error) || !revision)
+                return {{"status", "unknown"}, {"reason", "source_unavailable"}};
+            auto value = common_source_revision_comparison(source, std::to_string(revision));
+            // Document revisions are monotonically increasing; a future input is not a newer source.
+            if (source.revision != std::to_string(revision)) {
+                try {
+                    if (source.revision.empty() || !std::all_of(source.revision.begin(), source.revision.end(), [](unsigned char c) { return c >= '0' && c <= '9'; }))
+                        return json{{"status", "unknown"}, {"reason", "invalid_observed_revision"}};
+                    size_t used = 0;
+                    const auto observed = std::stoull(source.revision, &used);
+                    if (!observed || used != source.revision.size() || observed > revision) value["status"] = "unknown";
+                    else { value["status"] = observed == revision ? "same_revision" : "newer_source"; value["revisions_behind"] = revision - observed; }
+                } catch (const std::exception &) { value["status"] = "unknown"; }
+            }
+            return value;
+        }
+        if (source.type == "dataset") {
+            if (!allowed("dataset.inspect")) return {{"status", "unknown"}, {"reason", "source_read_unavailable"}};
+            common_agent_dataset_descriptor descriptor;
+            common_tool_execution_result failure;
+            if (!common_authorize_dataset_reference(bindings, source.id, descriptor, failure))
+                return {{"status", "unknown"}, {"reason", "source_unavailable"}};
+            // Dataset descriptors expose retrieval time, not a mutation revision or modified time.
+            return {{"status", "unknown"}, {"reason", "source_has_no_revision_or_modified_time"}};
+        }
+        if (source.type == "resource") {
+            if (!allowed("resource.inspect") || !bindings.resource_runtime.store)
+                return {{"status", "unknown"}, {"reason", "source_read_unavailable"}};
+            agent_resource_descriptor descriptor;
+            std::string error;
+            const auto authority = make_agent_resource_read_authority(bindings.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+            if (!bindings.resource_runtime.store->stat(source.id, authority, descriptor, error))
+                return {{"status", "unknown"}, {"reason", "source_unavailable"}};
+            // A resource URI is an immutable revision; its creation time is not a modification time.
+            if (source.revision == descriptor.uri) return {{"status", "same_revision"}, {"current_revision", descriptor.uri}};
+        }
+        return {{"status", "unknown"}, {"reason", "no_comparable_source_metadata"}};
+    };
+    std::function<void(json &)> visit = [&](json & value) {
+        if (value.is_array()) { for (auto & item : value) visit(item); return; }
+        if (!value.is_object()) return;
+        for (auto & item : value.items()) if (item.key() != "sources") visit(item.value());
+        if (!value.contains("sources") || !value["sources"].is_array()) return;
+        for (auto & item : value["sources"]) {
+            if (!item.is_object()) continue;
+            const auto key = item.dump();
+            auto found = cache.find(key);
+            if (found == cache.end()) {
+                json current = {{"status", "unknown"}, {"reason", "check_budget_exhausted"}};
+                if (cache.size() < 16 && std::chrono::steady_clock::now() < deadline) {
+                    try { current = check(item.get<common_source_reference>()); }
+                    catch (const std::exception &) { current = {{"status", "unknown"}, {"reason", "source_unavailable"}}; }
+                    current["checked_at"] = static_cast<int64_t>(std::time(nullptr));
+                    found = cache.emplace(key, current).first;
+                }
+                item["currentness"] = found == cache.end() ? current : found->second;
+            } else item["currentness"] = found->second;
+        }
+    };
+    visit(result);
 }

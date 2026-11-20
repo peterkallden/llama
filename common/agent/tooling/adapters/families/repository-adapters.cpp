@@ -201,6 +201,80 @@ std::mutex & workspace_write_mutex(const std::string & root) {
 
 } // namespace
 
+namespace {
+std::string git_value(const std::string & root, const std::vector<std::string> & args) {
+    std::string output, error;
+    bool truncated = false;
+    if (!git_read(root, args, output, error, &truncated, std::chrono::milliseconds(1000)) || truncated) return {};
+    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) output.pop_back();
+    return output;
+}
+bool commit_id(const std::string & value) {
+    return (value.size() == 40 || value.size() == 64) && std::all_of(value.begin(), value.end(), [](unsigned char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    });
+}
+}
+
+nlohmann::ordered_json common_repository_observation(const std::string & root, const std::string & path) {
+    json result = {{"type", "git"}, {"status", "unknown"}};
+    if (root.empty()) return result;
+    std::filesystem::path resolved;
+    std::string error;
+    if (!repository_path(root, path, resolved, error)) return result;
+    const auto head = git_value(root, {"rev-parse", "--verify", "HEAD"});
+    const auto common = git_value(root, {"rev-parse", "--path-format=absolute", "--git-common-dir"});
+    if (!commit_id(head) || common.empty()) return result;
+    std::error_code ec;
+    const auto identity = std::filesystem::weakly_canonical(common, ec);
+    if (ec) return result;
+    std::string status;
+    bool truncated = false;
+    std::vector<std::string> args = {"--literal-pathspecs", "status", "--porcelain", "--untracked-files=normal"};
+    if (!path.empty()) { args.push_back("--"); args.push_back(path); }
+    if (!git_read(root, args, status, error, &truncated, std::chrono::milliseconds(1000)) || truncated) return result;
+    return {{"type", "git"}, {"status", "observed"}, {"id", identity.generic_string()},
+        {"root", std::filesystem::weakly_canonical(root, ec).generic_string()}, {"revision", head},
+        {"branch", git_value(root, {"symbolic-ref", "--quiet", "--short", "HEAD"})},
+        {"location", path}, {"local_changes", !status.empty()}, {"observed_at", static_cast<int64_t>(std::time(nullptr))}};
+}
+
+nlohmann::ordered_json common_repository_source_check(const std::string & root, const common_source_reference & source) {
+    json result = {{"status", "unknown"}};
+    if (source.type != "git" || !commit_id(source.revision)) return result;
+    const auto current = common_repository_observation(root, source.location);
+    if (current.value("status", std::string{}) != "observed" || source.id != current.value("id", std::string{})) return result;
+    const auto revision = current["revision"].get<std::string>();
+    const auto observed_revision = git_value(root, {"rev-parse", "--verify", source.revision + "^{commit}"});
+    if (!commit_id(observed_revision)) return result;
+    result["current_revision"] = revision;
+    result["current_branch"] = current["branch"];
+    result["local_changes"] = current["local_changes"];
+    result["observed_local_changes"] = source.local_changes;
+    result["checked_at"] = current["observed_at"];
+    if (source.local_changes) { result["reason"] = "observed_worktree_was_modified"; return result; }
+    if (observed_revision == revision) {
+        result["status"] = "same_revision"; result["commits_behind"] = 0;
+    } else {
+        const auto base = git_value(root, {"merge-base", observed_revision, revision});
+        if (base.empty()) return result;
+        if (base == revision) { result["reason"] = "current_revision_is_older"; return result; }
+        if (base != observed_revision) { result["status"] = "diverged"; return result; }
+        const auto count = git_value(root, {"rev-list", "--count", observed_revision + ".." + revision});
+        if (count.empty() || !std::all_of(count.begin(), count.end(), [](unsigned char c) { return c >= '0' && c <= '9'; })) return result;
+        try { result["commits_behind"] = std::stoull(count); } catch (const std::exception &) { return result; }
+        result["status"] = "newer_source";
+    }
+    if (!source.location.empty()) {
+        std::string diff, error;
+        bool truncated = false;
+        if (git_read(root, {"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--name-only", observed_revision, revision, "--", source.location},
+                diff, error, &truncated, std::chrono::milliseconds(1000)) && !truncated)
+            result["file_changed"] = !diff.empty();
+    }
+    return result;
+}
+
 bool common_try_register_repository_tool_adapter(
         const common_tool_definition & definition,
         const common_native_tool_bindings & bindings,

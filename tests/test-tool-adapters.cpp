@@ -1,5 +1,6 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/adapters/families/code-adapters.h"
+#include "agent/tooling/adapters/families/repository-adapters.h"
 #include "agent/tooling/adapters/families/graph-adapters.h"
 #include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
 #include "agent/tooling/bridge/tool-chat-bridge.h"
@@ -544,6 +545,54 @@ int main() {
     assert(std::system(git_user_email.c_str()) == 0);
     assert(std::system(git_add.c_str()) == 0);
     assert(std::system(git_commit.c_str()) == 0);
+    {
+        using source_json = nlohmann::ordered_json;
+        const auto original = common_repository_observation(repository.string(), "src/sample.txt");
+        assert(original["status"] == "observed" && original["local_changes"] == false);
+        auto observed = original.get<common_source_reference>();
+        assert(common_repository_source_check(repository.string(), observed)["status"] == "same_revision");
+        auto wrong_repo = observed; wrong_repo.id += "-other";
+        assert(common_repository_source_check(repository.string(), wrong_repo)["status"] == "unknown");
+        auto missing = observed; missing.revision = std::string(40, '0');
+        assert(common_repository_source_check(repository.string(), missing)["status"] == "unknown");
+        auto escaped = observed; escaped.location = "../outside";
+        assert(common_repository_source_check(repository.string(), escaped)["status"] == "unknown");
+        const auto git = [&](const std::string & args) {
+            const auto command = "git -C \"" + repository.string() + "\" " + args;
+            assert(std::system(command.c_str()) == 0);
+        };
+        { std::ofstream file(repository / "other.txt"); file << "new source\n"; }
+        git("add -- other.txt"); git("commit -q -m unrelated");
+        auto current = common_repository_source_check(repository.string(), observed);
+        assert(current["status"] == "newer_source" && current["commits_behind"] == 1 && current["file_changed"] == false);
+        { std::ofstream file(repository / "src/sample.txt", std::ios::app); file << "changed\n"; }
+        assert(common_repository_source_check(repository.string(), observed)["local_changes"] == true);
+        git("add -- src/sample.txt"); git("commit -q -m changed");
+        current = common_repository_source_check(repository.string(), observed);
+        assert(current["commits_behind"] == 2 && current["file_changed"] == true);
+        const auto branch_head = common_repository_observation(repository.string(), "src/sample.txt").get<common_source_reference>();
+        git("checkout -q --detach " + observed.revision);
+        assert(common_repository_source_check(repository.string(), branch_head)["reason"] == "current_revision_is_older");
+        { std::ofstream file(repository / "other.txt"); file << "different branch\n"; }
+        git("add -- other.txt"); git("commit -q -m diverged");
+        assert(common_repository_source_check(repository.string(), branch_head)["status"] == "diverged");
+        git("reset -q --hard " + observed.revision);
+        auto dirty_observation = observed; dirty_observation.local_changes = true;
+        assert(common_repository_source_check(repository.string(), dirty_observation)["status"] == "unknown");
+        source_json graph = {{"sources", std::vector<common_source_reference>{observed, observed}}};
+        common_native_tool_bindings source_bindings; source_bindings.repository_root = repository.string();
+        common_context_graph_check_sources(graph, source_bindings, {});
+        assert(graph["sources"][0]["currentness"]["status"] == "unknown");
+        assert(!graph["sources"][0]["currentness"].contains("current_revision"));
+        graph = {{"sources", std::vector<common_source_reference>{observed, observed}}};
+        common_context_graph_check_sources(graph, source_bindings, {"repository.read"});
+        assert(graph["sources"][0]["currentness"]["status"] == "same_revision");
+        assert(graph["sources"][0]["currentness"] == graph["sources"][1]["currentness"]);
+        common_source_reference timed{"external", "source:one", "", "", 100};
+        assert(common_source_revision_comparison(timed, "", 101)["status"] == "possibly_stale");
+        assert(common_source_revision_comparison(timed, "", 99)["status"] == "not_modified_since_observation");
+        assert(common_source_revision_comparison(timed, "", 0)["status"] == "unknown");
+    }
     common_tool_catalog research_catalog;
     assert(research_catalog.bootstrap("research", bootstrap, error));
     common_tool_registry repository_registry;
@@ -766,6 +815,20 @@ int main() {
     test_data_store foundation_data;
     foundation_bindings.data_store = &foundation_data;
     {
+        common_source_reference dataset_source{"dataset", foundation_data.stored_descriptor.ref.uri, "", "", 1};
+        nlohmann::ordered_json evidence = {{"sources", std::vector<common_source_reference>{dataset_source}}};
+        common_context_graph_check_sources(evidence, foundation_bindings, {"dataset.inspect"});
+        assert(evidence["sources"][0]["currentness"]["reason"] == "source_has_no_revision_or_modified_time");
+        dataset_source.id = "dataset://missing";
+        evidence = {{"sources", std::vector<common_source_reference>{dataset_source}}};
+        common_context_graph_check_sources(evidence, foundation_bindings, {"dataset.inspect"});
+        assert(evidence["sources"][0]["currentness"]["reason"] == "source_unavailable");
+        common_source_reference resource_source{"resource", "resource://session/long-text", "", "resource://session/long-text"};
+        evidence = {{"sources", std::vector<common_source_reference>{resource_source}}};
+        common_context_graph_check_sources(evidence, foundation_bindings, {"resource.inspect"});
+        assert(evidence["sources"][0]["currentness"]["status"] == "same_revision");
+    }
+    {
         common_tool_catalog graph_catalog; common_tool_bootstrap_result graph_bootstrap;
         assert(graph_catalog.bootstrap("graph-project", graph_bootstrap, error));
         common_native_tool_bindings graph_bindings = repository_bindings;
@@ -919,6 +982,29 @@ int main() {
         assert(!graph_registry.execute({"graph.search", "{}"}).ok);
         const auto limit = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"limit",1}}.dump()});
         assert(limit.ok && nlohmann::json::parse(limit.output)["truncated"] == true);
+        const auto git_source = common_repository_observation(repository.string(), "src/sample.txt").get<common_source_reference>();
+        const auto graph_revision = foundation_data.graphs["test:project"].revision;
+        const auto anchored_node = graph_registry.execute({"graph.describe.propose", nlohmann::ordered_json{
+            {"node", {{"kind", "component"}, {"name", "planning"}, {"sources", std::vector<common_source_reference>{git_source}}}},
+            {"description", "Coordinates planning policy"}, {"source_revision", "r2"}, {"expected_revision", graph_revision}}.dump()});
+        assert(anchored_node.ok);
+        assert(nlohmann::json::parse(anchored_node.output)["node"]["sources"].size() == 1);
+        assert(foundation_data.graphs["test:project"].nodes.front().descriptions.size() == 2);
+        const nlohmann::ordered_json evidence = std::vector<common_source_reference>{git_source, {"document", "document:one", "section:a", "2", 100}};
+        auto proposal = nlohmann::ordered_json{{"from", {{"id", from}}}, {"to", {{"id", to}}},
+            {"relation", "supported_by"}, {"rationale", "multiple sources"}, {"sources", evidence}};
+        const auto sourced = graph_registry.execute({"graph.link.propose", proposal.dump()});
+        assert(sourced.ok);
+        auto sourced_edge = nlohmann::ordered_json::parse(sourced.output)["edge"];
+        assert(sourced_edge["assertions"][0]["sources"] == evidence);
+        proposal["sources"][0]["revision"] = std::string(40, '0');
+        const auto later_source = graph_registry.execute({"graph.link.propose", proposal.dump()});
+        assert(later_source.ok && nlohmann::json::parse(later_source.output)["edge"]["assertions"].size() == 2);
+        const auto source_page = graph_registry.execute({"graph.get", nlohmann::json{
+            {"id", sourced_edge["id"]}, {"assertion_offset", 0}}.dump()});
+        assert(source_page.ok && nlohmann::ordered_json::parse(source_page.output)["assertion_page"]["items"][0]["sources"] == evidence);
+        proposal["sources"][0]["observed_at"] = -1;
+        assert(!graph_registry.execute({"graph.link.propose", proposal.dump()}).ok);
         graph_bindings.tool_scope.project_id = "other-project";
         common_tool_registry other_graph; common_tool_adapter_result other_graph_adapters;
         assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, other_graph, other_graph_adapters, error));
@@ -1267,6 +1353,24 @@ int main() {
         result=foundation_registry.execute({"document.save",renamed.dump()});
         assert(result.ok&&nlohmann::json::parse(result.output).value("revision",uint64_t(0))==2);
         const auto renamed_uri=nlohmann::json::parse(result.output).value("document_uri",std::string{});
+        {
+            const common_source_reference document_source{"document", created["document_id"].get<std::string>(), "section:a", "1", 100};
+            nlohmann::ordered_json evidence = {{"sources", std::vector<common_source_reference>{document_source}}};
+            common_context_graph_check_sources(evidence, foundation_bindings, {"document.open"});
+            assert(evidence["sources"][0]["currentness"]["status"] == "newer_source");
+            assert(evidence["sources"][0]["currentness"]["revisions_behind"] == 1);
+            auto current_document = document_source; current_document.revision = "2";
+            evidence = {{"sources", std::vector<common_source_reference>{current_document}}};
+            common_context_graph_check_sources(evidence, foundation_bindings, {"document.open"});
+            assert(evidence["sources"][0]["currentness"]["status"] == "same_revision");
+            evidence = {{"sources", std::vector<common_source_reference>{current_document}}};
+            common_context_graph_check_sources(evidence, foundation_bindings, {});
+            assert(evidence["sources"][0]["currentness"]["reason"] == "source_read_unavailable");
+            current_document.id = "missing-document";
+            evidence = {{"sources", std::vector<common_source_reference>{current_document}}};
+            common_context_graph_check_sources(evidence, foundation_bindings, {"document.open"});
+            assert(evidence["sources"][0]["currentness"]["status"] == "unknown");
+        }
         result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",renamed_uri}}.dump()});
         assert(result.ok);
         opened=nlohmann::json::parse(result.output);
@@ -1677,6 +1781,9 @@ int main() {
         const auto info = nlohmann::json::parse(inspection.output);
         assert(info["compilation_database_unique_sources"] == 1 && info["compilation_database_invalid_entries"] == true &&
             info["source_in_database"] == true && info["provider_status"]["index_activity"] == "active" && info["index_coverage"] == "unknown");
+        assert(info["source"]["type"] == "git" && info["source"]["status"] == "observed");
+        assert(info["source"].contains("id") && info["source"].contains("revision") && info["source"].contains("local_changes"));
+        assert(info["revision_unchanged_during_query"] == true);
         std::filesystem::remove(compile_db);
         common_tool_registry missing_db_registry;
         code_bindings.code_status = {};
