@@ -1,6 +1,7 @@
 #include "agent/tooling/adapters/families/code-adapters.h"
 
 #include "agent/tooling/adapters/support/adapter-support.h"
+#include "agent/tooling/adapters/support/source-context.h"
 #include "agent/visualization/visualization-contract.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
 
@@ -154,6 +155,7 @@ common_tool_execution_result symbols_fallback(
         return common_adapter_not_found_failure("tool.code.path_not_found", "code path was not found", "The selected code path was not found.");
 
     json matches = json::array();
+    common_source_context_cache source_context;
     size_t files_scanned = 0;
     size_t bytes_scanned = 0;
     size_t files_skipped = 0;
@@ -214,6 +216,13 @@ common_tool_execution_result symbols_fallback(
                     {"line", number}, {"column", offset + 1}, {"symbol", symbol},
                     {"kind", legacy ? (references ? "reference" : "text_match") :
                         (references ? "text_reference" : "text_match")}});
+                if (!legacy && references && args.value("include_context", false)) {
+                    auto & match = matches.back();
+                    match["context"] = source_context.get(canonical_file, number);
+                    match["context_status"] = match["context"].is_null() ? "unavailable" : "available";
+                    match["enclosing_function"] = nullptr;
+                    match["enclosing_function_status"] = "unavailable_text_fallback";
+                }
             }
         }
         if (stream.bad()) {
@@ -253,6 +262,7 @@ common_tool_execution_result symbols_fallback(
     if (legacy) return common_adapter_success_json({{"backend", "text-fallback"}, {"semantic", false},
         {"symbol", symbol}, {references ? "references" : "definitions", matches},
         {"count", matches.size()}, {"truncated", matches.size() >= static_cast<size_t>(limit)}});
+    if (references && args.value("include_context", false)) common_source_limit_context(matches);
     json limitations = json::array({
         "Text matches do not resolve symbols or prove call relationships.",
         "Source locations refer to the host's current repository state; this response does not pin a commit or content snapshot."});
@@ -803,6 +813,8 @@ bool common_try_register_code_tool_adapter(
                     !valid_optional_integer(args, "column", 1, 1000000, parse_error) ||
                     !valid_optional_integer(args, "max_results", 1, references ? 128 : 64, parse_error))
                 return common_adapter_validation_failure("tool.code.invalid_arguments", std::move(parse_error));
+            if (args.contains("include_context") && (!references || !args["include_context"].is_boolean()))
+                return common_adapter_validation_failure("tool.code.invalid_arguments", "include_context must be a boolean for references");
             const auto & semantic = references
                 ? (legacy ? bindings.diagnostics_references : bindings.code_references)
                 : (legacy ? bindings.diagnostics_symbol : bindings.code_symbols);

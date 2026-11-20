@@ -1,5 +1,6 @@
 #include "agent/tooling/adapters/tool-adapters.h"
 #include "agent/tooling/adapters/families/code-adapters.h"
+#include "agent/tooling/adapters/support/source-context.h"
 #include "agent/tooling/adapters/families/repository-adapters.h"
 #include "agent/tooling/adapters/families/graph-adapters.h"
 #include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
@@ -630,6 +631,24 @@ int main() {
     assert(result.ok && result.output.find("sample.txt") != std::string::npos && result.output.find("needle") != std::string::npos);
     result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/sample.txt"})"});
     assert(result.ok && result.output.find("sample.txt") != std::string::npos && result.output.find("needle") != std::string::npos);
+    {
+        auto compact = nlohmann::json::parse(result.output)["matches"][0];
+        assert(!compact.contains("context") && compact["preview_truncated"] == false);
+        const auto contextual = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/sample.txt","context_lines":2})"});
+        assert(contextual.ok);
+        const auto context = nlohmann::json::parse(contextual.output)["matches"][0]["context"];
+        assert(context["start_line"] == 1 && context["end_line"] == 2 && context["lines"][0]["text"] == "alpha");
+        assert(!repository_registry.execute({"repository.search", R"({"query":"needle","context_lines":6})"}).ok);
+        const std::string utf8 = std::string(255, 'x') + "\xc3\xa5";
+        const auto excerpt = common_source_context({utf8, "next"}, 1, 2);
+        assert(excerpt["lines"][0]["text"].get<std::string>().size() == 255 && excerpt["truncated"] == true);
+        assert(excerpt["end_line"] == 2 && common_source_context({}, 1, 2).is_null());
+        nlohmann::ordered_json entries = nlohmann::ordered_json::array();
+        for (int i = 0; i < 64; ++i) entries.push_back({{"path", "source.cpp"}, {"line", i + 1}, {"context", std::string(2048, 'x')}});
+        common_source_limit_context(entries);
+        assert(entries.size() == 64 && entries.dump().size() <= 48 * 1024);
+        assert(entries.back()["context_status"] == "omitted_output_budget" && entries.back()["line"] == 64);
+    }
     result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/missing.txt"})"});
     assert(!result.ok && result.failure_class == common_tool_failure_class::not_found);
     result = repository_registry.execute({"repository.read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"});
@@ -1745,6 +1764,16 @@ int main() {
     result = foundation_registry.execute({"code.references", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
     assert(result.ok && result.output.find("\"operation\":\"references\"") != std::string::npos &&
            result.output.find("\"items\"") != std::string::npos);
+    {
+        const auto compact = nlohmann::json::parse(result.output);
+        assert(!compact["items"][0].contains("context"));
+        const auto contextual = foundation_registry.execute({"code.references", R"({"symbol":"needle","path_hint":"src/sample.txt","include_context":true})"});
+        assert(contextual.ok);
+        const auto item = nlohmann::json::parse(contextual.output)["items"][0];
+        assert(item["context_status"] == "available" && !item["context"].is_null());
+        assert(item["enclosing_function"].is_null() && item["enclosing_function_status"] == "unavailable_text_fallback");
+        assert(!foundation_registry.execute({"code.references", R"({"symbol":"needle","include_context":1})"}).ok);
+    }
     {
         common_native_tool_bindings code_bindings = repository_bindings;
         std::string provider_output = R"({"definitions":[],"count":0,"complete":false,"truncated":false,"limitations":["Provider index is incomplete."]})";

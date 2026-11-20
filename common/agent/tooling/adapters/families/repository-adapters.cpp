@@ -3,6 +3,7 @@
 #include "agent/tooling/adapters/support/adapter-support.h"
 #include "subproc.h"
 #include "hash/hash.h"
+#include "agent/tooling/adapters/support/source-context.h"
 #include "agent/sandbox/source-snapshot.h"
 
 #include <algorithm>
@@ -554,6 +555,9 @@ bool common_try_register_repository_tool_adapter(
                 if (error.empty()) error = "repository.search requires a query";
                 return common_adapter_validation_failure("tool.repository.search.invalid_query", std::move(error), "Repository search requires a valid query.");
             }
+            if (arguments.contains("context_lines") && (!arguments["context_lines"].is_number_integer() || arguments["context_lines"] < 0 || arguments["context_lines"] > 5))
+                return common_adapter_validation_failure("tool.repository.search.invalid_context", "context_lines must be between zero and five");
+            const auto context_lines = arguments.value("context_lines", size_t(0));
             const auto query = arguments["query"].get<std::string>();
             const int limit = arguments.value("max_results", 16);
             if (query.empty() || query.size() > 256 || limit < 1 || limit > 32) return common_adapter_validation_failure("tool.repository.search.out_of_bounds", "repository.search arguments are out of bounds", "Repository search arguments are out of bounds.");
@@ -598,21 +602,23 @@ bool common_try_register_repository_tool_adapter(
                 if (size > max_scan_bytes - scanned_bytes) { stop_reason = "byte_limit"; return; }
                 scanned_bytes += static_cast<size_t>(size);
                 ++scanned_files;
-                std::ifstream file(candidate);
-                if (!file) { ++skipped_files; return; }
-                std::string line;
-                for (int number = 1; std::getline(file, line); ++number) {
+                std::vector<std::string> lines;
+                if (!common_source_read_lines(candidate, lines)) { ++skipped_files; return; }
+                for (size_t number = 1; number <= lines.size(); ++number) {
+                    const auto & line = lines[number - 1];
                     if (std::chrono::steady_clock::now() >= deadline) { stop_reason = "time_limit"; break; }
                     if (line.find(query) == std::string::npos) continue;
-                    const json match = {{"path", candidate.lexically_relative(repository_root).generic_string()},
-                        {"line", number}, {"preview", line.substr(0, 256)}};
+                    const auto preview = common_source_preview(line);
+                    json match = {{"path", candidate.lexically_relative(repository_root).generic_string()},
+                        {"line", number}, {"preview", preview}, {"preview_truncated", preview.size() != line.size()}};
+                    if (context_lines) match["context"] = common_source_context(lines, number, context_lines);
                     if (max_result_bytes > 0 && matches.dump().size() + match.dump().size() + 512 > max_result_bytes) {
                         stop_reason = "output_limit"; break;
                     }
                     matches.push_back(match);
                     if (matches.size() >= static_cast<size_t>(limit)) { stop_reason = "result_limit"; break; }
                 }
-                if (file.bad()) ++skipped_files;
+
             };
             if (is_file) {
                 scan_file(root);

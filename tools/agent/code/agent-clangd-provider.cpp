@@ -1,5 +1,6 @@
 #include "agent-clangd-provider.h"
 #include "agent-clangd-projection.h"
+#include "agent/tooling/adapters/support/source-context.h"
 
 #include <algorithm>
 
@@ -53,6 +54,7 @@ bool valid_arguments(const json & args, int limit) {
     for (const auto * key : {"definition_line", "definition_column", "line", "column", "max_results"})
         if (args.contains(key) && (!args[key].is_number_integer() || args[key] < 1 ||
                 args[key] > (std::string(key) == "max_results" ? limit : 1000000))) return false;
+    if (args.contains("include_context") && !args["include_context"].is_boolean()) return false;
     return !args.contains("direction") || (args["direction"].is_string() &&
         (args["direction"] == "callers" || args["direction"] == "callees" || args["direction"] == "both"));
 }
@@ -407,7 +409,7 @@ common_tool_execution_result agent_clangd_code_provider::symbol(const std::strin
 }
 
 common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const json & arguments) {
-    json response;
+    json response, hinted_symbols = nullptr;
     std::string error;
     std::filesystem::path hint;
     if (arguments.contains("path_hint") &&
@@ -432,6 +434,7 @@ common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const 
         json parsed;
         if (!session_->request("textDocument/documentSymbol", {{"textDocument", {{"uri", uri}}}}, parsed, error))
             return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
+        if (!result_array(parsed, hinted_symbols)) hinted_symbols = nullptr;
     }
     if (!session_->request("workspace/symbol", {{"query", arguments["symbol"]}}, response, error)) return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
     json definitions = json::array(), result;
@@ -439,29 +442,41 @@ common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const 
     // A workspace index miss is not evidence that a known document has no
     // symbol. Request its current AST once and use document symbols directly;
     // this also acts as a bounded parse barrier without restarting clangd.
-    if (result.empty() && !hint.empty() && std::filesystem::is_regular_file(hint, fs_error) && !fs_error) {
+    json local_definitions = json::array();
+    if (!hint.empty() && std::filesystem::is_regular_file(hint, fs_error) && !fs_error) {
         const auto uri = agent_clangd_file_uri(hint);
-        json document_response, document_symbols;
-        if (!session_->request("textDocument/documentSymbol", {{"textDocument", {{"uri", uri}}}}, document_response, error))
-            return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
-        if (!result_array(document_response, document_symbols))
-            return provider_error("tool.diagnostics.symbol.invalid_result", "clangd returned invalid document symbols");
+        json document_symbols = hinted_symbols;
+        if (!document_symbols.is_array()) {
+            json document_response;
+            if (!session_->request("textDocument/documentSymbol", {{"textDocument", {{"uri", uri}}}}, document_response, error))
+                return provider_error("tool.diagnostics.symbol.provider_unavailable", error);
+            if (!result_array(document_response, document_symbols))
+                return provider_error("tool.diagnostics.symbol.invalid_result", "clangd returned invalid document symbols");
+        }
         const auto query = arguments["symbol"].get<std::string>();
-        auto collect = [&](auto && self, const json & symbols) -> void {
+        auto collect = [&](auto && self, const json & symbols, const std::string & container) -> void {
             for (const auto & item : symbols) {
                 if (!item.is_object()) continue;
+                const auto previous_size = local_definitions.size();
                 if (item.contains("name") && item["name"].is_string() &&
                     item["name"].get<std::string>().find(query) != std::string::npos) {
-                    if (item.contains("location")) result.push_back(item);
-                    else if (item.contains("selectionRange")) result.push_back({
+                    if (item.contains("location")) local_definitions.push_back(item);
+                    else if (item.contains("selectionRange")) local_definitions.push_back({
                         {"name", item["name"]}, {"kind", item.value("kind", 12)},
                         {"location", {{"uri", uri}, {"range", item["selectionRange"]}}}});
+                    if (local_definitions.size() > previous_size && local_definitions.back().value("name", std::string{}) == item["name"]) {
+                        if (!container.empty()) local_definitions.back()["containerName"] = container;
+                        if (item.contains("detail") && item["detail"].is_string()) local_definitions.back()["detail"] = item["detail"];
+                    }
                 }
-                if (item.contains("children") && item["children"].is_array()) self(self, item["children"]);
+                const auto name = item.contains("name") && item["name"].is_string() ? item["name"].get<std::string>() : std::string{};
+                const auto next = container.empty() ? name : container + "::" + name;
+                if (item.contains("children") && item["children"].is_array() && next.size() <= 1024) self(self, item["children"], next);
             }
         };
-        collect(collect, document_symbols);
+        collect(collect, document_symbols, "");
     }
+    if (result.empty()) result = local_definitions;
     const auto limit = std::min<size_t>(arguments.value("max_results", 64), 64);
     bool incomplete = false;
     for (const auto & item : result) {
@@ -481,6 +496,18 @@ common_tool_execution_result agent_clangd_code_provider::workspace_symbol(const 
         }
         if (item.contains("name") && item["name"].is_string()) definition["name"] = item["name"];
         if (item.contains("kind") && item["kind"].is_number_integer()) definition["kind"] = item["kind"];
+        for (const auto * field : {"containerName", "detail"})
+            if (item.contains(field) && item[field].is_string() && item[field].get_ref<const std::string &>().size() <= 1024)
+                definition[std::string(field) == "containerName" ? "container_name" : field] = item[field];
+        for (const auto & local : local_definitions) {
+            json position;
+            if (!local.contains("location") || !agent_clangd_project_location(local["location"], repository_root_, position, error) ||
+                    position["path"] != definition["path"] || position["line"] != definition["line"] || position["column"] != definition["column"]) continue;
+            for (const auto * field : {"containerName", "detail"})
+                if (local.contains(field) && local[field].is_string() && local[field].get_ref<const std::string &>().size() <= 1024)
+                    definition[std::string(field) == "containerName" ? "container_name" : field] = local[field];
+            break;
+        }
         definitions.push_back(std::move(definition));
     }
     auto output = coverage(result.size() > definitions.size() && definitions.size() >= limit, incomplete);
@@ -579,12 +606,42 @@ common_tool_execution_result agent_clangd_code_provider::location_query(const js
     if (!result_array(response, result)) return provider_error("tool.diagnostics.semantic.invalid_result", "clangd returned an invalid reference result");
     const auto limit = std::min<size_t>(arguments.value("max_results", 128), 128);
     bool incomplete = false;
+    common_source_context_cache source_context;
+    std::map<std::string, json> document_symbols;
     for (const auto & item : result) {
         if (entries.size() >= limit) break;
         json entry;
         if (!agent_clangd_project_location(item, repository_root_, entry, error)) { incomplete = true; continue; }
+        if (arguments.value("include_context", false)) {
+            const auto path = entry["path"].get<std::string>();
+            std::filesystem::path resolved;
+            if (agent_clangd_repository_path(repository_root_, path, resolved, error))
+                entry["context"] = source_context.get(resolved, entry["line"].get<size_t>());
+            else entry["context"] = nullptr;
+            entry["context_status"] = entry["context"].is_null() ? "unavailable" : "available";
+            auto found = document_symbols.find(path);
+            if (found == document_symbols.end() && document_symbols.size() < 16) {
+                json symbols_response, symbols = nullptr;
+                source_location reference_location;
+                reference_location.uri = entry["uri"].get<std::string>();
+                reference_location.line = entry["line"].get<int>() - 1;
+                reference_location.column = entry["column"].get<int>() - 1;
+                reference_location.path = resolved;
+                if (common_source_read_text(resolved, reference_location.text) && open_location(reference_location, error) && session_->request("textDocument/documentSymbol",
+                        {{"textDocument", {{"uri", reference_location.uri}}}}, symbols_response, error)) {
+                    if (!result_array(symbols_response, symbols)) symbols = nullptr;
+                }
+                found = document_symbols.emplace(path, std::move(symbols)).first;
+            }
+            const bool available = found != document_symbols.end() && found->second.is_array();
+            entry["enclosing_function"] = available ? agent_clangd_enclosing_function(found->second,
+                entry["line"].get<int64_t>() - 1, entry["column"].get<int64_t>() - 1,
+                entry["uri"].get<std::string>(), repository_root_) : json(nullptr);
+            entry["enclosing_function_status"] = !available ? "unavailable" : entry["enclosing_function"].is_null() ? "not_reported" : "found";
+        }
         entries.push_back(std::move(entry));
     }
+    if (arguments.value("include_context", false)) common_source_limit_context(entries);
     auto output = coverage(result.size() > entries.size() && entries.size() >= limit, incomplete);
     output.update({{"backend", "clangd"}, {"semantic", true}, {"results", entries}, {"count", entries.size()}});
     return common_tool_execution_result::success(output.dump());

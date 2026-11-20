@@ -57,6 +57,20 @@ static int fake_clangd() {
             std::ofstream log(log_path, std::ios::app);
             log << message.dump() << '\n';
         }
+        if (std::getenv("LLAMA_TEST_CLANGD_CONTEXT") && (method == "textDocument/documentSymbol" || method == "textDocument/references")) {
+            using json = agent_clangd_json;
+            const auto range = [](int first, int column, int last, int end_column) {
+                return json{{"start", {{"line", first}, {"character", column}}}, {"end", {{"line", last}, {"character", end_column}}}};
+            };
+            const auto function = json{{"name", "fixture"}, {"kind", 12}, {"detail", "int ()"},
+                {"range", range(1, 0, 4, 0)}, {"selectionRange", range(1, 4, 1, 11)}};
+            const auto symbols = json::array({{{"name", "demo"}, {"kind", 3}, {"range", range(0, 0, 5, 0)},
+                {"selectionRange", range(0, 10, 0, 14)}, {"children", json::array({function})}}});
+            const auto result = method == "textDocument/documentSymbol" ? symbols : json::array({{
+                {"uri", message["params"]["textDocument"]["uri"]}, {"range", range(2, 8, 2, 15)}}});
+            send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", result}});
+            continue;
+        }
         if (method == "initialize") send({{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", {{"capabilities", agent_clangd_json::object()}}}});
         else if (method == "workspace/symbol") {
             send({{"jsonrpc", "2.0"}, {"id", 999}, {"method", "window/workDoneProgress/create"}, {"params", {{"token", "index"}}}});
@@ -178,6 +192,38 @@ int main(int argc, char ** argv) {
         assert(!cleanup_error);
     }
 
+    {
+        namespace fs = std::filesystem;
+        const auto root = fs::temp_directory_path() / ("llama-clangd-context-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        fs::create_directories(root);
+        { std::ofstream file(root / "source.cpp"); file << "namespace demo {\nint fixture() {\n return fixture();\n}\n}\n"; }
+#ifdef _WIN32
+        _putenv_s("LLAMA_TEST_CLANGD_CONTEXT", "1");
+#else
+        setenv("LLAMA_TEST_CLANGD_CONTEXT", "1", 1);
+#endif
+        {
+            agent_clangd_code_provider provider({fs::absolute(argv[0]).string(), root.string(), "", 5000, 1000, "", "", {}});
+            const auto compact = provider.references(R"({"symbol":"fixture","path_hint":"source.cpp","line":2})");
+            assert(compact.ok && !agent_clangd_json::parse(compact.output)["results"][0].contains("context"));
+            const auto contextual = provider.references(R"({"symbol":"fixture","path_hint":"source.cpp","line":2,"include_context":true})");
+            assert(contextual.ok);
+            const auto item = agent_clangd_json::parse(contextual.output)["results"][0];
+            assert(item["context_status"] == "available" && item["context"]["lines"].size() == 5);
+            assert(item["enclosing_function"]["name"] == "fixture" && item["enclosing_function"]["container_name"] == "demo");
+            assert(item["enclosing_function_status"] == "found");
+            const auto symbols = provider.symbol(R"({"symbol":"fixture","path_hint":"source.cpp"})");
+            assert(symbols.ok);
+            const auto definition = agent_clangd_json::parse(symbols.output)["definitions"][0];
+            assert(definition["container_name"] == "demo" && definition["detail"] == "int ()");
+        }
+#ifdef _WIN32
+        _putenv_s("LLAMA_TEST_CLANGD_CONTEXT", "");
+#else
+        unsetenv("LLAMA_TEST_CLANGD_CONTEXT");
+#endif
+        fs::remove_all(root);
+    }
     {
         namespace fs = std::filesystem;
         const auto root = fs::temp_directory_path() /

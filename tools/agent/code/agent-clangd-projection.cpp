@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <exception>
+#include <utility>
 
 namespace {
 using json = agent_clangd_json;
@@ -130,4 +131,38 @@ bool agent_clangd_project_call(const json & input, const json & selected, bool i
     }
     output = {{"from", from}, {"to", to}, {"fromRanges", input["fromRanges"]}, {"call_sites", sites}};
     error.clear(); return true;
+}
+
+agent_clangd_json agent_clangd_enclosing_function(const agent_clangd_json & symbols,
+        int64_t line, int64_t column, const std::string & uri, const std::string & repository_root) {
+    json selected = nullptr;
+    auto visit = [&](auto && self, const json & entries, const std::string & container) -> void {
+        if (!entries.is_array()) return;
+        for (const auto & entry : entries) {
+            if (!entry.is_object() || !entry.contains("range")) continue;
+            uint64_t first_line, first_column, last_line, last_column;
+            if (!position(entry["range"], "start", first_line, first_column) ||
+                    !position(entry["range"], "end", last_line, last_column)) continue;
+            const auto point = std::make_pair(line, column);
+            if (point < std::make_pair(static_cast<int64_t>(first_line), static_cast<int64_t>(first_column)) ||
+                    point >= std::make_pair(static_cast<int64_t>(last_line), static_cast<int64_t>(last_column))) continue;
+            const auto name = entry.contains("name") && entry["name"].is_string() ? entry["name"].get<std::string>() : std::string{};
+            const auto kind = entry.contains("kind") && entry["kind"].is_number_integer() && entry["kind"] >= 1 && entry["kind"] <= 26 ? entry["kind"].get<int>() : 0;
+            if ((kind == 6 || kind == 9 || kind == 12) && !name.empty() && name.size() <= 1024 && entry.contains("selectionRange")) {
+                std::string error;
+                json projected;
+                if (agent_clangd_project_location({{"uri", uri}, {"range", entry["selectionRange"]}}, repository_root, projected, error)) {
+                    projected["name"] = name; projected["kind"] = kind;
+                    if (!container.empty()) projected["container_name"] = container;
+                    if (entry.contains("detail") && entry["detail"].is_string() && entry["detail"].get_ref<const std::string &>().size() <= 1024)
+                        projected["detail"] = entry["detail"];
+                    selected = std::move(projected);
+                }
+            }
+            const auto next = name.empty() ? container : container.empty() ? name : container + "::" + name;
+            if (entry.contains("children") && next.size() <= 1024) self(self, entry["children"], next);
+        }
+    };
+    visit(visit, symbols, "");
+    return selected;
 }

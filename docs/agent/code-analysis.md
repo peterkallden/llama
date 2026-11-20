@@ -280,3 +280,34 @@ observed index activity. A database source count, delivered file event or ended
 progress notification never establishes complete semantic index coverage.
 Use these observations to qualify results and to populate graph `sources`;
 verify source contents when stronger evidence is required.
+
+### Optional reading context
+
+`repository.search` and `workspace.search` accept `context_lines` from zero to
+five (default zero). Matches retain `preview` and add `preview_truncated`.
+With nonzero context, a `context` object contains numbered lines around the
+match, `start_line`, `end_line` and an explicit truncation flag. Preview and
+context line text is capped at 256 UTF-8 bytes without splitting a character.
+Context uses the existing search result budget; narrow the query or reduce
+context when the response reports partial coverage.
+
+`code.symbols` retains provider-reported `container_name` and `detail` when
+available. A file hint allows the provider to reuse that file's document AST
+for namespace/class context and detail. `detail` is the provider's declaration
+or type label; it is not a reconstructed source declaration. Missing metadata
+is omitted. Text matches do not acquire semantic metadata.
+
+`code.references` accepts `include_context` (default false). When enabled, each
+reference includes up to two source lines before and after its position and
+`context_status`. The semantic provider also queries document symbols once per
+returned file to identify an enclosing function, method or constructor by its
+reported source range. `enclosing_function` is an object or null;
+`enclosing_function_status` distinguishes `found`, `not_reported` and
+`unavailable`. Text fallback uses `unavailable_text_fallback` and never guesses
+functions from braces or names. Supplementary analysis is bounded to 16 files;
+source reads are capped at 512 KiB per file and the excerpt cache retains at
+most 4 MiB of line text. Missing files or exhausted context budgets do not remove
+references. Large enriched responses drop optional context from the end and
+mark it `omitted_output_budget`, preserving the reference locations. Base
+results can still require a lower `max_results` under existing output limits.
+These additions do not improve or establish project-wide index coverage.
