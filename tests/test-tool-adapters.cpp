@@ -1,0 +1,3017 @@
+#include "agent/tooling/adapters/tool-adapters.h"
+#include "agent/tooling/adapters/families/code-adapters.h"
+#include "agent/tooling/adapters/support/source-context.h"
+#include "agent/tooling/adapters/families/repository-adapters.h"
+#include "agent/tooling/adapters/families/graph-adapters.h"
+#include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
+#include "agent/tooling/bridge/tool-chat-bridge.h"
+#include "agent/tooling/contracts/tool-result-contracts.h"
+#include "agent/tooling/contracts/schema-contract.h"
+#include "agent/artifact/artifact-contract.h"
+#include "agent/investigation-access.h"
+#include "agent/sandbox/sandbox-host-config.h"
+#include "tools/agent/tooling/agent-sandbox-helper.h"
+#include "hash/hash.h"
+#include "base64.hpp"
+#include "memory/memory-in-memory.h"
+#include "plan/plan-in-memory.h"
+
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+#include <algorithm>
+#include <cassert>
+#include <chrono>
+#include <cstdio>
+#include <ctime>
+#include <iostream>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <set>
+#include <stdexcept>
+
+// MSVC's assert abort is reported by CTest as STATUS_STACK_BUFFER_OVERRUN.
+// Print the expression first so a Windows-only contract failure is diagnosable.
+#undef assert
+#define assert(...) do { \
+    if (!(__VA_ARGS__)) { \
+        std::fprintf(stderr, "assertion failed at %s:%d: %s\n", __FILE__, __LINE__, #__VA_ARGS__); \
+        std::fflush(stderr); \
+        std::abort(); \
+    } \
+} while (false)
+
+class test_resource_store final : public agent_resource_store {
+public:
+    bool put_text(const agent_resource_put_request & request, agent_resource_descriptor & out, std::string & error) override {
+        if(!fail_mime.empty()&&request.mime_type==fail_mime){error="injected publication failure";return false;}
+        last_request = request;
+        requests.push_back(request);
+        out.uri = "resource://test/" + request.name;
+        out.name = request.name;
+        out.mime_type = request.mime_type;
+        out.scope = request.scope;
+        out.metadata = request.metadata;
+        out.lineage = request.lineage;
+        out.source_provider = request.source_provider;
+        out.source_tool = request.source_tool;
+        out.size_bytes = request.text.size();
+        out.sha256 = std::to_string(request.text.size());
+        resources[out.uri] = out;
+        available_uris.insert(out.uri);
+        contents[out.uri] = request.bytes_are_authoritative ? request.bytes : request.text;
+        return true;
+    }
+    bool put_bytes(const agent_resource_put_request & request, agent_resource_descriptor & out, std::string & error) override {
+        auto text_request=request;
+        text_request.text=request.bytes;
+        text_request.bytes_are_authoritative=false;
+        if (!put_text(text_request,out,error)) return false;
+        out.sha256=hash_sha256_hex(request.bytes.data(),request.bytes.size());
+        resources[out.uri]=out;
+        return true;
+    }
+    bool read_text(const std::string & uri, const agent_resource_read_authority &, size_t max_bytes,
+            std::string & out, std::string & error) const override {
+        const auto it=contents.find(uri);
+        if(it!=contents.end()){out=it->second.substr(0,max_bytes);return true;}
+        if (uri != "resource://session/long-text") {
+            error = "resource was not found";
+            return false;
+        }
+        out.assign(std::min<size_t>(max_bytes, 16000), 'x');
+        return true;
+    }
+    bool read_bytes(const std::string & uri,const agent_resource_read_authority & authority,size_t max_bytes,std::string & out,std::string & error) const override {
+        return read_text(uri,authority,max_bytes,out,error);
+    }
+    bool read_text_range(const std::string & uri, const agent_resource_read_authority & authority,
+            size_t offset, size_t max_bytes, std::string & out, std::string & error) const override {
+        const auto it = contents.find(uri);
+        if (it != contents.end()) {
+            if (offset > it->second.size()) { error = "resource range offset is out of bounds"; return false; }
+            out = it->second.substr(offset, max_bytes);
+            return true;
+        }
+        if (offset != 0) { error = "resource range is unavailable"; return false; }
+        return read_text(uri, authority, max_bytes, out, error);
+    }
+    bool stat(const std::string & uri, const agent_resource_read_authority &, agent_resource_descriptor & out, std::string & error) const override {
+        const auto stored = resources.find(uri);
+        if (stored != resources.end()) {
+            out = stored->second;
+            return true;
+        }
+        if (available_uris.count(uri) == 0) {
+            error = "resource was not found";
+            return false;
+        }
+        out.uri = uri;
+        out.name = uri == "resource://session/long-text" ? "long.txt" : "sales.xlsx";
+        out.mime_type = uri == "resource://session/long-text"
+            ? "text/plain"
+            : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        out.size_bytes = uri == "resource://session/long-text" ? 16000 : 0;
+        return true;
+    }
+    bool list(const agent_resource_read_authority &, std::vector<agent_resource_descriptor> & out, std::string &) const override {
+        out.clear();for(const auto & item:resources)out.push_back(item.second);return true;
+    }
+    agent_resource_put_request last_request;
+    std::string fail_mime;
+    std::vector<agent_resource_put_request> requests;
+    std::set<std::string> available_uris;
+    std::map<std::string,agent_resource_descriptor> resources;
+    std::map<std::string,std::string> contents;
+};
+
+class test_investigation_text_processor final : public agent_resource_processing_provider {
+public:
+    explicit test_investigation_text_processor(test_resource_store & store) : store_(store) {}
+    agent_resource_processing_result process(const agent_resource_processing_binding_request & request) const override {
+        const std::string text = "Derived OCR evidence";
+        agent_resource_descriptor output;
+        output.uri = "resource://processor/derived-text";
+        output.name = "derived-text.txt";
+        output.mime_type = "text/plain";
+        output.scope = common_runtime_resource_scope::session;
+        output.size_bytes = text.size();
+        output.sha256 = hash_sha256_hex(text.data(), text.size());
+        output.lineage.parent_uri = request.source_uri;
+        output.metadata.limitations = "OCR text does not verify original image regions.";
+        store_.resources[output.uri] = output;
+        store_.contents[output.uri] = text;
+        agent_resource_processing_result result;
+        result.success = true;
+        result.processor_id = "test-ocr-v1";
+        result.resources.push_back(output);
+        return result;
+    }
+private:
+    test_resource_store & store_;
+};
+
+class test_investigation_store final : public common_agent_data_store {
+public:
+    bool fail_publication = false;
+    common_agent_dataset_descriptor source;
+    std::vector<common_agent_dataset_descriptor> additional_sources;
+    std::set<std::string> denied_sources;
+    std::map<std::string, common_investigation_case_revision> cases;
+    std::vector<common_investigation_report_index_entry> reports;
+    std::vector<nlohmann::json> executed_queries;
+    std::map<size_t,std::string> virtual_pages;
+    std::string virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id","event.outcome"],"rows":[["doc-2","authentication","1970-01-01T00:00:00.300Z","alice","db2","logs-2026.10","doc-2","success"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
+
+    bool authorize_investigation_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
+        if (denied_sources.count(source_id) || (source_id != source.ref.source_provider &&
+                std::none_of(additional_sources.begin(), additional_sources.end(), [&](const auto & descriptor) {
+                    return descriptor.ref.source_provider == source_id;
+                }))) { error = "source is not authorized"; return false; }
+        error.clear(); return true;
+    }
+
+    bool execute(const std::string &, const std::string &, std::string &, std::string & error) override {
+        error = "not used by investigation adapter contract";
+        return false;
+    }
+    bool execute_scoped(const std::string & operation, const std::string & arguments, const common_agent_scope &,
+            bool, std::string & result, std::string & error) override {
+        if (operation != "data.query") { error = "unexpected virtual operation"; return false; }
+        const auto query=nlohmann::json::parse(arguments);
+        executed_queries.push_back(query);
+        const auto page=virtual_pages.find(query.value("offset",size_t(0)));
+        result = page==virtual_pages.end() ? virtual_page : page->second;
+        error.clear(); return true;
+    }
+    bool get_dataset_descriptor(const std::string & uri, common_agent_dataset_descriptor & out,
+            std::string & error) override {
+        if (uri != source.ref.uri) {
+            for (const auto & descriptor : additional_sources) if (descriptor.ref.uri == uri) {
+                out = descriptor; error.clear(); return true;
+            }
+            error = "virtual dataset not found"; return false;
+        }
+        out = source; error.clear(); return true;
+    }
+    bool list_dataset_descriptors(std::vector<common_agent_dataset_descriptor> & out,
+            std::string & error) override {
+        out = additional_sources; out.push_back(source); error.clear(); return true;
+    }
+    bool get_investigation_case(const std::string & id, const common_agent_scope & scope,
+            common_investigation_case_revision & out, std::string & error) override {
+        const auto found = cases.find(id);
+        if (found == cases.end() || found->second.scope.namespace_id != scope.namespace_id ||
+                found->second.scope.project_id != scope.project_id ||
+                (scope.project_id.empty() && found->second.scope.session_id != scope.session_id)) {
+            error = "case is unavailable in this scope"; return false;
+        }
+        out = found->second; error.clear(); return true;
+    }
+    bool list_investigation_cases(const common_agent_scope & scope, size_t limit,
+            const std::string & after, std::vector<common_investigation_case_summary> & out,
+            std::string & cursor, std::string & error) override {
+        out.clear(); cursor.clear();
+        for (const auto & item : cases) {
+            const auto & value = item.second;
+            if (value.scope.namespace_id != scope.namespace_id || value.scope.project_id != scope.project_id ||
+                    (scope.project_id.empty() && value.scope.session_id != scope.session_id) || item.first <= after) continue;
+            out.push_back({value.case_id, value.revision, value.title, value.question,
+                value.source_id, value.window_start_ms, value.window_end_ms});
+        }
+        if (out.size() > limit) { out.resize(limit); cursor = out.back().case_id; }
+        error.clear(); return true;
+    }
+    bool publish_investigation_case(const common_investigation_case_revision & input,
+            uint64_t expected, const std::string &, common_investigation_case_revision & out,
+            std::string & error) override {
+        if (fail_publication) { error = "injected storage outage"; return false; }
+        const auto found = cases.find(input.case_id);
+        const uint64_t current = found == cases.end() ? 0 : found->second.revision;
+        if (current != expected || input.revision != expected + 1) {
+            error = "investigation case revision conflict"; return false;
+        }
+        if (!common_investigation_case_validate(input, error)) return false;
+        out = input; cases[input.case_id] = out; error.clear(); return true;
+    }
+    common_agent_publication_status publish_investigation_case_checked(
+            const common_investigation_case_revision & input, uint64_t expected,
+            const std::string & uri, common_investigation_case_revision & published,
+            std::string & error) override {
+        const auto found = cases.find(input.case_id);
+        if ((found == cases.end() ? 0 : found->second.revision) != expected) {
+            error = "investigation case revision conflict"; return common_agent_publication_status::conflict;
+        }
+        if (!common_investigation_case_validate(input, error)) return common_agent_publication_status::invalid;
+        return publish_investigation_case(input, expected, uri, published, error)
+            ? common_agent_publication_status::published : common_agent_publication_status::storage_error;
+    }
+    bool publish_investigation_report(const common_agent_scope & scope,
+            const common_investigation_report_index_entry & input,
+            common_investigation_report_index_entry & out, std::string & error) override {
+        const auto found = cases.find(input.case_id);
+        if (found == cases.end() || found->second.scope.namespace_id != scope.namespace_id ||
+                found->second.scope.project_id != scope.project_id ||
+                (scope.project_id.empty() && found->second.scope.session_id != scope.session_id)) {
+            error = "report is unavailable in this scope"; return false;
+        }
+        const auto existing = std::find_if(reports.begin(), reports.end(), [&](const auto & item) {
+            return item.case_id == input.case_id && item.case_revision == input.case_revision &&
+                item.content_fingerprint == input.content_fingerprint;
+        });
+        if (existing != reports.end()) { out = *existing; error.clear(); return true; }
+        reports.push_back(input); out = input; error.clear(); return true;
+    }
+    bool list_investigation_reports(const common_agent_scope & scope, const std::string & case_id,
+            uint64_t revision, std::vector<common_investigation_report_index_entry> & out,
+            std::string & error) override {
+        out.clear();
+        const auto found = cases.find(case_id);
+        if (found == cases.end() || found->second.scope.namespace_id != scope.namespace_id ||
+                found->second.scope.project_id != scope.project_id ||
+                (scope.project_id.empty() && found->second.scope.session_id != scope.session_id)) {
+            error = "report is unavailable in this scope"; return false;
+        }
+        for (const auto & item : reports) if (item.case_id == case_id && item.case_revision == revision)
+            out.push_back(item);
+        error.clear(); return true;
+    }
+    void seed(common_investigation_case_revision value) { cases[value.case_id] = std::move(value); }
+};
+
+class test_docx_processing_provider final : public agent_resource_processing_provider {
+public:
+    test_docx_processing_provider(
+            test_resource_store & store,
+            bool & called,
+            agent_resource_processing_binding_request & observed_request)
+        : store_(store), called_(called), observed_request_(observed_request) {}
+
+    agent_resource_processing_result process(
+            const agent_resource_processing_binding_request & request) const override {
+        called_ = true;
+        observed_request_ = request;
+        agent_resource_processing_result result;
+        result.success = true;
+        const bool markdown = request.target_representation == "markdown";
+        agent_resource_processing_output output;
+        output.name = markdown ? "pandoc-output.md" : "pandoc-output.docx";
+        output.mime_type = request.target_media_type;
+        output.bytes = markdown ? (request.source_uri.find("empty.docx")!=std::string::npos ? "" : "# Imported DOCX\n\n| Name | Value |\n|---|---|\n| alpha | 1 |\n") : "test-docx-bytes";
+        output.metadata.limitations = markdown ? "Images or unsupported Word formatting may not be preserved." : "";
+        agent_resource_put_request put;put.name=output.name;put.mime_type=output.mime_type;
+        put.bytes=output.bytes;put.bytes_are_authoritative=true;put.metadata=output.metadata;
+        agent_resource_descriptor resource;std::string error;
+        assert(store_.put_bytes(put,resource,error));
+        result.resources.push_back(std::move(resource));
+        return result;
+    }
+
+private:
+    test_resource_store & store_;
+    bool & called_;
+    agent_resource_processing_binding_request & observed_request_;
+};
+
+class test_data_store final : public common_agent_data_store {
+public:
+    std::map<std::string, common_context_graph_state> graphs;
+    bool get_context_graph(const common_agent_scope & scope, common_context_graph_state & out, std::string & error) override {
+        if (scope.namespace_id.empty() || scope.project_id.empty()) { error = "project required"; return false; }
+        out = graphs[scope.namespace_id + ":" + scope.project_id]; error.clear(); return true;
+    }
+    common_agent_publication_status publish_context_graph(const common_agent_scope & scope, uint64_t expected,
+            const common_context_graph_state & input, common_context_graph_state & out, std::string & error) override {
+        auto & graph = graphs[scope.namespace_id + ":" + scope.project_id];
+        if (graph.revision != expected) { error = "revision conflict"; return common_agent_publication_status::conflict; }
+        graph = input; out = graph; error.clear(); return common_agent_publication_status::published;
+    }
+    bool get_dataset_descriptor(const std::string & dataset_uri,
+            common_agent_dataset_descriptor & descriptor, std::string & error) override {
+        if (dataset_uri == "dataset://analysis/csv-sales") {
+            descriptor = stored_descriptor;
+            descriptor.ref.uri = dataset_uri;
+            descriptor.ref.source_resource_uri = "resource://uploads/sales.csv";
+            descriptor.ref.source_representation = "csv:dataset";
+            descriptor.origin.kind = "csv_resource";
+            descriptor.import_processor_id = "csv-resource-import-v1";
+            return true;
+        }
+        if (dataset_uri != stored_descriptor.ref.uri && dataset_uri != "dataset://tool-events") {
+            error = "unknown dataset";
+            return false;
+        }
+        descriptor = stored_descriptor;
+        return true;
+    }
+    bool list_dataset_descriptors(std::vector<common_agent_dataset_descriptor> & descriptors, std::string &) override {
+        descriptors = {stored_descriptor};
+        return true;
+    }
+    bool find_dataset_by_name(const std::string & name,
+            common_agent_dataset_descriptor & descriptor, std::string & error) override {
+        if (name != stored_descriptor.ref.name && name != "sales") {
+            error = "dataset name was not found";
+            return false;
+        }
+        descriptor = stored_descriptor;
+        return true;
+    }
+    bool execute(const std::string & operation, const std::string & request_json, std::string & result, std::string & error) override {
+        last_operation = operation;
+        last_request = request_json;
+        if (operation == "data.query") { result = R"({"columns":["name","value"],"rows":[{"name":"alpha","value":1},{"name":"beta","value":2}],"row_count":2,"scan_truncated":false,"result_truncated":false})"; return true; }
+        if (operation == "data.filter") { result = R"({"rows":[{"name":"alpha"}],"row_count":1})"; return true; }
+        if (operation == "data.aggregate") { result = R"({"rows":[{"group":"all","count":2}]})"; return true; }
+        if (operation == "data.join") { result = R"({"rows":[{"id":"1","name":"alpha"}]})"; return true; }
+        if (operation == "data.transform") { result = R"({"dataset":"dataset://derived/1"})"; return true; }
+        if (operation == "statistics.describe") {
+            const auto request = nlohmann::json::parse(request_json);
+            result = nlohmann::json{{"dataset", request.at("dataset")},
+                {"selected_columns", request.value("columns", nlohmann::json::array({"value"}))},
+                {"columns", nlohmann::json::array({{{"name", "value"}, {"count", 2}, {"null_count", 0},
+                    {"min", 1}, {"max", 2}, {"mean", 1.5}, {"stddev", 0.5}}})},
+                {"groups", nlohmann::json::array()}, {"group_by", request.value("group_by", nlohmann::json::array())},
+                {"scanned_rows", 2}, {"scan_truncated", false}}.dump();
+            return true;
+        }
+        if (operation == "statistics.outliers") { result = R"({"columns":[]})"; return true; }
+        if (operation == "statistics.value_counts") { result = R"({"column":"region","values":[{"value":"north","count":2}]})"; return true; }
+        error = "unexpected data operation";
+        return false;
+    }
+
+    std::string last_operation;
+    std::string last_request;
+    common_agent_dataset_descriptor stored_descriptor = [] {
+        common_agent_dataset_descriptor value;
+        value.ref.uri = "dataset://analysis/sales";
+        value.ref.name = "Sales";
+        value.ref.row_count = 2;
+        value.ref.column_count = 2;
+        value.ref.source_resource_uri = "resource://uploads/sales.xlsx";
+        value.ref.source_representation = "tabular-dataset";
+        value.source_sheet_name = "Sales";
+        value.source_range = "A1:B3";
+        value.import_processor_id = "xlsx-workbook-json-v1";
+        value.columns = {{"name", common_agent_dataset_column_type::string, true},
+                         {"value", common_agent_dataset_column_type::decimal, true}};
+        return value;
+    }();
+};
+
+int main() {
+    common_agent_development_target_profile target_profile;
+    target_profile.build_program = "cmake";
+    target_profile.build_arguments = {"--build", "/workspace/writable/build", "--target", "agent-pack"};
+    target_profile.test_program = "ctest";
+    target_profile.test_arguments = {"--test-dir", "/workspace/writable/build"};
+    target_profile.configurations["Release"] = {"--config", "Release"};
+    target_profile.test_filters["agent-contracts"] = {"-L", "agent"};
+    target_profile.max_timeout_ms = 900000;
+    const std::map<std::string, common_agent_development_target_profile> target_profiles = {
+        {"agent-pack", target_profile},
+    };
+    common_agent_sandbox_request development_request;
+    development_request.command.program = "agent.development.build";
+    development_request.command.arguments = {"agent-pack", "--configuration=Release"};
+    development_request.limits.timeout_ms = 1200000;
+    std::string target_error;
+    assert(common_agent_sandbox_resolve_development_target(
+        development_request, target_profiles, target_error));
+    assert(development_request.command.program == "cmake");
+    assert((development_request.command.arguments == std::vector<std::string>{
+        "--build", "/workspace/writable/build", "--target", "agent-pack", "--config", "Release"}));
+    assert(development_request.command.working_directory == "/workspace/source");
+    assert(development_request.limits.timeout_ms == 900000);
+    common_agent_sandbox_request unapproved_request;
+    unapproved_request.command.program = "agent.development.build";
+    unapproved_request.command.arguments = {"agent-pack", "--raw=command"};
+    assert(!common_agent_sandbox_resolve_development_target(
+        unapproved_request, target_profiles, target_error));
+    unapproved_request.command.arguments = {"unlisted-target"};
+    assert(!common_agent_sandbox_resolve_development_target(
+        unapproved_request, target_profiles, target_error));
+    common_agent_sandbox_request test_request;
+    test_request.command.program = "agent.development.test";
+    test_request.command.arguments = {"agent-pack", "--filter=agent-contracts"};
+    assert(common_agent_sandbox_resolve_development_target(
+        test_request, target_profiles, target_error));
+    assert(test_request.command.program == "ctest" &&
+        test_request.command.arguments.back() == "agent" &&
+        test_request.command.working_directory == "/workspace/source");
+
+    // Report export feeds Markdown to the processor and requests DOCX. The
+    // configured DOCX policy must therefore be selected for text/markdown,
+    // not only for DOCX inputs that are being read.
+    std::map<std::string, agent_resource_processor_execution_policy> pandoc_policies;
+    agent_resource_processor_execution_policy pandoc_policy;
+    pandoc_policy.execution = "local_required";
+    pandoc_policy.backend = "local";
+    pandoc_policy.executable = "pandoc";
+    pandoc_policies.emplace("docx.text", pandoc_policy);
+    const auto markdown_to_docx_dispatch = resolve_agent_resource_processor_dispatch({
+        pandoc_policies, "text/markdown", "", true, false});
+    assert(markdown_to_docx_dispatch.has_policy(agent_resource_processor_kind::pandoc));
+    assert(markdown_to_docx_dispatch.wants_local_for(agent_resource_processor_kind::pandoc));
+
+    const auto fetched_payload = common_tool_web_fetch_inline_result_to_json({
+        "https://example.test/openapi.json", "https://example.test/openapi.json", 200,
+        "application/json", "spec", "{}", 2, false, "resource://session/spec-1"});
+    assert(fetched_payload.value("resource_ref", std::string{}) == "resource://session/spec-1");
+    common_tool_web_fetch_result large_fetch{
+        "https://example.test/catalogue", "https://example.test/catalogue", 200,
+        "text/plain", {}, std::string(1023, 'x') + "€" + std::string(8192, 'x'), false};
+    const auto bounded_fetch = common_tool_web_fetch_make_inline_result(large_fetch);
+    const auto bounded_fetch_json = common_tool_web_fetch_inline_result_to_json(bounded_fetch);
+    assert(bounded_fetch.text_excerpt.size() == 1023); // preserve UTF-8 at the 1 KiB boundary
+    assert(bounded_fetch.text_length == 9218 && bounded_fetch.preview_truncated);
+    assert(!bounded_fetch.truncated && bounded_fetch.resource_ref.empty());
+    assert(!bounded_fetch_json.contains("text"));
+    std::string error;
+    common_memory_in_memory_store memories;
+    assert(memories.open("", error));
+    common_memory_record memory;
+    memory.id = "memory-1";
+    memory.kind = common_memory_kind::fact;
+    memory.content = "The plan store uses optimistic version checks.";
+    memory.scope = common_memory_scope::session;
+    memory.session_id = "session-1";
+    assert(memories.put(memory, error));
+
+    common_plan_in_memory_store plans;
+    assert(plans.open("", error));
+    common_plan_state plan;
+    plan.id = "plan-1";
+    plan.goal = "Verify native adapters";
+    assert(plans.create(plan, error));
+
+    common_tool_catalog catalog;
+    common_tool_bootstrap_result bootstrap;
+    assert(catalog.bootstrap("memory-read", bootstrap, error));
+    common_tool_registry registry;
+    common_native_tool_bindings bindings;
+    bindings.memory_store = &memories;
+    bindings.plan_store = &plans;
+    bindings.memory_query.scope = common_memory_scope::session;
+    bindings.memory_query.session_id = "session-1";
+    std::string active_plan_id = "plan-1";
+    bindings.plan_id = &active_plan_id;
+    common_tool_adapter_result adapters;
+    assert(common_register_native_tool_adapters(catalog, "memory-read", bindings, registry, adapters, error));
+    assert(adapters.registered.size() == 7);
+    auto result = registry.execute({"math.calculate", R"({"expression":"(18 + 2) * 3"})"});
+    assert(result.ok);
+    auto output = result.output;
+    assert(output == R"({"value":60.0})" || output == R"({"value":60})");
+    result = registry.execute({"memory.search", R"({"query":"optimistic checks"})"});
+    assert(result.ok && result.output.find("memory-1") != std::string::npos);
+    result = registry.execute({"memory.get", R"({"id":"memory-1"})"});
+    assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
+    result = registry.execute({"memory.get", R"({"memory_id":"memory-1"})"});
+    assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
+    result = registry.execute({"memory.inspect", "{}"});
+    assert(result.ok && result.output.find("\"count\":1") != std::string::npos && result.output.find("fact") != std::string::npos);
+    result = registry.execute({"memory.conflict_check", R"({"content":"The plan store uses optimistic version checks."})"});
+    assert(result.ok && result.output.find("\"conflict\":true") != std::string::npos && result.output.find("memory-1") != std::string::npos);
+    result = registry.execute({"memory.get", R"("memory-1")"});
+    assert(result.ok && result.output.find("optimistic version checks") != std::string::npos);
+    result = registry.execute({"plan.get", "{}"});
+    assert(result.ok && result.output.find("plan-1") != std::string::npos);
+    result = registry.execute({"memory.remember", "{}"});
+    assert(!result.ok);
+
+    common_tool_registry proposal_registry;
+    common_native_tool_bindings proposal_bindings;
+    proposal_bindings.memory_remember_proposal = [](const std::string &) { return common_tool_execution_result::success(R"({"decision":"accept"})"); };
+    assert(common_register_native_tool_adapters(catalog, "memory", proposal_bindings, proposal_registry, adapters, error));
+    assert(proposal_registry.is_policy_gated("memory.remember"));
+    result = proposal_registry.execute({"memory.remember", R"({"kind":"fact","content":"verified"})"});
+    assert(result.ok && result.output.find("accept") != std::string::npos);
+
+    const auto repository = std::filesystem::temp_directory_path() /
+        ("llama-agent-repository-tool-test-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(repository / "src");
+    { std::ofstream file(repository / "src" / "sample.txt"); file << "alpha\nneedle in a haystack\n"; }
+    const auto git_init = "git -C \"" + repository.string() + "\" init -q";
+    assert(std::system(git_init.c_str()) == 0);
+    const auto git_user_name = "git -C \"" + repository.string() + "\" config user.name Agent-Test";
+    const auto git_user_email = "git -C \"" + repository.string() + "\" config user.email agent-test@example.invalid";
+    const auto git_add = "git -C \"" + repository.string() + "\" add -- src/sample.txt";
+    const auto git_commit = "git -C \"" + repository.string() + "\" commit -q -m fixture";
+    assert(std::system(git_user_name.c_str()) == 0);
+    assert(std::system(git_user_email.c_str()) == 0);
+    assert(std::system(git_add.c_str()) == 0);
+    assert(std::system(git_commit.c_str()) == 0);
+    {
+        using source_json = nlohmann::ordered_json;
+        const auto original = common_repository_observation(repository.string(), "src/sample.txt");
+        assert(original["status"] == "observed" && original["local_changes"] == false);
+        auto observed = original.get<common_source_reference>();
+        assert(common_repository_source_check(repository.string(), observed)["status"] == "same_revision");
+        auto wrong_repo = observed; wrong_repo.id += "-other";
+        assert(common_repository_source_check(repository.string(), wrong_repo)["status"] == "unknown");
+        auto missing = observed; missing.revision = std::string(40, '0');
+        assert(common_repository_source_check(repository.string(), missing)["status"] == "unknown");
+        auto escaped = observed; escaped.location = "../outside";
+        assert(common_repository_source_check(repository.string(), escaped)["status"] == "unknown");
+        const auto git = [&](const std::string & args) {
+            const auto command = "git -C \"" + repository.string() + "\" " + args;
+            assert(std::system(command.c_str()) == 0);
+        };
+        { std::ofstream file(repository / "other.txt"); file << "new source\n"; }
+        git("add -- other.txt"); git("commit -q -m unrelated");
+        auto current = common_repository_source_check(repository.string(), observed);
+        assert(current["status"] == "newer_source" && current["commits_behind"] == 1 && current["file_changed"] == false);
+        { std::ofstream file(repository / "src/sample.txt", std::ios::app); file << "changed\n"; }
+        assert(common_repository_source_check(repository.string(), observed)["local_changes"] == true);
+        git("add -- src/sample.txt"); git("commit -q -m changed");
+        current = common_repository_source_check(repository.string(), observed);
+        assert(current["commits_behind"] == 2 && current["file_changed"] == true);
+        const auto branch_head = common_repository_observation(repository.string(), "src/sample.txt").get<common_source_reference>();
+        git("checkout -q --detach " + observed.revision);
+        assert(common_repository_source_check(repository.string(), branch_head)["reason"] == "current_revision_is_older");
+        { std::ofstream file(repository / "other.txt"); file << "different branch\n"; }
+        git("add -- other.txt"); git("commit -q -m diverged");
+        assert(common_repository_source_check(repository.string(), branch_head)["status"] == "diverged");
+        git("reset -q --hard " + observed.revision);
+        auto dirty_observation = observed; dirty_observation.local_changes = true;
+        assert(common_repository_source_check(repository.string(), dirty_observation)["status"] == "unknown");
+        source_json graph = {{"sources", std::vector<common_source_reference>{observed, observed}}};
+        common_native_tool_bindings source_bindings; source_bindings.repository_root = repository.string();
+        common_context_graph_check_sources(graph, source_bindings, {});
+        assert(graph["sources"][0]["currentness"]["status"] == "unknown");
+        assert(!graph["sources"][0]["currentness"].contains("current_revision"));
+        graph = {{"sources", std::vector<common_source_reference>{observed, observed}}};
+        common_context_graph_check_sources(graph, source_bindings, {"repository.read"});
+        assert(graph["sources"][0]["currentness"]["status"] == "same_revision");
+        assert(graph["sources"][0]["currentness"] == graph["sources"][1]["currentness"]);
+        common_source_reference timed{"external", "source:one", "", "", 100};
+        assert(common_source_revision_comparison(timed, "", 101)["status"] == "possibly_stale");
+        assert(common_source_revision_comparison(timed, "", 99)["status"] == "not_modified_since_observation");
+        assert(common_source_revision_comparison(timed, "", 0)["status"] == "unknown");
+    }
+    common_tool_catalog research_catalog;
+    assert(research_catalog.bootstrap("research", bootstrap, error));
+    common_tool_registry repository_registry;
+    common_native_tool_bindings repository_bindings;
+    repository_bindings.repository_root = repository.string();
+    repository_bindings.web_search = [](const std::string & input) {
+        if (input.find("\"query\":\"llama\"") == std::string::npos) {
+            return common_tool_execution_result::failure("tool.web_search.unexpected_query", common_tool_failure_class::validation, false, "Unexpected search query.", "unexpected search query");
+        }
+        return common_tool_execution_result::success(R"({"results":[{"title":"llama.cpp","url":"https://example.com/llama","snippet":"native tools","source":"test"}],"provider":"test"})");
+    };
+    repository_bindings.web_fetch = [](const std::string & input) {
+        if (input.find("\"url\":\"https://example.com/llama") == std::string::npos) {
+            return common_tool_execution_result::failure("tool.web_fetch.unexpected_url", common_tool_failure_class::validation, false, "Unexpected fetch URL.", "unexpected fetch url");
+        }
+        auto fetched = common_tool_execution_result::success(R"({"url":"https://example.com/llama","final_url":"https://example.com/llama","status":200,"content_type":"text/html","title":"llama.cpp","text":"native tools","truncated":false})");
+        fetched.http.provider = "web.fetch";
+        fetched.http.operation = "fetch";
+        fetched.http.method = "GET";
+        fetched.http.requested_url = "https://example.com/llama?token=redacted";
+        fetched.http.final_url = "https://example.com/llama";
+        fetched.http.status = 200;
+        fetched.http.content_type = "text/html";
+        fetched.http.response_bytes = 128;
+        fetched.http.duration_ms = 23;
+        return fetched;
+    };
+    assert(common_register_native_tool_adapters(research_catalog, "research", repository_bindings, repository_registry, adapters, error));
+    assert(repository_registry.contains("research.workspace.publish"));
+    assert(!repository_registry.is_read_only("research.workspace.publish"));
+    assert(repository_registry.is_policy_gated("research.workspace.publish"));
+    result = repository_registry.execute({"repository.list", R"({"path":"src","depth":1})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+    result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src"})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos && result.output.find("needle") != std::string::npos);
+    result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/sample.txt"})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos && result.output.find("needle") != std::string::npos);
+    {
+        auto compact = nlohmann::json::parse(result.output)["matches"][0];
+        assert(!compact.contains("context") && compact["preview_truncated"] == false);
+        const auto contextual = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/sample.txt","context_lines":2})"});
+        assert(contextual.ok);
+        const auto context = nlohmann::json::parse(contextual.output)["matches"][0]["context"];
+        assert(context["start_line"] == 1 && context["end_line"] == 2 && context["lines"][0]["text"] == "alpha");
+        assert(!repository_registry.execute({"repository.search", R"({"query":"needle","context_lines":6})"}).ok);
+        const std::string utf8 = std::string(255, 'x') + "\xc3\xa5";
+        const auto excerpt = common_source_context({utf8, "next"}, 1, 2);
+        assert(excerpt["lines"][0]["text"].get<std::string>().size() == 255 && excerpt["truncated"] == true);
+        assert(excerpt["end_line"] == 2 && common_source_context({}, 1, 2).is_null());
+        nlohmann::ordered_json entries = nlohmann::ordered_json::array();
+        for (int i = 0; i < 64; ++i) entries.push_back({{"path", "source.cpp"}, {"line", i + 1}, {"context", std::string(2048, 'x')}});
+        common_source_limit_context(entries);
+        assert(entries.size() == 64 && entries.dump().size() <= 48 * 1024);
+        assert(entries.back()["context_status"] == "omitted_output_budget" && entries.back()["line"] == 64);
+    }
+    result = repository_registry.execute({"repository.search", R"({"query":"needle","path":"src/missing.txt"})"});
+    assert(!result.ok && result.failure_class == common_tool_failure_class::not_found);
+    result = repository_registry.execute({"repository.read", R"({"path":"src/sample.txt","start_line":2,"end_line":2})"});
+    assert(result.ok && result.output.find("needle in a haystack") != std::string::npos &&
+           result.output.find("sha256:") != std::string::npos);
+    {
+        const auto page = nlohmann::ordered_json::parse(result.output);
+        assert(page["total_lines"] >= 2 && page["requested_start_line"] == 2);
+        assert(page["has_more"].get<bool>() == (page["total_lines"].get<size_t>() > 2));
+        const auto first_page = repository_registry.execute({"repository.read", R"({"path":"src/sample.txt","start_line":1,"end_line":1})"});
+        assert(first_page.ok);
+        const auto first = nlohmann::ordered_json::parse(first_page.output);
+        assert(first["has_more"].get<bool>() && first["next_start_line"] == 2);
+        assert(first["complete"] == true && first["range_has_more"] == false);
+        { std::ofstream large(repository / "src" / "paged.txt");
+            for (int row=1;row<=80;++row) large << row << ':' << std::string(2000,'x') << '\n'; }
+        size_t next=1, seen=0;
+        std::string fingerprint;
+        while (next<=80) {
+            const auto read=repository_registry.execute({"repository.read", nlohmann::ordered_json{
+                {"path","src/paged.txt"},{"start_line",next},{"end_line",80}}.dump()});
+            assert(read.ok && read.output.size()<=16384);
+            const auto page=nlohmann::ordered_json::parse(read.output);
+            if (fingerprint.empty()) fingerprint=page["sha256"].get<std::string>();
+            assert(page["sha256"]==fingerprint && !page["lines"].empty());
+            for (const auto & row:page["lines"]) assert(row["line"]==++seen);
+            assert(page["returned_end_line"]==seen && page["returned_start_line"]==next);
+            if (!page["has_more"].get<bool>()) {assert(page["complete"]==true);break;}
+            assert(page["range_has_more"]==true && page["complete"]==false &&
+                page["stop_reason"]=="response_byte_limit" && page["next_start_line"]==seen+1);
+            next=page["next_start_line"].get<size_t>();
+        }
+        assert(seen==80);
+        { std::ofstream huge(repository / "src" / "long-line.txt"); huge << std::string(20000,'x') << '\n'; }
+        const auto huge=repository_registry.execute({"repository.read", R"({"path":"src/long-line.txt"})"});
+        assert(!huge.ok && huge.failure_code=="tool.repository.read.line_limit");
+        std::filesystem::remove(repository / "src" / "paged.txt");
+        std::filesystem::remove(repository / "src" / "long-line.txt");
+        const auto limited = repository_registry.execute({"repository.search", R"({"query":"needle","max_results":1})"});
+        assert(limited.ok);
+        const auto search = nlohmann::ordered_json::parse(limited.output);
+        assert(!search["complete"].get<bool>() && search["stop_reason"] == "result_limit" &&
+            search["coverage"] == "bounded_text_search" && search["scanned_files"].get<size_t>() > 0);
+    }
+    {
+        { std::ofstream ignore(repository / ".gitignore"); ignore << "ignored-search.txt\n"; }
+        { std::ofstream ignored(repository / "ignored-search.txt"); ignored << "ignored-only-marker\n"; }
+        { std::ofstream metadata(repository / ".git" / "search-marker"); metadata << "metadata-only-marker\n"; }
+        const auto ignored = repository_registry.execute({"repository.search", R"({"query":"ignored-only-marker"})"});
+        assert(ignored.ok);
+        const auto ignored_search = nlohmann::ordered_json::parse(ignored.output);
+        assert(ignored_search["enumeration_method"] == "git_worktree" && ignored_search["matches"].empty());
+        const auto metadata = repository_registry.execute({"repository.search", R"({"query":"metadata-only-marker"})"});
+        assert(metadata.ok && nlohmann::ordered_json::parse(metadata.output)["matches"].empty());
+        std::filesystem::remove(repository / "ignored-search.txt");
+        std::filesystem::remove(repository / ".gitignore");
+        std::filesystem::remove(repository / ".git" / "search-marker");
+    }
+    result = repository_registry.execute({"web.search", R"({"query":"llama","limit":1})"});
+    assert(result.ok && result.output.find("https://example.com/llama") != std::string::npos);
+    result = repository_registry.execute({"web.fetch", R"({"url":"https://example.com/llama","max_bytes":4096})"});
+    assert(result.ok && result.output.find("\"status\":200") != std::string::npos && result.output.find("native tools") != std::string::npos &&
+           result.http.provider == "web.fetch" && result.http.status == 200 &&
+           result.http.response_bytes == 128 && result.http.duration_ms == 23);
+    const auto fetch_schema = nlohmann::ordered_json::parse(research_catalog.find_definition("web.fetch")->input_schema_json);
+    assert(fetch_schema["properties"]["max_bytes"]["default"] == 10 * 1024 * 1024);
+    assert(repository_registry.validate({"web.fetch", R"({"url":"https://example.com/llama","max_bytes":10485760})"}, error));
+    assert(!repository_registry.validate({"web.fetch", R"({"url":"https://example.com/llama","max_bytes":10485761})"}, error));
+    result = repository_registry.execute({"repository.read", R"({"path":"../outside.txt"})"});
+    assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
+
+    common_tool_catalog developer_catalog;
+    assert(developer_catalog.bootstrap("developer-read", bootstrap, error));
+    common_tool_registry developer_registry;
+    common_tool_adapter_result developer_adapters;
+    assert(common_register_native_tool_adapters(developer_catalog, "developer-read", repository_bindings, developer_registry, developer_adapters, error));
+    {
+        { std::ofstream file(repository / "src" / "sample.txt", std::ios::app); file << "changed\n"; }
+        { std::ofstream file(repository / "src" / "new name.txt"); file << "new text\n"; }
+        { std::ofstream file(repository / "src" / "binary.dat", std::ios::binary); const char binary[] = {'a', 0, 'b'}; file.write(binary, sizeof(binary)); }
+        auto diff = developer_registry.execute({"repository.diff", "{}"});
+        assert(diff.ok);
+        auto data = nlohmann::json::parse(diff.output);
+        assert(data["base"] == "HEAD" && !data["include_untracked"].get<bool>() &&
+            data["summary"].get<std::string>().find("changed") != std::string::npos &&
+            data["summary"].get<std::string>().find("new text") == std::string::npos);
+        diff = developer_registry.execute({"repository.diff", R"({"path":"src/new name.txt","include_untracked":true})"});
+        assert(diff.ok); data = nlohmann::json::parse(diff.output);
+        assert(data["summary"].get<std::string>().find("+new text") != std::string::npos && !data["truncated"].get<bool>());
+        diff = developer_registry.execute({"repository.diff", R"({"path":"src","include_untracked":true})"});
+        assert(diff.ok); data = nlohmann::json::parse(diff.output);
+        assert(data["summary"].get<std::string>().find("Binary or non-UTF-8") != std::string::npos && data["omitted_files"] == 1);
+        diff = developer_registry.execute({"repository.diff", R"({"path":"src","include_untracked":true,"max_bytes":16})"});
+        assert(diff.ok && nlohmann::json::parse(diff.output)["truncated"].get<bool>());
+        diff = developer_registry.execute({"repository.diff", R"({"path":"../outside"})"});
+        assert(!diff.ok && diff.failure_class == common_tool_failure_class::validation);
+        { std::ofstream file(repository / "src" / "sample.txt"); file << "alpha\nneedle in a haystack\n"; }
+        std::filesystem::remove(repository / "src" / "new name.txt");
+        std::filesystem::remove(repository / "src" / "binary.dat");
+    }
+    result = developer_registry.execute({"workspace.list", R"({"path":"src","depth":1})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+    result = developer_registry.execute({"workspace.search", R"({"query":"needle","path":"src"})"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+    result = developer_registry.execute({"workspace.read", R"({"path":"src/sample.txt","start_line":1,"end_line":1})"});
+    assert(result.ok && result.output.find("alpha") != std::string::npos);
+    { std::ofstream file(repository / "src" / "sample.txt", std::ios::app); file << "working change\n"; }
+    result = developer_registry.execute({"repository.status", "{}"});
+    assert(result.ok && result.output.find("src") != std::string::npos);
+    result = developer_registry.execute({"repository.changed_files", "{}"});
+    assert(result.ok && result.output.find("sample.txt") != std::string::npos);
+    std::filesystem::create_directories(repository / "long-status");
+    for (size_t i = 0; i < 400; ++i) {
+        std::ofstream file(repository / "long-status" / (std::to_string(i) + std::string(80, 'x')));
+        assert(file.good());
+        file << "large bounded Git status fixture\n";
+    }
+    result = developer_registry.execute({"repository.changed_files", "{}"});
+    assert(result.ok);
+    const auto large_status = nlohmann::ordered_json::parse(result.output);
+    assert(large_status["truncated"] == true && !large_status["files"].empty());
+    assert(result.output.size() <= developer_catalog.find_definition("repository.changed_files")->max_result_bytes);
+
+    std::filesystem::create_directories(repository / "datasets");
+    { std::ofstream file(repository / "datasets" / "sample.csv"); file << "name,value\nalpha,1\nbeta,2\n"; }
+    { std::ofstream file(repository / "datasets" / "duplicate-combo.csv"); file << "region,code,value\nnorth,A,1\nnorth,A,2\nnorth,B,3\n"; }
+    common_tool_profile foundation_profile;
+    foundation_profile.id = "developer-foundation";
+    foundation_profile.members = {
+        {"workspace.patch", 1, true, "{}"},
+        {"repository.snapshot", 1, true, "{}"},
+        {"repository.read", 1, true, "{}"},
+        {"diagnostics.compile", 1, true, "{}"},
+        {"dataset.list", 1, true, "{}"},
+        {"dataset.select", 1, true, "{}"},
+        {"dataset.inspect", 1, true, "{}"},
+        {"dataset.schema", 1, true, "{}"},
+        {"dataset.sample", 1, true, "{}"},
+        {"document.tables", 1, true, "{}"},
+        {"document.table", 1, true, "{}"},
+        {"dataset.validate", 1, true, "{}"},
+        {"data.query", 1, true, "{}"},
+        {"data.filter", 1, true, "{}"},
+        {"data.aggregate", 1, true, "{}"},
+        {"data.join", 1, true, "{}"},
+        {"data.transform", 1, true, "{}"},
+        {"statistics.describe", 1, true, "{}"},
+        {"statistics.outliers", 1, true, "{}"},
+        {"statistics.value_counts", 1, true, "{}"},
+        {"code.inspect", 1, true, "{}"},
+        {"code.symbols", 1, true, "{}"},
+        {"code.references", 1, true, "{}"},
+        {"code.calls", 1, true, "{}"},
+        {"code.impact", 1, true, "{}"},
+        {"diagnostics.test_failures", 1, true, "{}"},
+        {"diagnostics.symbol", 1, true, "{}"},
+        {"diagnostics.references", 1, true, "{}"},
+        {"diagnostics.call_hierarchy", 1, true, "{}"},
+        {"diagnostics.format", 1, true, "{}"},
+        {"diagnostics.include_graph", 1, true, "{}"},
+        {"diagnostics.native_crash", 1, true, "{}"},
+        {"artifact.export", 1, true, "{}"},
+        {"document.create", 1, true, "{}"},
+        {"document.open", 1, true, "{}"},
+        {"document.import", 1, true, "{}"},
+        {"document.save", 1, true, "{}"},
+        {"document.propose_patch", 1, true, "{}"},
+        {"document.apply_patch", 1, true, "{}"},
+        {"openapi.connect", 1, true, "{}"},
+        {"resource.read", 1, true, "{}"},
+    };
+    foundation_profile.allow_policy_gated_writes = true;
+    std::map<std::string, common_tool_profile> foundation_profiles;
+    foundation_profiles.emplace(foundation_profile.id, foundation_profile);
+    common_tool_catalog foundation_catalog;
+    assert(foundation_catalog.bootstrap(foundation_profile.id, bootstrap, error, {}, foundation_profiles));
+    common_tool_registry foundation_registry;
+    common_native_tool_bindings foundation_bindings = repository_bindings;
+    test_resource_store foundation_resources;
+    foundation_bindings.resource_runtime.store = &foundation_resources;
+    foundation_resources.available_uris.insert("resource://uploads/sales.xlsx");
+    foundation_resources.available_uris.insert("resource://session/long-text");
+    test_data_store foundation_data;
+    foundation_bindings.data_store = &foundation_data;
+    {
+        common_source_reference dataset_source{"dataset", foundation_data.stored_descriptor.ref.uri, "", "", 1};
+        nlohmann::ordered_json evidence = {{"sources", std::vector<common_source_reference>{dataset_source}}};
+        common_context_graph_check_sources(evidence, foundation_bindings, {"dataset.inspect"});
+        assert(evidence["sources"][0]["currentness"]["reason"] == "source_has_no_revision_or_modified_time");
+        dataset_source.id = "dataset://missing";
+        evidence = {{"sources", std::vector<common_source_reference>{dataset_source}}};
+        common_context_graph_check_sources(evidence, foundation_bindings, {"dataset.inspect"});
+        assert(evidence["sources"][0]["currentness"]["reason"] == "source_unavailable");
+        common_source_reference resource_source{"resource", "resource://session/long-text", "", "resource://session/long-text"};
+        evidence = {{"sources", std::vector<common_source_reference>{resource_source}}};
+        common_context_graph_check_sources(evidence, foundation_bindings, {"resource.inspect"});
+        assert(evidence["sources"][0]["currentness"]["status"] == "same_revision");
+    }
+    {
+        common_tool_catalog graph_catalog; common_tool_bootstrap_result graph_bootstrap;
+        assert(graph_catalog.bootstrap("graph-project", graph_bootstrap, error));
+        common_native_tool_bindings graph_bindings = repository_bindings;
+        graph_bindings.data_store = &foundation_data;
+        graph_bindings.tool_scope.namespace_id = "test"; graph_bindings.tool_scope.project_id = "project";
+        common_tool_registry graph_registry; common_tool_adapter_result graph_adapters;
+        assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, graph_registry, graph_adapters, error));
+        auto created = graph_registry.execute({"graph.link.propose", R"({"from":{"kind":"component","name":"planning"},"to":{"kind":"file","name":"selection","path":"src/selection.cpp"},"relation":"depends_on","rationale":"inspect runtime linkage"})"});
+        assert(created.ok);
+        auto item = nlohmann::json::parse(created.output);
+        assert(item["edge"]["status"] == "proposed" && item["revision"] == 1);
+        const auto edge_id = item["edge"]["id"].get<std::string>();
+        const auto from = item["edge"]["from"].get<std::string>();
+        const auto to = item["edge"]["to"].get<std::string>();
+        const auto description = graph_registry.execute({"graph.describe.propose", nlohmann::json{
+            {"id", from}, {"description", "Coordinates orchestration policies"}, {"expected_revision", 1},
+            {"source_revision", "r1"}, {"evidence_refs", {"source:planning"}}}.dump()});
+        assert(description.ok && nlohmann::json::parse(description.output)["node"]["description"]["status"] == "proposed");
+        const auto stale_description = graph_registry.execute({"graph.describe.propose", nlohmann::json{
+            {"id", from}, {"description", "stale"}, {"expected_revision", 1}}.dump()});
+        assert(!stale_description.ok && stale_description.failure_class == common_tool_failure_class::conflict);
+        const auto description_search = graph_registry.execute({"graph.find", R"({"query":"orchestration policies"})"});
+        assert(description_search.ok && nlohmann::json::parse(description_search.output)["nodes"][0]["id"] == from);
+        const auto revised_description = graph_registry.execute({"graph.describe.propose", nlohmann::json{
+            {"id", from}, {"description", "Coordinates planning policy"}, {"expected_revision", 2},
+            {"source_revision", "r2"}}.dump()});
+        assert(revised_description.ok);
+        const auto description_page = graph_registry.execute({"graph.get", nlohmann::json{{"id", from}, {"description_offset", 0}}.dump()});
+        assert(description_page.ok && nlohmann::json::parse(description_page.output)["description_page"]["total"] == 2);
+        const auto described = nlohmann::json::parse(description_page.output);
+        assert(described["node"]["description"]["text_complete"] == true);
+        assert(described["node"]["description"]["text_bytes"] == std::string("Coordinates planning policy").size());
+        assert(described["description_page"]["items"][0]["text_complete"] == true);
+        assert(described["description_page"]["items"][0]["text_bytes"] == std::string("Coordinates orchestration policies").size());
+        const auto description_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
+            "planning policy", 1800, true);
+        assert(description_context.find("Coordinates planning policy") != std::string::npos);
+        const auto additional = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",from}}}, {"to", {{"id",to}}}, {"relation","depends_on"},
+            {"rationale","another source"}, {"evidence_refs", {"source:two"}}, {"source_revision","r2"}}.dump()});
+        assert(additional.ok && nlohmann::json::parse(additional.output)["edge"]["id"] == edge_id &&
+            nlohmann::json::parse(additional.output)["edge"]["assertions"].size() == 2 &&
+            nlohmann::json::parse(additional.output)["edge"]["version"] == 2);
+        const auto graph_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
+            "change planning selection", 1800, true);
+        assert(!graph_context.empty());
+        const auto projected_graph = nlohmann::json::parse(graph_context);
+        assert(projected_graph["nodes"].size() == 2 && projected_graph["edges"].size() == 1 &&
+            projected_graph["edges"][0]["status"] == "proposed");
+        assert(common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
+            "change planning selection", 0, true).empty());
+        auto found = graph_registry.execute({"graph.find", R"({"query":"planning"})"});
+        assert(found.ok && nlohmann::json::parse(found.output)["nodes"].size() == 1);
+        auto contextual = graph_registry.execute({"graph.find", R"({"query":"Change the planning selection code"})"});
+        assert(contextual.ok && nlohmann::json::parse(contextual.output)["nodes"].size() == 2);
+        auto expanded = graph_registry.execute({"graph.expand", nlohmann::json{{"id",from},{"depth",1}}.dump()});
+        assert(expanded.ok && nlohmann::json::parse(expanded.output)["edges"].size() == 1);
+        auto withdrawn = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",2},{"rationale","recheck"}}.dump()});
+        assert(withdrawn.ok && nlohmann::json::parse(withdrawn.output)["edge"]["status"] == "retraction_proposed" &&
+            nlohmann::json::parse(withdrawn.output)["edge"]["rationale"] == "inspect runtime linkage" &&
+            nlohmann::json::parse(withdrawn.output)["edge"]["retraction_rationale"] == "recheck");
+        const auto contested_context = common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
+            "change planning selection", 1800, true);
+        assert(nlohmann::json::parse(contested_context)["edges"][0]["status"] == "retraction_proposed");
+        const auto active = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",from}}}, {"to", {{"id",to}}}, {"relation","references"}, {"rationale","inspect code"}}.dump()});
+        assert(active.ok);
+        const auto ranked = nlohmann::json::parse(common_context_graph_prompt_projection(foundation_data,
+            graph_bindings.tool_scope, "change planning selection", 1800, true));
+        assert(ranked["edges"].size() == 2 && ranked["edges"][0]["status"] == "proposed" &&
+            ranked["edges"][1]["status"] == "retraction_proposed");
+        auto conflict = graph_registry.execute({"graph.retract.propose", nlohmann::json{{"id",edge_id},{"expected_version",1},{"rationale","stale"}}.dump()});
+        assert(!conflict.ok && conflict.failure_class == common_tool_failure_class::conflict);
+        auto missing_ref = graph_registry.execute({"graph.link.propose", R"({"from":{"kind":"actor","name":"Alice"},"to":{"id":"unused"},"relation":"associated_with","rationale":"check"})"});
+        assert(!missing_ref.ok);
+        const auto domain_link = [&](const std::string & ref) {
+            return graph_registry.execute({"graph.link.propose", nlohmann::json{
+                {"from", {{"kind","actor"},{"name","Alice"},{"source_ref",ref}}},
+                {"to", {{"id",from}}}, {"relation","associated_with"}, {"rationale","investigate this link"}}.dump()});
+        };
+        const auto actor_a = domain_link("case:a/entity:alice");
+        const auto actor_b = domain_link("case:b/entity:alice");
+        assert(actor_a.ok && actor_b.ok);
+        for (int i = 0; i < 4; ++i) assert(domain_link("case:extra-" + std::to_string(i)).ok);
+        const auto first_five = graph_registry.execute({"graph.find", R"({"query":"Alice","limit":5})"});
+        assert(first_five.ok && nlohmann::json::parse(first_five.output)["nodes"].size() == 5 &&
+            nlohmann::json::parse(first_five.output)["truncated"] == true);
+        const auto all_alice = graph_registry.execute({"graph.find", R"({"query":"Alice"})"});
+        assert(all_alice.ok && nlohmann::json::parse(all_alice.output)["nodes"].size() == 6 &&
+            nlohmann::json::parse(all_alice.output)["truncated"] == false);
+        assert(!graph_registry.execute({"graph.find", R"({"query":"Alice","limit":0})"}).ok);
+        const auto id_a = nlohmann::json::parse(actor_a.output)["edge"]["from"].get<std::string>();
+        const auto id_b = nlohmann::json::parse(actor_b.output)["edge"]["from"].get<std::string>();
+        assert(id_a != id_b);
+        const auto actor = graph_registry.execute({"graph.get", nlohmann::json{{"id",id_a}}.dump()});
+        assert(actor.ok && nlohmann::json::parse(actor.output)["node"]["source_ref"] == "case:a/entity:alice");
+        const auto authorship = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",id_a}}}, {"to", {{"kind","resource"},{"name","Paper"},{"source_ref","paper:one"}}},
+            {"relation","authored"}, {"rationale","source credits Alice"}, {"evidence_refs", {"source:one"}}}.dump()});
+        assert(authorship.ok);
+        const auto custom_relation = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",id_a}}}, {"to", {{"id",id_b}}}, {"relation","är släkt med"}, {"rationale","user assertion"}}.dump()});
+        assert(custom_relation.ok);
+        const auto exact_custom = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"relation","är släkt med"}}.dump()});
+        assert(exact_custom.ok && nlohmann::json::parse(exact_custom.output)["edges"].size() == 1);
+        const auto paper = nlohmann::json::parse(authorship.output)["edge"]["to"].get<std::string>();
+        const auto symbol_link = [&](int line, const char * revision) {
+            return graph_registry.execute({"graph.link.propose", nlohmann::json{
+                {"from", {{"kind","symbol"},{"name","ns::f(int)"},{"path","src/f.cpp"},
+                    {"line",line},{"source_revision",revision},{"symbol_key","clang:usr:f-int"}}},
+                {"to", {{"id",paper}}}, {"relation","references"}, {"rationale","inspect"}}.dump()});
+        };
+        const auto symbol_first = symbol_link(10, "r1");
+        const auto symbol_second = symbol_link(20, "r2");
+        assert(symbol_first.ok && symbol_second.ok);
+        const auto symbol_id = nlohmann::json::parse(symbol_first.output)["edge"]["from"].get<std::string>();
+        assert(nlohmann::json::parse(symbol_second.output)["edge"]["from"] == symbol_id);
+        const auto symbol_read = graph_registry.execute({"graph.get", nlohmann::json{{"id",symbol_id}}.dump()});
+        assert(symbol_read.ok && nlohmann::json::parse(symbol_read.output)["node"]["observations"].size() == 2 &&
+            nlohmann::json::parse(symbol_read.output)["node"]["line"] == 20);
+        const auto symbol_page = graph_registry.execute({"graph.get", nlohmann::json{{"id",symbol_id},{"observation_offset",0}}.dump()});
+        assert(symbol_page.ok && nlohmann::json::parse(symbol_page.output)["observation_page"]["total"] == 2 &&
+            nlohmann::json::parse(symbol_page.output)["observation_page"]["items"][0]["line"] == 10);
+        assert(!graph_registry.execute({"graph.get", nlohmann::json{{"id",symbol_id},{"observation_offset",-1}}.dump()}).ok);
+        auto ambiguous = nlohmann::json{{"from", {{"kind","symbol"},{"name","f"},{"path","src/f.cpp"},
+            {"line",10},{"source_revision","r1"}}}, {"to", {{"id",paper}}}, {"relation","references"}, {"rationale","inspect"}};
+        const auto ambiguous_first = graph_registry.execute({"graph.link.propose", ambiguous.dump()});
+        ambiguous["from"]["line"] = 20; ambiguous["from"]["source_revision"] = "r2";
+        const auto ambiguous_second = graph_registry.execute({"graph.link.propose", ambiguous.dump()});
+        assert(ambiguous_first.ok && ambiguous_second.ok &&
+            nlohmann::json::parse(ambiguous_first.output)["edge"]["from"] != nlohmann::json::parse(ambiguous_second.output)["edge"]["from"]);
+        const auto matching = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"relation","authored"},{"to_kind","resource"}}.dump()});
+        assert(matching.ok && nlohmann::json::parse(matching.output)["edges"].size() == 1 &&
+            nlohmann::json::parse(matching.output)["nodes"].size() == 2);
+        const auto incoming = graph_registry.execute({"graph.search", nlohmann::json{{"to",paper},{"relation","authored"}}.dump()});
+        assert(incoming.ok && nlohmann::json::parse(incoming.output)["edges"].size() == 1);
+        const auto both = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"to",paper},{"relation","authored"}}.dump()});
+        assert(both.ok && nlohmann::json::parse(both.output)["edges"].size() == 1);
+        const auto mismatched = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_b},{"to",paper},{"relation","authored"}}.dump()});
+        assert(mismatched.ok && nlohmann::json::parse(mismatched.output)["edges"].empty());
+        const auto wrong_kind = graph_registry.execute({"graph.search", nlohmann::json{{"to",paper},{"from_kind","file"}}.dump()});
+        assert(wrong_kind.ok && nlohmann::json::parse(wrong_kind.output)["edges"].empty());
+        const auto withdrawn_only = graph_registry.execute({"graph.search", nlohmann::json{{"from",from},{"status","retraction_proposed"}}.dump()});
+        assert(withdrawn_only.ok && nlohmann::json::parse(withdrawn_only.output)["edges"].size() == 1);
+        const auto empty_relation = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",id_a}}}, {"to", {{"id",paper}}}, {"relation",""}, {"rationale","invalid"}}.dump()});
+        assert(!empty_relation.ok);
+        const auto long_relation = graph_registry.execute({"graph.link.propose", nlohmann::json{
+            {"from", {{"id",id_a}}}, {"to", {{"id",paper}}}, {"relation",std::string(65, 'a')}, {"rationale","invalid"}}.dump()});
+        assert(!long_relation.ok);
+        assert(!graph_registry.execute({"graph.search", "{}"}).ok);
+        const auto limit = graph_registry.execute({"graph.search", nlohmann::json{{"from",id_a},{"limit",1}}.dump()});
+        assert(limit.ok && nlohmann::json::parse(limit.output)["truncated"] == true);
+        const auto git_source = common_repository_observation(repository.string(), "src/sample.txt").get<common_source_reference>();
+        const auto graph_revision = foundation_data.graphs["test:project"].revision;
+        const auto anchored_node = graph_registry.execute({"graph.describe.propose", nlohmann::ordered_json{
+            {"node", {{"kind", "component"}, {"name", "planning"}, {"sources", std::vector<common_source_reference>{git_source}}}},
+            {"description", "Coordinates planning policy"}, {"source_revision", "r2"}, {"expected_revision", graph_revision}}.dump()});
+        assert(anchored_node.ok);
+        assert(nlohmann::json::parse(anchored_node.output)["node"]["sources"].size() == 1);
+        assert(foundation_data.graphs["test:project"].nodes.front().descriptions.size() == 2);
+        const nlohmann::ordered_json evidence = std::vector<common_source_reference>{git_source, {"document", "document:one", "section:a", "2", 100}};
+        auto proposal = nlohmann::ordered_json{{"from", {{"id", from}}}, {"to", {{"id", to}}},
+            {"relation", "supported_by"}, {"rationale", "multiple sources"}, {"sources", evidence}};
+        const auto sourced = graph_registry.execute({"graph.link.propose", proposal.dump()});
+        assert(sourced.ok);
+        auto sourced_edge = nlohmann::ordered_json::parse(sourced.output)["edge"];
+        assert(sourced_edge["assertions"][0]["sources"] == evidence);
+        proposal["sources"][0]["revision"] = std::string(40, '0');
+        const auto later_source = graph_registry.execute({"graph.link.propose", proposal.dump()});
+        assert(later_source.ok && nlohmann::json::parse(later_source.output)["edge"]["assertions"].size() == 2);
+        const auto source_page = graph_registry.execute({"graph.get", nlohmann::json{
+            {"id", sourced_edge["id"]}, {"assertion_offset", 0}}.dump()});
+        assert(source_page.ok && nlohmann::ordered_json::parse(source_page.output)["assertion_page"]["items"][0]["sources"] == evidence);
+        proposal["sources"][0]["observed_at"] = -1;
+        assert(!graph_registry.execute({"graph.link.propose", proposal.dump()}).ok);
+        graph_bindings.tool_scope.project_id = "other-project";
+        common_tool_registry other_graph; common_tool_adapter_result other_graph_adapters;
+        assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, other_graph, other_graph_adapters, error));
+        assert(!other_graph.execute({"graph.get", nlohmann::json{{"id",from}}.dump()}).ok);
+        const auto other_search = other_graph.execute({"graph.search", nlohmann::json{{"relation","authored"}}.dump()});
+        assert(other_search.ok && nlohmann::json::parse(other_search.output)["edges"].empty());
+        graph_bindings.tool_scope.project_id.clear(); common_tool_registry no_project; common_tool_adapter_result no_project_adapters;
+        assert(common_register_native_tool_adapters(graph_catalog, "graph-project", graph_bindings, no_project, no_project_adapters, error));
+        assert(!no_project.execute({"graph.find", R"({"query":"planning"})"}).ok);
+    }
+
+    foundation_bindings.dataset_from_resource = [](const std::string & resource, const std::string & operation) {
+        if (resource != "resource://uploads/sales.csv" || operation != "inspect") {
+            return common_tool_execution_result::failure(
+                "tool.dataset.resource_unavailable", common_tool_failure_class::not_found,
+                false, "CSV resource is unavailable.", "unexpected resource materialization request");
+        }
+        return common_tool_execution_result::success(R"({"dataset":"dataset://analysis/csv-sales"})");
+    };
+    foundation_bindings.openapi_connect = [](const std::string & input) {
+        const auto arguments = nlohmann::json::parse(input, nullptr, false);
+        if (!arguments.is_object() || arguments.value("spec_resource", std::string{}).empty()) {
+            return common_tool_execution_result::failure(
+                "tool.openapi.connect.invalid_arguments", common_tool_failure_class::validation,
+                false, "OpenAPI connection requires a fetched spec resource.", "missing spec_resource");
+        }
+        return common_tool_execution_result::success(
+            R"({"provider_id":"dynamic-test","operation_count":1,"available_next_turn":true})");
+    };
+    foundation_bindings.document_tables = [](const std::string & input) {
+        return common_tool_execution_result::success(
+            std::string(R"({"resource":"agent-resource://document/report.json","tables":[{"index":0,"name":"Population","node_id":"document-node://table/0","dataset":"dataset://report/table/0"}]})") +
+            "\n" + input);
+    };
+    foundation_bindings.document_table = [](const std::string & input) {
+        if (input.find("Budget summary") == std::string::npos &&
+                input.find("table_index") == std::string::npos) {
+            return common_tool_execution_result::failure(
+                "tool.document.table.not_found", common_tool_failure_class::not_found,
+                false, "Document table was not found.", "document table was not found");
+        }
+        return common_tool_execution_result::success(
+            R"({"table_index":1,"name":"Budget summary","dataset":"dataset://report/table/1"})");
+    };
+    foundation_bindings.resource_runtime.namespace_id = "test";
+    foundation_bindings.resource_runtime.session_id = "session-1";
+    foundation_bindings.resource_runtime.turn_id = "turn-1";
+    common_agent_artifact_profile report_profile;
+    report_profile.id = "research";
+    report_profile.revision = "v1";
+    report_profile.title = "Research report";
+    report_profile.purpose = "Grounded findings and explicit gaps.";
+    report_profile.sections = {{"findings", "Findings", "Supported findings."},
+        {"limitations", "Limitations", "Unresolved gaps."}};
+    std::string report_profile_json;
+    {
+        nlohmann::ordered_json value = {{"id", report_profile.id}, {"revision", report_profile.revision},
+            {"title", report_profile.title}, {"purpose", report_profile.purpose}, {"sections", nlohmann::ordered_json::array()}};
+        for (const auto & section : report_profile.sections) value["sections"].push_back({
+            {"id", section.id}, {"title", section.title}, {"purpose", section.purpose}});
+        report_profile_json = value.dump();
+    }
+    common_plan_state report_plan;
+    report_plan.id = "report-plan";
+    report_plan.namespace_id = "test";
+    report_plan.session_id = "session-1";
+    report_plan.scope = common_plan_scope::session;
+    report_plan.goal = "Compose a source-grounded report";
+    report_plan.success_criteria = "Preserve gaps and provenance.";
+    report_plan.version = 1;
+    common_plan_workflow_definition report_workflow;
+    report_workflow.workflow_ref = "workflow://artifact/research-report";
+    report_workflow.workflow_revision = "v1";
+    common_plan_workflow_transition report_transition;
+    report_transition.id = "compose-findings";
+    report_transition.kind = common_plan_workflow_transition_kind::artifact_compose;
+    report_transition.artifact_profile_ref = report_profile.id;
+    report_transition.artifact_profile_revision = report_profile.revision;
+    report_transition.artifact_profile_json = report_profile_json;
+    report_transition.artifact_section_id = "findings";
+    report_workflow.transitions.push_back(report_transition);
+    report_plan.workflow_definition = report_workflow;
+    common_agent_artifact_snapshot empty_report_snapshot;
+    assert(common_agent_artifact_snapshot_from_plan(report_plan, report_profile, empty_report_snapshot, error));
+    std::string empty_report_snapshot_json;
+    assert(common_agent_artifact_snapshot_to_json(empty_report_snapshot, empty_report_snapshot_json, error));
+    report_plan.observations.push_back({"artifact-snapshot:report-plan", "artifact_snapshot",
+        empty_report_snapshot_json, 1.0f, {}, {}, 1, {}});
+    report_plan.observations.push_back({"artifact-section:findings", "artifact_section",
+        nlohmann::json{{"id","findings"},{"title","Findings"},{"snapshot_fingerprint",empty_report_snapshot.fingerprint},{"blocks",nlohmann::json::array({{{"id","findings:1"},{"kind","observation"},{"text","No source evidence was supplied."},{"validation","gap"},{"validation_note","empty snapshot"}}})}}.dump(),
+        1.0f, {}, {}, 2, {}});
+    report_plan.observations.push_back({"artifact-section:limitations", "artifact_section",
+        nlohmann::json{{"id","limitations"},{"title","Limitations"},{"snapshot_fingerprint",empty_report_snapshot.fingerprint},{"blocks",nlohmann::json::array({{{"id","limitations:1"},{"kind","observation"},{"text","Coverage is incomplete."},{"validation","gap"},{"validation_note","empty snapshot"}}})}}.dump(),
+        1.0f, {}, {}, 3, {}});
+    assert(plans.create(report_plan, error));
+    foundation_bindings.plan_store = &plans;
+    std::string active_report_plan_id = report_plan.id;
+    foundation_bindings.plan_id = &active_report_plan_id;
+    bool docx_processing_called = false;
+    agent_resource_processing_binding_request docx_processing_request;
+    foundation_bindings.resource_processing_provider_factory = [&](const auto &) {
+        return std::make_shared<test_docx_processing_provider>(foundation_resources,
+            docx_processing_called, docx_processing_request);
+    };
+    foundation_bindings.diagnostics_symbol = [](const std::string &) {
+        return common_tool_execution_result::success(
+            R"({"backend":"clangd","semantic":true,"definitions":[],"count":0,"truncated":false})");
+    };
+    bool malformed_code_calls = false;
+    foundation_bindings.code_calls = [&malformed_code_calls](const std::string &) {
+        if (malformed_code_calls) return common_tool_execution_result::success(
+            R"({"backend":"clangd","callers":[{"from":{"path":"src/caller.cpp","line":"4","column":2},"to":{"path":"src/sample.txt","line":1,"column":1}}],"callees":[],"count":1,"truncated":false})");
+        return common_tool_execution_result::success(
+            R"({"backend":"clangd","semantic":true,"callers":[{"from":{"path":"src/caller.cpp","line":4,"column":2},"to":{"path":"src/sample.txt","line":1,"column":1}}],"callees":[{"from":{"path":"src/sample.txt","line":1,"column":1},"to":{"path":"src/child.cpp","line":9,"column":3}}],"count":2,"truncated":false})");
+    };
+    assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id, foundation_bindings, foundation_registry, adapters, error));
+    result = foundation_registry.execute({"repository.snapshot", "{}"});
+    assert(result.ok);
+    const auto source_manifest_result = nlohmann::json::parse(result.output);
+    assert(source_manifest_result["schema"] == "code-source-snapshot.v1" &&
+        source_manifest_result["complete"] == true &&
+        source_manifest_result["source_revision"].get<std::string>().size() == 40 &&
+        source_manifest_result["resource_uri"].get<std::string>().rfind("resource://", 0) == 0);
+    const auto manifest_uri = source_manifest_result["resource_uri"].get<std::string>();
+    const auto manifest_payload = nlohmann::json::parse(foundation_resources.contents.at(manifest_uri));
+    assert(manifest_payload.at("files").is_array());
+    const auto sample_snapshot = std::find_if(manifest_payload.at("files").begin(), manifest_payload.at("files").end(),
+        [](const auto & file) { return file.value("path", std::string{}) == "src/sample.txt"; });
+    assert(sample_snapshot != manifest_payload.at("files").end());
+    const auto sample_snapshot_uri = sample_snapshot->at("resource_uri").get<std::string>();
+    assert(foundation_resources.contents.at(sample_snapshot_uri).find("needle") != std::string::npos);
+    {
+        const auto operation_root = std::filesystem::temp_directory_path() / "llama-agent-source-snapshot-smoke";
+        std::error_code ignored;
+        std::filesystem::remove_all(operation_root, ignored);
+        common_agent_workspace_manager workspace_manager({operation_root.string(), {}, "ephemeral", "persistent"});
+        struct evidence_runtime final : common_agent_sandbox_runtime {
+            common_agent_sandbox_request last_request;
+            common_agent_sandbox_result next_result;
+            bool transport_ok = true;
+            bool execute(const common_agent_sandbox_request & request, common_agent_sandbox_result & out,
+                    std::string & runtime_error) override {
+                last_request = request;
+                out = next_result;
+                runtime_error.clear();
+                return transport_ok;
+            }
+        } sandbox_runtime;
+        sandbox_runtime.next_result.status = common_agent_sandbox_status::completed;
+        sandbox_runtime.next_result.exit_code = 0;
+        sandbox_runtime.next_result.stdout_excerpt = "retained build output";
+        common_runtime_resource_ref build_artifact;
+        build_artifact.uri = "resource://test/build-artifact";
+        build_artifact.name = "build-artifact";
+        sandbox_runtime.next_result.artifacts.push_back(build_artifact);
+        common_agent_sandbox_policy policy;
+        policy.execution_class = "developer-build";
+        policy.limits.timeout_ms = 120000;
+        policy.limits.cpu_count = 1;
+        policy.limits.max_output_bytes = 65536;
+        policy.filesystem = common_agent_sandbox_filesystem_scope::workspace_write;
+        common_agent_sandbox_tool_helper sandbox_helper(sandbox_runtime, policy);
+        sandbox_helper.set_workspace_manager(&workspace_manager);
+        sandbox_helper.set_resource_store(&foundation_resources);
+        common_agent_workspace_context workspace_context;
+        workspace_context.workspace_id = "snapshot-test";
+        workspace_context.namespace_id = "local";
+        workspace_context.session_id = "session-snapshot";
+        workspace_context.turn_id = "turn-snapshot";
+        common_agent_sandbox_request sandbox_request;
+        sandbox_request.operation_id = "build-snapshot-test";
+        sandbox_request.logical_target = "test-target";
+        sandbox_request.execution_class = "developer-build";
+        sandbox_request.command.program = "agent.development.build";
+        sandbox_request.command.arguments = {"test-target"};
+        sandbox_request.limits.timeout_ms = 120000;
+        sandbox_request.limits.cpu_count = 1;
+        sandbox_request.limits.max_output_bytes = 65536;
+        sandbox_request.network = common_agent_sandbox_network_scope::none;
+        sandbox_request.filesystem = common_agent_sandbox_filesystem_scope::workspace_write;
+        common_runtime_resource_ref snapshot_ref = foundation_resources.resources.at(manifest_uri);
+        sandbox_request.workspace.input_resources.push_back(snapshot_ref);
+        const auto execution = sandbox_helper.run_for_workspace(workspace_context, "build-snapshot-test", sandbox_request);
+        assert(execution.ok && execution.resource_refs.size() == 3);
+        assert(execution.resource_refs.front().uri == build_artifact.uri);
+        std::string normalized_execution;
+        assert(common_schema_normalize_and_validate_object(execution.output,
+            foundation_catalog.find_definition("development.build")->result_schema_json, normalized_execution, error));
+        assert(sandbox_runtime.last_request.workspace.source_snapshot_uri == manifest_uri);
+        const auto staged_sample = std::filesystem::path(sandbox_runtime.last_request.workspace.source_path) / "src" / "sample.txt";
+        std::ifstream staged_file(staged_sample, std::ios::binary);
+        const std::string staged_bytes((std::istreambuf_iterator<char>(staged_file)), std::istreambuf_iterator<char>());
+        assert(staged_bytes == foundation_resources.contents.at(sample_snapshot_uri));
+        const auto execution_output = nlohmann::json::parse(execution.output);
+        assert(execution_output.at("source_snapshot").at("resource_uri") == manifest_uri);
+        assert(execution_output.at("receipt_uri").get<std::string>().rfind("resource://", 0) == 0);
+        const auto receipt_uri = execution_output.at("receipt_uri").get<std::string>();
+        const auto receipt = nlohmann::json::parse(foundation_resources.contents.at(receipt_uri));
+        assert(receipt.at("schema") == "development-execution-receipt.v1" &&
+            receipt.at("status") == "completed" &&
+            receipt.at("source_snapshot").at("resource_uri") == manifest_uri &&
+            receipt.at("output_resources").size() == 1);
+        // Shared parser rejects malformed contracts without JSON conversion exceptions.
+        common_agent_source_snapshot parsed_snapshot;
+        assert(common_agent_parse_source_snapshot(manifest_payload.dump(), parsed_snapshot, error));
+        for (const auto & field : {"schema", "complete", "files", "file_count", "total_bytes"}) {
+            auto malformed = manifest_payload;
+            malformed[field] = nlohmann::json::object();
+            assert(!common_agent_parse_source_snapshot(malformed.dump(), parsed_snapshot, error));
+        }
+        auto malformed_mode = manifest_payload;
+        malformed_mode["files"][0]["permissions"] = uint64_t(1) << 40;
+        assert(!common_agent_parse_source_snapshot(malformed_mode.dump(), parsed_snapshot, error));
+
+        // An unrelated snapshot in generic inputs cannot satisfy an explicit reference.
+        auto wrong_snapshot_request = sandbox_request;
+        wrong_snapshot_request.source_snapshot_ref = sample_snapshot_uri;
+        const auto wrong_snapshot = sandbox_helper.run_for_workspace(
+            workspace_context, "wrong-explicit-snapshot", wrong_snapshot_request);
+        assert(!wrong_snapshot.ok);
+
+        // Successful execution must not hide output storage failure or lose artifacts.
+        foundation_resources.fail_mime = "text/plain";
+        const auto output_failure = sandbox_helper.run_for_workspace(
+            workspace_context, "failed-output-retention", sandbox_request);
+        foundation_resources.fail_mime.clear();
+        assert(!output_failure.ok && output_failure.failure_code == "sandbox.output_retention_failed");
+        assert(output_failure.resource_refs.front().uri == build_artifact.uri);
+        const auto failure_receipt = nlohmann::json::parse(
+            foundation_resources.contents.at(output_failure.resource_refs.back().uri));
+        assert(!failure_receipt.at("output_retention_errors").empty());
+        foundation_resources.fail_mime = "application/vnd.llama-agent.development-receipt+json";
+        const auto receipt_failure = sandbox_helper.run_for_workspace(
+            workspace_context, "failed-receipt-retention", sandbox_request);
+        foundation_resources.fail_mime.clear();
+        assert(!receipt_failure.ok && receipt_failure.failure_code == "sandbox.receipt_retention_failed");
+        assert(receipt_failure.resource_refs.size() == 2 &&
+            receipt_failure.resource_refs.front().uri == build_artifact.uri);
+        sandbox_runtime.next_result.status = common_agent_sandbox_status::timed_out;
+        const auto timed_out = sandbox_helper.run_for_workspace(
+            workspace_context, "timed-out-with-artifact", sandbox_request);
+        assert(!timed_out.ok && timed_out.failure_code == "sandbox.timed_out" &&
+            timed_out.resource_refs.front().uri == build_artifact.uri);
+        sandbox_runtime.transport_ok = false;
+        const auto transport_timeout = sandbox_helper.run_for_workspace(
+            workspace_context, "transport-timeout-with-artifact", sandbox_request);
+        assert(!transport_timeout.ok && transport_timeout.failure_code == "sandbox.timed_out");
+        sandbox_runtime.transport_ok = true;
+        sandbox_runtime.next_result.status = common_agent_sandbox_status::completed;
+        auto policy_request = sandbox_request;
+        policy_request.limits.timeout_ms = policy.limits.timeout_ms + 1;
+        const auto policy_failure = sandbox_helper.run_for_workspace(
+            workspace_context, "policy-failure", policy_request);
+        assert(!policy_failure.ok && policy_failure.failure_code == "sandbox.policy_rejected");
+
+        agent_resource_put_request unsafe_snapshot_request;
+        unsafe_snapshot_request.name = "unsafe-code-snapshot.json";
+        unsafe_snapshot_request.mime_type = "application/vnd.llama-agent.code-source-snapshot+json";
+        unsafe_snapshot_request.text = nlohmann::json{{"schema", "code-source-snapshot.v1"}, {"complete", true},
+            {"files", nlohmann::json::array({{{"path", "../escape.txt"}, {"resource_uri", sample_snapshot_uri},
+                {"bytes", foundation_resources.contents.at(sample_snapshot_uri).size()},
+                {"sha256", sample_snapshot->at("sha256")}, {"permissions", 420}}})}}.dump();
+        agent_resource_descriptor unsafe_snapshot_descriptor;
+        assert(foundation_resources.put_text(unsafe_snapshot_request, unsafe_snapshot_descriptor, error));
+        auto unsafe_request = sandbox_request;
+        unsafe_request.operation_id = "unsafe-snapshot-test";
+        unsafe_request.workspace.input_resources = {unsafe_snapshot_descriptor};
+        const auto rejected_snapshot = sandbox_helper.run_for_workspace(workspace_context, "unsafe-snapshot-test", unsafe_request);
+        assert(!rejected_snapshot.ok && rejected_snapshot.failure_code == "sandbox.resource_materialization_failed");
+        assert(!std::filesystem::exists(operation_root / "snapshot-test" / "unsafe-snapshot-test" / "escape.txt"));
+        // Ordinary inputs must not replace files in an already staged snapshot.
+        auto colliding_request = unsafe_snapshot_request;
+        colliding_request.name = "root-input.txt";
+        colliding_request.mime_type = "text/plain";
+        colliding_request.text = "unrelated replacement";
+        agent_resource_descriptor colliding_descriptor;
+        assert(foundation_resources.put_text(colliding_request, colliding_descriptor, error));
+        auto root_snapshot = manifest_payload;
+        auto root_file = *sample_snapshot;
+        root_file["path"] = "root-input.txt";
+        root_snapshot["files"] = nlohmann::json::array({root_file});
+        root_snapshot["file_count"] = size_t(1);
+        root_snapshot["total_bytes"] = root_file["bytes"];
+        agent_resource_put_request root_snapshot_request;
+        root_snapshot_request.name = "root-snapshot.json";
+        root_snapshot_request.mime_type = "application/vnd.llama-agent.code-source-snapshot+json";
+        root_snapshot_request.text = root_snapshot.dump();
+        agent_resource_descriptor root_snapshot_descriptor;
+        assert(foundation_resources.put_text(root_snapshot_request, root_snapshot_descriptor, error));
+        auto collision_execution_request = sandbox_request;
+        collision_execution_request.workspace.input_resources = {root_snapshot_descriptor, colliding_descriptor};
+        const auto collision = sandbox_helper.run_for_workspace(
+            workspace_context, "source-input-collision", collision_execution_request);
+        assert(!collision.ok && collision.failure_code == "sandbox.resource_materialization_failed");
+
+        // A retained resource prefix cannot masquerade as a complete source file.
+        auto prefix_file = *sample_snapshot;
+        const auto prefix = foundation_resources.contents.at(sample_snapshot_uri).substr(0, 2);
+        prefix_file["bytes"] = prefix.size();
+        prefix_file["sha256"] = "sha256:" + hash_sha256_hex(prefix.data(), prefix.size());
+        agent_resource_put_request prefix_request;
+        prefix_request.name = "truncated-source-snapshot.json";
+        prefix_request.mime_type = "application/vnd.llama-agent.code-source-snapshot+json";
+        prefix_request.text = nlohmann::json{{"schema", "code-source-snapshot.v1"}, {"complete", true},
+            {"files", nlohmann::json::array({prefix_file})}}.dump();
+        agent_resource_descriptor prefix_descriptor;
+        assert(foundation_resources.put_text(prefix_request, prefix_descriptor, error));
+        auto prefix_execution_request = sandbox_request;
+        prefix_execution_request.workspace.input_resources = {prefix_descriptor};
+        const auto prefix_result = sandbox_helper.run_for_workspace(
+            workspace_context, "truncated-source-resource", prefix_execution_request);
+        assert(!prefix_result.ok && prefix_result.failure_code == "sandbox.resource_materialization_failed");
+        std::filesystem::remove_all(operation_root, ignored);
+    }
+    {
+        // A deleted tracked file is intentional absence, not an unreadable source.
+        std::filesystem::remove(repository / "src" / "sample.txt");
+        const auto deleted_snapshot = foundation_registry.execute({"repository.snapshot", "{}"});
+        assert(deleted_snapshot.ok);
+        const auto deleted_result = nlohmann::json::parse(deleted_snapshot.output);
+        assert(deleted_result.at("complete") == true);
+        const auto deleted_manifest = nlohmann::json::parse(
+            foundation_resources.contents.at(deleted_result.at("resource_uri").get<std::string>()));
+        assert(deleted_manifest.at("deleted_paths") == nlohmann::json::array({"src/sample.txt"}));
+        { std::ofstream restored(repository / "src" / "sample.txt", std::ios::binary); restored << foundation_resources.contents.at(sample_snapshot_uri); }
+#ifndef _WIN32
+        std::filesystem::create_symlink("sample.txt", repository / "src" / "alias.txt");
+        const auto symlink_snapshot = foundation_registry.execute({"repository.snapshot", "{}"});
+        assert(symlink_snapshot.ok && nlohmann::json::parse(symlink_snapshot.output).at("complete") == false);
+        std::filesystem::remove(repository / "src" / "alias.txt");
+#endif
+    }
+    {
+        result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Working notes"},{"operation_id","create-document-1"}}.dump()});
+        assert(result.ok);
+        const auto created=nlohmann::json::parse(result.output);
+        assert(created.value("revision",uint64_t(0))==1&&created.value("title",std::string{})=="Working notes"&&!created.value("reused",true));
+        const auto created_uri=created.value("document_uri",std::string{});
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",created_uri}}.dump()});
+        assert(result.ok);
+        auto opened=nlohmann::json::parse(result.output);
+        assert(opened.value("kind",std::string{})=="document"&&opened.value("title",std::string{})=="Working notes");
+        const auto empty_markdown=opened.value("markdown",std::string{});
+        auto renamed=nlohmann::json{{"document_uri",created_uri},{"expected_revision",1},{"title","Research draft"},
+            {"markdown",empty_markdown},{"operation_id","create-document-rename-1"}};
+        result=foundation_registry.execute({"document.save",renamed.dump()});
+        assert(result.ok&&nlohmann::json::parse(result.output).value("revision",uint64_t(0))==2);
+        const auto renamed_uri=nlohmann::json::parse(result.output).value("document_uri",std::string{});
+        {
+            const common_source_reference document_source{"document", created["document_id"].get<std::string>(), "section:a", "1", 100};
+            nlohmann::ordered_json evidence = {{"sources", std::vector<common_source_reference>{document_source}}};
+            common_context_graph_check_sources(evidence, foundation_bindings, {"document.open"});
+            assert(evidence["sources"][0]["currentness"]["status"] == "newer_source");
+            assert(evidence["sources"][0]["currentness"]["revisions_behind"] == 1);
+            auto current_document = document_source; current_document.revision = "2";
+            evidence = {{"sources", std::vector<common_source_reference>{current_document}}};
+            common_context_graph_check_sources(evidence, foundation_bindings, {"document.open"});
+            assert(evidence["sources"][0]["currentness"]["status"] == "same_revision");
+            evidence = {{"sources", std::vector<common_source_reference>{current_document}}};
+            common_context_graph_check_sources(evidence, foundation_bindings, {});
+            assert(evidence["sources"][0]["currentness"]["reason"] == "source_read_unavailable");
+            current_document.id = "missing-document";
+            evidence = {{"sources", std::vector<common_source_reference>{current_document}}};
+            common_context_graph_check_sources(evidence, foundation_bindings, {"document.open"});
+            assert(evidence["sources"][0]["currentness"]["status"] == "unknown");
+        }
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",renamed_uri}}.dump()});
+        assert(result.ok);
+        opened=nlohmann::json::parse(result.output);
+        assert(opened.value("title",std::string{})=="Research draft"&&opened.value("markdown",std::string{})==empty_markdown);
+        result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Working notes"},{"operation_id","create-document-1"}}.dump()});
+        assert(result.ok);
+        const auto retried=nlohmann::json::parse(result.output);
+        assert(retried.value("reused",false)&&retried.value("document_uri",std::string{})==created_uri&&retried.value("revision",uint64_t(0))==1);
+        result=foundation_registry.execute({"document.create",nlohmann::json{{"title","Different title"},{"operation_id","create-document-1"}}.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        const auto collision_create=foundation_registry.execute({"document.create",nlohmann::json{{"title","Collision test"},{"operation_id","create-collision-document"}}.dump()});
+        assert(collision_create.ok);
+        const auto collision_uri=nlohmann::json::parse(collision_create.output).value("document_uri",std::string{});
+        const auto collision_save=nlohmann::json{{"document_uri",collision_uri},{"expected_revision",1},{"title","First\nSecond"},
+            {"markdown","Body"},{"operation_id","title-boundary-test"}};
+        result=foundation_registry.execute({"document.save",collision_save.dump()});
+        assert(result.ok);
+        auto different_input=collision_save;different_input["title"]="First";different_input["markdown"]="Second\nBody";
+        result=foundation_registry.execute({"document.save",different_input.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        auto unframed_input=collision_save;unframed_input.erase("title");
+        unframed_input["markdown"]=nlohmann::json{{"title","First\nSecond"},{"markdown","Body"}}.dump();
+        result=foundation_registry.execute({"document.save",unframed_input.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        bool legacy_operation_found=false;
+        for(auto & resource:foundation_resources.contents){
+            auto operation_record=nlohmann::json::parse(resource.second,nullptr,false);
+            if(!operation_record.is_object()||operation_record.value("operation_id",std::string{})!="title-boundary-test"||!operation_record.contains("input_fingerprint"))continue;
+            const std::string legacy_input="First\nSecond\nBody";
+            operation_record.erase("input_format");
+            operation_record["input_fingerprint"]="sha256:"+hash_sha256_hex(legacy_input.data(),legacy_input.size());
+            resource.second=operation_record.dump();legacy_operation_found=true;
+        }
+        assert(legacy_operation_found);
+        result=foundation_registry.execute({"document.save",collision_save.dump()});
+        assert(result.ok);
+        result=foundation_registry.execute({"document.save",different_input.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        unframed_input["markdown"]="First\nSecond\nBody";
+        result=foundation_registry.execute({"document.save",unframed_input.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+    }
+    {
+        agent_resource_descriptor uploaded;
+        uploaded.uri = "resource://session/notes.txt";
+        uploaded.name = "notes.txt";
+        uploaded.mime_type = "text/plain";
+        uploaded.scope = common_runtime_resource_scope::session;
+        uploaded.size_bytes = 35;
+        foundation_resources.resources[uploaded.uri] = uploaded;
+        foundation_resources.available_uris.insert(uploaded.uri);
+        foundation_resources.contents[uploaded.uri] = "# literal heading\n\n*literal text*\n";
+        result = foundation_registry.execute({"document.import", nlohmann::json{{"source_uri",uploaded.uri},{"operation_id","import-notes-1"}}.dump()});
+        assert(result.ok);
+        const auto imported = nlohmann::json::parse(result.output);
+        assert(imported.value("revision",uint64_t(0)) == 1 && imported.value("original_uri",std::string{}) == uploaded.uri);
+        const auto imported_uri = imported.value("document_uri",std::string{});
+        result = foundation_registry.execute({"document.import", nlohmann::json{{"source_uri",uploaded.uri},{"operation_id","import-notes-1"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output).value("reused",false));
+        agent_resource_descriptor other_upload=uploaded;
+        other_upload.uri="resource://session/other.txt";other_upload.name="other.txt";
+        foundation_resources.resources[other_upload.uri]=other_upload;foundation_resources.available_uris.insert(other_upload.uri);
+        foundation_resources.contents[other_upload.uri]="Different source.";
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",other_upload.uri},{"operation_id","import-notes-1"}}.dump()});
+        assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+        result = foundation_registry.execute({"document.open", nlohmann::json{{"document_uri",imported_uri}}.dump()});
+        assert(result.ok);
+        const auto opened = nlohmann::json::parse(result.output);
+        assert(opened.value("kind",std::string{}) == "document");
+        assert(opened.value("markdown",std::string{}).find("```text") != std::string::npos);
+        assert(opened.value("markdown",std::string{}).find("# literal heading") != std::string::npos);
+        auto retry = foundation_registry.execute({"document.import", nlohmann::json{{"source_uri",uploaded.uri},{"operation_id","import-notes-2"}}.dump()});
+        assert(retry.ok && nlohmann::json::parse(retry.output).value("reused",false));
+        auto edited = opened.value("markdown",std::string{}) + "\nA user paragraph.\n";
+        result = foundation_registry.execute({"document.save",nlohmann::json{{"document_uri",imported_uri},{"expected_revision",1},
+            {"markdown",edited},{"operation_id","import-notes-save-1"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output).value("revision",uint64_t(0)) == 2);
+        const auto saved_uri = nlohmann::json::parse(result.output).value("document_uri",std::string{});
+        result = foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_uri},{"format","markdown"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output).value("document_kind",std::string{}) == "document");
+        const auto generic_export = nlohmann::json::parse(result.output);
+        const auto generic_markdown = foundation_resources.contents.at(generic_export.value("markdown_resource",std::string{}));
+        assert(generic_markdown.find("Coverage incomplete") == std::string::npos);
+        assert(generic_markdown.find("A user paragraph.") != std::string::npos);
+        result=foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_uri},{"format","docx"}}.dump()});
+        assert(result.ok);
+        const auto docx_export=nlohmann::json::parse(result.output);
+        assert(foundation_resources.contents.at(docx_export["resource"].get<std::string>())=="test-docx-bytes");
+        const auto before_docx_retry=foundation_resources.requests.size();
+        result=foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_uri},{"format","docx"}}.dump()});
+        assert(result.ok && foundation_resources.requests.size()==before_docx_retry);
+
+        auto install_upload = [&](const std::string & name, const std::string & content) {
+            auto descriptor=uploaded;descriptor.uri="resource://session/"+name;descriptor.name=name;
+            descriptor.size_bytes=content.size();
+            foundation_resources.resources[descriptor.uri]=descriptor;
+            foundation_resources.contents[descriptor.uri]=content;
+            return descriptor.uri;
+        };
+        const auto markdown_source=install_upload("actual.md","# A heading\n\nA paragraph.");
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",markdown_source},{"operation_id","import-markdown"}}.dump()});
+        assert(result.ok);
+        auto markdown_document_uri=nlohmann::json::parse(result.output)["document_uri"];
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",markdown_document_uri}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["markdown"].get<std::string>().find("# A heading")==0);
+        const auto empty_source=install_upload("empty.md","");
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",empty_source},{"operation_id","import-empty"}}.dump()});
+        assert(result.ok);
+        const auto empty_document_uri=nlohmann::json::parse(result.output)["document_uri"];
+        result=foundation_registry.execute({"document.propose_patch",nlohmann::json{{"document_uri",empty_document_uri},{"expected_revision",1},
+            {"operation","append"},{"text","First paragraph.\n\nSecond paragraph."},{"summary","Add two paragraphs."}}.dump()});
+        assert(result.ok);
+        const auto empty_proposal=nlohmann::json::parse(result.output)["proposal_uri"];
+        result=foundation_registry.execute({"document.apply_patch",nlohmann::json{{"document_uri",empty_document_uri},{"expected_revision",1},
+            {"proposal_uri",empty_proposal},{"operation_id","append-to-empty"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["revision"]==2);
+        const auto empty_text=install_upload("empty.txt","");
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",empty_text},{"operation_id","import-empty-txt"}}.dump()});
+        assert(result.ok);
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",nlohmann::json::parse(result.output)["document_uri"]}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["markdown"]=="");
+        for(const auto * failed_mime : {"application/vnd.llama-agent.document-operation+json","application/vnd.llama-agent.document-head+json"}) {
+            const std::string suffix=std::string(failed_mime).find("head")!=std::string::npos ? "head" : "operation";
+            const auto source_uri=install_upload("interrupt-"+suffix+".md","Restorable document.");
+            const auto args=nlohmann::json{{"source_uri",source_uri},{"operation_id","import-interrupt-"+suffix}};
+            foundation_resources.fail_mime=failed_mime;
+            result=foundation_registry.execute({"document.import",args.dump()});assert(!result.ok);
+            foundation_resources.fail_mime.clear();
+            result=foundation_registry.execute({"document.import",args.dump()});assert(result.ok);
+            const auto recovered=nlohmann::json::parse(result.output);
+            bool published=false;std::string head_uri;
+            for(const auto & entry : foundation_resources.resources)
+                if(entry.second.metadata.processing_cache_key=="document-head:"+recovered["document_id"].get<std::string>()){published=true;head_uri=entry.first;}
+            assert(published);
+            const auto head_contents=foundation_resources.contents.at(head_uri);
+            foundation_resources.contents[head_uri]="{}";
+            result=foundation_registry.execute({"document.import",args.dump()});
+            assert(!result.ok && foundation_resources.contents.at(head_uri)=="{}");
+            foundation_resources.contents[head_uri]=head_contents;
+        }
+
+        agent_resource_descriptor uploaded_docx;
+        uploaded_docx.uri = "resource://session/word.docx";
+        uploaded_docx.name = "word.docx";
+        uploaded_docx.mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        uploaded_docx.scope = common_runtime_resource_scope::session;
+        uploaded_docx.size_bytes = 20;
+        foundation_resources.resources[uploaded_docx.uri] = uploaded_docx;
+        foundation_resources.available_uris.insert(uploaded_docx.uri);
+        foundation_resources.contents[uploaded_docx.uri] = "docx bytes";
+        result = foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",uploaded_docx.uri},{"operation_id","import-docx-1"}}.dump()});
+        assert(result.ok && docx_processing_request.target_representation == "markdown");
+        const auto imported_docx = nlohmann::json::parse(result.output);
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",uploaded_docx.uri},{"operation_id","import-docx-1"}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["limitations"]==imported_docx["limitations"] && !imported_docx["limitations"].empty());
+        result = foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",imported_docx.value("document_uri",std::string{})}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output).value("markdown",std::string{}).find("| Name | Value |") != std::string::npos);
+        uploaded_docx.uri="resource://session/empty.docx";uploaded_docx.name="empty.docx";
+        foundation_resources.resources[uploaded_docx.uri]=uploaded_docx;
+        foundation_resources.contents[uploaded_docx.uri]="empty docx bytes";
+        result=foundation_registry.execute({"document.import",nlohmann::json{{"source_uri",uploaded_docx.uri},{"operation_id","import-empty-docx"}}.dump()});
+        assert(result.ok);
+        const auto empty_docx_uri=nlohmann::json::parse(result.output)["document_uri"];
+        result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",empty_docx_uri}}.dump()});
+        assert(result.ok && nlohmann::json::parse(result.output)["markdown"]=="");
+    }
+    result = foundation_registry.execute({"openapi.connect", R"({"spec_resource":"resource://session/openapi"})"});
+    assert(result.ok && result.output.find("dynamic-test") != std::string::npos &&
+           result.output.find("available_next_turn") != std::string::npos);
+    result = foundation_registry.execute({"resource.read", R"({"uri":"resource://session/long-text","representation":"text"})"});
+    assert(result.ok && result.resource_refs.size() == 1);
+    assert(result.resource_refs.front().uri == "resource://session/long-text");
+    assert(result.resource_refs.front().size_bytes == 16000);
+    agent_resource_descriptor paged;
+    paged.uri = "resource://session/paged-text";
+    paged.mime_type = "text/plain";
+    const std::string paged_text = std::string(8191, 'x') + "\xc3\xa5" + std::string(12000, 'y');
+    paged.size_bytes = paged_text.size();
+    foundation_resources.resources[paged.uri] = paged;
+    foundation_resources.contents[paged.uri] = paged_text;
+    result = foundation_registry.execute({"resource.read", nlohmann::json{{"uri", paged.uri}, {"max_bytes", 10485760}}.dump()});
+    assert(result.ok);
+    const auto first_page = nlohmann::json::parse(result.output);
+    assert(first_page["range"]["bytes_read"] == 8191 && first_page["range"]["has_more"] == true);
+    assert(first_page["range"]["next_offset"] == 8191);
+    auto page = first_page;
+    std::string assembled = page["content"].get<std::string>();
+    while (page["range"]["has_more"].get<bool>()) {
+        result = foundation_registry.execute({"resource.read", nlohmann::json{{"uri", paged.uri},
+            {"offset", page["range"]["next_offset"]}, {"max_bytes", page["range"]["remaining_bytes"]}}.dump()});
+        assert(result.ok);
+        page = nlohmann::json::parse(result.output);
+        assembled += page["content"].get<std::string>();
+    }
+    assert(assembled == paged_text && page["range"]["resource_complete"] == true);
+    const auto before_patch = foundation_registry.execute({"repository.read", R"({"path":"src/sample.txt"})"});
+    assert(before_patch.ok);
+    const auto expected_hash = nlohmann::json::parse(before_patch.output).at("sha256").get<std::string>();
+    result = foundation_registry.execute({"workspace.patch", nlohmann::json{
+        {"path", "src/sample.txt"}, {"expected_hash", expected_hash}, {"source_snapshot_ref", manifest_uri},
+        {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "patched"}}})}}.dump()});
+    assert(result.ok);
+    const auto patch_receipt = nlohmann::json::parse(result.output);
+    assert(patch_receipt.contains("content_hash") && patch_receipt["content_hash"] == patch_receipt["after_sha256"] &&
+        patch_receipt["content_hash"].get<std::string>().rfind("sha256:", 0) == 0 &&
+        patch_receipt["receipt_uri"].get<std::string>().rfind("resource://", 0) == 0 &&
+        result.resource_refs.size() == 1);
+    result = foundation_registry.execute({"workspace.patch", nlohmann::json{
+        {"path", "src/sample.txt"}, {"expected_hash", patch_receipt.at("after_sha256")},
+        {"source_snapshot_ref", manifest_uri},
+        {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "stale snapshot"}}})}}.dump()});
+    assert(!result.ok && result.failure_code == "tool.workspace.patch.snapshot_stale");
+    result = foundation_registry.execute({"workspace.patch", nlohmann::json{
+        {"path", "src/sample.txt"}, {"expected_hash", expected_hash},
+        {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 1}, {"end_line", 1}, {"content", "stale"}}})}}.dump()});
+    assert(!result.ok && result.failure_code == "tool.workspace.patch.conflict");
+    const auto crlf_path = repository / "src" / "crlf.txt";
+    { std::ofstream file(crlf_path, std::ios::binary); file << "first\r\nsecond\r\n"; }
+    const auto crlf_read = foundation_registry.execute({"repository.read", R"({"path":"src/crlf.txt"})"});
+    assert(crlf_read.ok);
+    const auto crlf_hash = nlohmann::json::parse(crlf_read.output).at("sha256").get<std::string>();
+    result = foundation_registry.execute({"workspace.patch", nlohmann::json{
+        {"path", "src/crlf.txt"}, {"expected_hash", crlf_hash},
+        {"operations", nlohmann::json::array({{{"type", "replace_range"}, {"start_line", 2}, {"end_line", 2}, {"content", "updated"}}})}}.dump()});
+    assert(result.ok && nlohmann::json::parse(result.output)["status"] == "applied");
+    std::ifstream crlf_file(crlf_path, std::ios::binary);
+    const std::string crlf_result((std::istreambuf_iterator<char>(crlf_file)), std::istreambuf_iterator<char>());
+    assert(crlf_result == "first\r\nupdated\r\n");
+    crlf_file.close();
+    result = foundation_registry.execute({"code.inspect", "{}"});
+    assert(result.ok && result.output.find("code-capabilities.v1") != std::string::npos &&
+           result.output.find("semantic") != std::string::npos && result.output.find("bounded_semantic") != std::string::npos);
+    result = foundation_registry.execute({"code.symbols", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
+    assert(result.ok && result.output.find("code-analysis.v1") != std::string::npos &&
+           result.output.find("text-fallback") != std::string::npos);
+    result = foundation_registry.execute({"code.calls", R"({"symbol":"needle","definition_path":"src/sample.txt","definition_line":1})"});
+    assert(result.ok && result.output.find("semantic_call_hierarchy") != std::string::npos &&
+           result.output.find("one-hop") != std::string::npos &&
+           result.output.find("\"visualization\"") != std::string::npos &&
+           result.output.find("\"schema_version\":1") != std::string::npos &&
+           result.output.find("static_call") != std::string::npos &&
+           result.output.find("src/caller.cpp#L4") != std::string::npos);
+    malformed_code_calls = true;
+    result = foundation_registry.execute({"code.calls", R"({"symbol":"needle","definition_path":"src/sample.txt","definition_line":1})"});
+    assert(result.ok && result.output.find("\"complete\":false") != std::string::npos &&
+        result.output.find("lacked usable source locations") != std::string::npos);
+    malformed_code_calls = false;
+    result = foundation_registry.execute({"code.calls", R"({"symbol":"needle","definition_path":"src/sample.txt","definition_line":1,"max_results":"many"})"});
+    assert(!result.ok && result.failure_class == common_tool_failure_class::validation);
+    {
+        common_native_tool_bindings impact_bindings = repository_bindings;
+        std::vector<nlohmann::json> neighborhood_requests;
+        std::string override_page;
+        bool provider_timed_out = false;
+        bool fail_service = false;
+        bool invalid_service = false;
+        impact_bindings.code_calls = [&](const std::string & input) {
+            if (provider_timed_out) return common_tool_execution_result::failure(
+                "tool.diagnostics.call_hierarchy.timeout", common_tool_failure_class::timeout,
+                true, "Semantic provider timed out.");
+            const auto request = nlohmann::json::parse(input);
+            neighborhood_requests.push_back(request);
+            const auto path = request.value("path_hint", request.value("definition_path", std::string{}));
+            const auto line = request.value("line", request.value("definition_line", 0));
+            if (fail_service && path == "src/service.cpp") return common_tool_execution_result::failure(
+                "tool.diagnostics.call_hierarchy.timeout", common_tool_failure_class::timeout,
+                true, "Semantic provider timed out.", "private provider diagnostic");
+            if (invalid_service && path == "src/service.cpp") return common_tool_execution_result::success(R"({"count":0})");
+            if (!override_page.empty() && path == "src/entry.cpp")
+                return common_tool_execution_result::success(override_page);
+            if (path == "src/entry.cpp" && line == 1) return common_tool_execution_result::success(
+                R"({"backend":"clangd","semantic":true,"callers":[],"callees":[{"from":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"},"to":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"call_sites":[{"path":"src/entry.cpp","line":3,"column":4,"end_line":3,"end_column":11}]}],"count":1,"complete":true,"truncated":false})");
+            if (path == "src/service.cpp" && line == 10) return common_tool_execution_result::success(
+                R"({"backend":"clangd","semantic":true,"callers":[{"from":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"},"to":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"call_sites":[{"path":"src/entry.cpp","line":5,"column":4,"end_line":5,"end_column":11}]}],"callees":[{"from":{"path":"src/service.cpp","line":10,"column":2,"name":"service"},"to":{"path":"src/store.cpp","line":20,"column":1,"name":"store"},"call_sites":[{"path":"src/service.cpp","line":12,"column":5,"end_line":12,"end_column":10}]}],"count":2,"complete":true,"truncated":false})");
+            return common_tool_execution_result::success(
+                R"({"backend":"clangd","semantic":true,"callers":[],"callees":[],"count":0,"complete":true,"truncated":false})");
+        };
+        common_tool_registry impact_registry;
+        bool impact_installed = false;
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.impact"),
+            impact_bindings, impact_registry, impact_installed, error) && impact_installed);
+        auto impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":3})"});
+        assert(impact_result.ok);
+        const auto impact_json = nlohmann::json::parse(impact_result.output);
+        assert(impact_json["operation"] == "bounded_call_neighborhood" &&
+            impact_json["relationship_count"] == 2 && impact_json["complete"] == true &&
+            impact_json["visualization"]["nodes"].size() == 3);
+        assert(neighborhood_requests.size() == 3 && impact_json["provider_requests"] == 3 &&
+            impact_json["column_encoding"] == "utf-16");
+        assert(impact_result.output.find("src/entry.cpp#L3C4-L3C11") != std::string::npos &&
+            impact_result.output.find("src/entry.cpp#L5C4-L5C11") != std::string::npos);
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":1})"});
+        assert(impact_result.ok);
+        const auto depth_limited = nlohmann::json::parse(impact_result.output);
+        assert(depth_limited["truncated"] == true && depth_limited["complete"] == false);
+        assert(depth_limited["continuations"].size() == 1 &&
+            depth_limited["continuations"][0]["arguments"]["symbol"] == "service" &&
+            depth_limited["continuations"][0]["reason"] == "depth_limit");
+        const auto continuation_result = impact_registry.execute({"code.impact", depth_limited["continuations"][0]["arguments"].dump()});
+        assert(continuation_result.ok && nlohmann::json::parse(continuation_result.output)["relationship_count"] == 2);
+        fail_service = true;
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":2})"});
+        assert(impact_result.ok);
+        const auto partial = nlohmann::json::parse(impact_result.output);
+        assert(partial["complete"] == false && partial["relationship_count"] == 1 &&
+            partial["provider_failures"].size() == 1 && partial["provider_failures"][0]["class"] == "timeout" &&
+            partial["continuations"][0]["reason"] == "provider_failure" &&
+            impact_result.output.find("private provider diagnostic") == std::string::npos);
+        fail_service = false;
+        invalid_service = true;
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":2})"});
+        assert(impact_result.ok);
+        const auto invalid_partial = nlohmann::json::parse(impact_result.output);
+        assert(invalid_partial["complete"] == false && invalid_partial["relationship_count"] == 1 &&
+            invalid_partial["provider_failures"].size() == 1 &&
+            invalid_partial["continuations"][0]["reason"] == "invalid_provider_response");
+        invalid_service = false;
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_nodes":2})"});
+        assert(impact_result.ok);
+        const auto node_limited = nlohmann::json::parse(impact_result.output);
+        assert(node_limited["truncated"] == true && node_limited["visualization"]["nodes"].size() == 2);
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"direction":"sideways"})"});
+        assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::validation);
+        for (const auto * invalid : {
+                R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"definition_path":"src/entry.cpp"})",
+                R"({"symbol":"entry","path_hint":"","line":1})",
+                R"({"symbol":"entry","definition_path":"src/entry.cpp","definition_line":1,"column":1})"}) {
+            impact_result = impact_registry.execute({"code.impact", invalid});
+            assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::validation);
+        }
+        auto provider_page = nlohmann::json::parse(R"({"callers":[],"callees":[{"from":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"},"to":{"path":"src/entry.cpp","line":1,"column":1,"name":"entry"}}],"count":1,"complete":true,"truncated":false})");
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_nodes":2})"});
+        assert(impact_result.ok);
+        auto reviewed = nlohmann::json::parse(impact_result.output);
+        assert(reviewed["complete"] == true && reviewed["provider_requests"] == 1 &&
+            reviewed["visualization"]["nodes"].size() == 1);
+        provider_page["callees"][0]["to"] = {{"path", "src/other.cpp"}, {"line", 2}, {"column", 1}, {"name", 42}};
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1})"});
+        assert(impact_result.ok);
+        reviewed = nlohmann::json::parse(impact_result.output);
+        assert(reviewed["complete"] == false && reviewed["provider_requests"] == 1);
+        provider_page["callees"][0]["to"] = {{"path", std::string(250, 'a')}, {"line", 2}, {"column", 1}, {"name", "other"}};
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_depth":3})"});
+        assert(impact_result.ok);
+        reviewed = nlohmann::json::parse(impact_result.output);
+        assert(reviewed["complete"] == reviewed["visualization"]["complete"] && reviewed["complete"] == false &&
+            reviewed["truncated"] == reviewed["visualization"]["truncated"] &&
+            reviewed["limitations"] == reviewed["visualization"]["limitations"]);
+        provider_page["callees"][0]["to"] = {{"path", "src/other.cpp"}, {"line", 2}, {"column", 1}, {"name", "other"}};
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1,"max_nodes":2,"max_edges":1})"});
+        assert(impact_result.ok);
+        reviewed = nlohmann::json::parse(impact_result.output);
+        assert(reviewed["complete"] == true && reviewed["truncated"] == false && reviewed["provider_requests"] == 2);
+        provider_page["semantic"] = false;
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1})"});
+        assert(!impact_result.ok);
+        provider_page.erase("semantic");
+        provider_page["padding"] = std::string(65536, 'x');
+        override_page = provider_page.dump();
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1})"});
+        assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::execution);
+        provider_timed_out = true;
+        impact_result = impact_registry.execute({"code.impact", R"({"symbol":"entry","path_hint":"src/entry.cpp","line":1})"});
+        assert(!impact_result.ok && impact_result.failure_class == common_tool_failure_class::timeout &&
+            impact_result.retryable && impact_result.failure_code == "tool.code.call_hierarchy.timeout");
+    }
+    result = foundation_registry.execute({"code.references", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
+    assert(result.ok && result.output.find("\"operation\":\"references\"") != std::string::npos &&
+           result.output.find("\"items\"") != std::string::npos);
+    {
+        const auto compact = nlohmann::json::parse(result.output);
+        assert(!compact["items"][0].contains("context"));
+        const auto contextual = foundation_registry.execute({"code.references", R"({"symbol":"needle","path_hint":"src/sample.txt","include_context":true})"});
+        assert(contextual.ok);
+        const auto item = nlohmann::json::parse(contextual.output)["items"][0];
+        assert(item["context_status"] == "available" && !item["context"].is_null());
+        assert(item["enclosing_function"].is_null() && item["enclosing_function_status"] == "unavailable_text_fallback");
+        assert(!foundation_registry.execute({"code.references", R"({"symbol":"needle","include_context":1})"}).ok);
+    }
+    {
+        common_native_tool_bindings code_bindings = repository_bindings;
+        std::string provider_output = R"({"definitions":[],"count":0,"complete":false,"truncated":false,"limitations":["Provider index is incomplete."]})";
+        code_bindings.code_symbols = [&provider_output](const std::string &) {
+            return common_tool_execution_result::success(provider_output);
+        };
+        code_bindings.code_calls = [&provider_output](const std::string &) {
+            return common_tool_execution_result::success(provider_output);
+        };
+        common_tool_registry code_registry;
+        bool installed = false;
+        const auto compile_db = repository / "compile_commands.json";
+        { std::ofstream file(compile_db); file << nlohmann::json::array({
+            {{"directory", repository.string()}, {"file", "src/sample.txt"}},
+            {{"directory", repository.string()}, {"file", "src/sample.txt"}},
+            {{"bad", true}}}).dump(); }
+        code_bindings.code_compile_commands = compile_db.string();
+        code_bindings.code_status = []() { return common_tool_execution_result::success(R"({"session":"initialized","index_activity":"active","observation_may_be_stale":true})"); };
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.inspect"),
+            code_bindings, code_registry, installed, error) && installed);
+        bool refreshed = false;
+        code_bindings.code_refresh = [&refreshed]() {
+            refreshed = true;
+            return common_tool_execution_result::success(R"({"refreshed":true,"index_coverage":"unknown"})");
+        };
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.refresh"),
+            code_bindings, code_registry, installed, error) && installed);
+        const auto refresh_result = code_registry.execute({"code.refresh", "{}"});
+        assert(refresh_result.ok && refreshed && refresh_result.output.find("index_coverage") != std::string::npos);
+        const auto refresh_invalid = code_registry.execute({"code.refresh", R"({"root":"/tmp"})"});
+        assert(!refresh_invalid.ok && refresh_invalid.failure_class == common_tool_failure_class::validation);
+        const auto inspection = code_registry.execute({"code.inspect", R"({"path":"src/sample.txt"})"});
+        assert(inspection.ok);
+        const auto info = nlohmann::json::parse(inspection.output);
+        assert(info["compilation_database_unique_sources"] == 1 && info["compilation_database_invalid_entries"] == true &&
+            info["source_in_database"] == true && info["provider_status"]["index_activity"] == "active" && info["index_coverage"] == "unknown");
+        assert(info["source"]["type"] == "git" && info["source"]["status"] == "observed");
+        assert(info["source"].contains("id") && info["source"].contains("revision") && info["source"].contains("local_changes"));
+        assert(info["revision_unchanged_during_query"] == true);
+        std::filesystem::remove(compile_db);
+        common_tool_registry missing_db_registry;
+        code_bindings.code_status = {};
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.inspect"),
+            code_bindings, missing_db_registry, installed, error) && installed);
+        const auto missing_db = missing_db_registry.execute({"code.inspect", R"({"path":"src/sample.txt"})"});
+        assert(missing_db.ok);
+        const auto missing_info = nlohmann::json::parse(missing_db.output);
+        assert(missing_info["compilation_database_status"] == "unavailable" &&
+            missing_info["compilation_database_unique_sources"].is_null() && missing_info["provider_status"].is_null());
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.symbols"),
+            code_bindings, code_registry, installed, error) && installed);
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.calls"),
+            code_bindings, code_registry, installed, error) && installed);
+        auto incomplete = code_registry.execute({"code.symbols", R"({"symbol":"needle"})"});
+        assert(incomplete.ok);
+        auto coverage = nlohmann::json::parse(incomplete.output);
+        assert(!coverage["complete"].get<bool>() && !coverage["truncated"].get<bool>() &&
+            incomplete.output.find("Provider index is incomplete") != std::string::npos);
+        provider_output = R"({"count":0})";
+        auto missing = code_registry.execute({"code.symbols", R"({"symbol":"needle"})"});
+        assert(!missing.ok && missing.failure_code == "tool.code.invalid_provider_result");
+        missing = code_registry.execute({"code.calls", R"({"symbol":"needle","path_hint":"src/sample.txt","line":1})"});
+        assert(!missing.ok && missing.failure_code == "tool.code.invalid_provider_result");
+        provider_output = R"({"callers":[],"callees":[],"count":0,"complete":false,"truncated":false,"limitations":["Provider index is incomplete."]})";
+        incomplete = code_registry.execute({"code.calls", R"({"symbol":"needle","path_hint":"src/sample.txt","line":1})"});
+        assert(incomplete.ok);
+        coverage = nlohmann::json::parse(incomplete.output);
+        assert(!coverage["complete"].get<bool>() && !coverage["truncated"].get<bool>());
+    }
+    result = foundation_registry.execute({"diagnostics.compile", R"({"output":"src/sample.cpp:7:3: error: missing symbol\n"})"});
+    assert(result.ok && result.output.find("missing symbol") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"PASS one\nFAILED two: assertion\n"})"});
+    assert(result.ok && result.output.find("assertion") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.symbol", R"({"symbol":"needle","path_hint":"src/sample.txt"})"});
+    assert(result.ok && result.output.find("text-fallback") != std::string::npos && result.output.find("sample.txt") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.references", R"({"symbol":"needle","definition_path":"src"})"});
+    assert(result.ok && result.output.find("\"references\"") != std::string::npos && result.output.find("sample.txt") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.call_hierarchy", R"({"symbol":"needle"})"});
+    assert(!result.ok && result.failure_code == "tool.diagnostics.call_hierarchy.unavailable");
+    result = foundation_registry.execute({"diagnostics.native_crash", R"({"executable":"bin/agent","dump":"artifacts/core"})"});
+    assert(!result.ok && result.failure_code == "tool.diagnostics.native_crash.backend_unavailable");
+    result = foundation_registry.execute({"diagnostics.test_failures", R"({"result":"FAILED src/a.cpp:42 assertion expected 1\nFAILED src/b.cpp:42 assertion expected 2\nctest: timeout after 120000ms\n"})"});
+    assert(result.ok && result.output.find("assertion_failure") != std::string::npos && result.output.find("timeout") != std::string::npos && result.output.find("\"count\":2") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.format", R"({"output":"src/sample.cpp would reformat\n"})"});
+    assert(result.ok && result.output.find("formatted") != std::string::npos && result.output.find("sample.cpp") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.format", R"({"output":"src/sample.cpp:1:10: warning: formatting differs\n"})"});
+    assert(result.ok && result.output.find("\"formatted\":false") != std::string::npos && result.output.find("formatting differs") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":"a.h -> b.h\nb.h -> c.h\n"})"});
+    assert(result.ok && result.output.find("a.h") != std::string::npos && result.output.find("c.h") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":". a.h\n.. b.h\n... c.h\n. d.h\n"})"});
+    assert(result.ok && result.output.find("\"from\":\"a.h\",\"to\":\"b.h\"") != std::string::npos && result.output.find("\"from\":\"b.h\",\"to\":\"c.h\"") != std::string::npos);
+    result = foundation_registry.execute({"diagnostics.include_graph", R"({"output":"source.o: source.cpp header.h\n"})"});
+    assert(!result.ok && result.failure_code == "tool.diagnostics.include_graph.unrecognized_output");
+    result = foundation_registry.execute({"dataset.list", "{}"});
+    assert(result.ok && result.output.find("Sales") != std::string::npos);
+    result = foundation_registry.execute({"dataset.inspect", R"({"path":"datasets/sample.csv"})"});
+    assert(result.ok && result.output.find("csv") != std::string::npos);
+    result = foundation_registry.execute({"dataset.schema", R"({"path":"datasets/sample.csv"})"});
+    assert(result.ok && result.output.find("name") != std::string::npos && result.output.find("value") != std::string::npos);
+    result = foundation_registry.execute({"dataset.sample", R"({"path":"datasets/sample.csv","rows":1})"});
+    assert(result.ok && result.output.find("alpha") != std::string::npos);
+    result = foundation_registry.execute({"dataset.inspect", R"({"dataset":"dataset://analysis/sales"})"});
+    assert(result.ok && result.output.find("resource://uploads/sales.xlsx") != std::string::npos &&
+           result.output.find("Sales") != std::string::npos);
+    result = foundation_registry.execute({"dataset.schema", R"({"dataset":"dataset://analysis/sales"})"});
+    assert(result.ok && result.output.find("decimal") != std::string::npos && result.output.find("value") != std::string::npos);
+    result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","rows":1})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find("dataset://analysis/sales") != std::string::npos);
+    result = foundation_registry.execute({"dataset.sample", R"({"resource":"resource://uploads/sales.csv","rows":1})"});
+    assert(result.ok && foundation_data.last_operation == "data.query");
+    const auto resource_sample_query = nlohmann::json::parse(foundation_data.last_request);
+    assert(resource_sample_query["dataset"] == "dataset://analysis/csv-sales" &&
+        resource_sample_query["limit"] == 1 && resource_sample_query["max_result_rows"] == 1);
+    result = foundation_registry.execute({"document.tables", R"({"resource":"agent-resource://document/report.json"})"});
+    assert(result.ok && result.output.find("Population") != std::string::npos);
+    result = foundation_registry.execute({"document.table", R"({"resource":"agent-resource://document/report.json","table":"Budget summary"})"});
+    assert(result.ok && result.output.find("dataset://report/table/1") != std::string::npos);
+    result = foundation_registry.execute({"document.table", R"({"resource":"agent-resource://document/report.json","table":"Budget summary","table_index":1})"});
+    assert(!result.ok && result.failure_code == "tool.document.table.invalid_locator");
+
+    // First-class dataset tools do not require a repository root. The host
+    // data-store binding is sufficient; legacy path tools remain unavailable.
+    common_native_tool_bindings dataset_only_bindings;
+    test_data_store dataset_only_data;
+    dataset_only_bindings.data_store = &dataset_only_data;
+    common_tool_registry dataset_only_registry;
+    common_tool_adapter_result dataset_only_adapters;
+    assert(common_register_native_tool_adapters(foundation_catalog, foundation_profile.id,
+        dataset_only_bindings, dataset_only_registry, dataset_only_adapters, error));
+    result = dataset_only_registry.execute({"dataset.inspect", R"({"dataset":"dataset://analysis/sales"})"});
+    assert(result.ok && result.output.find("resource://uploads/sales.xlsx") != std::string::npos);
+    result = dataset_only_registry.execute({"dataset.schema", R"({"dataset":"dataset://analysis/sales"})"});
+    assert(result.ok && result.output.find("decimal") != std::string::npos);
+    result = dataset_only_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","rows":1})"});
+    assert(result.ok && dataset_only_data.last_operation == "data.query");
+    result = dataset_only_registry.execute({"dataset.list", "{}"});
+    assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos);
+    result = dataset_only_registry.execute({"dataset.select", R"({"name":"sales"})"});
+    assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos);
+    result = dataset_only_registry.execute({"dataset.select", R"({"name":"missing"})"});
+    assert(!result.ok && result.failure_code == "tool.dataset.select.not_found" &&
+           result.raw_diagnostic.find("choose one of: Sales (dataset://analysis/sales)") != std::string::npos);
+    result = foundation_registry.execute({"dataset.inspect", R"({"dataset":"dataset://missing"})"});
+    assert(!result.ok && result.failure_code == "tool.dataset.unavailable");
+    const std::string valid_rules = R"([{"type":"not_null","column":"name"},{"type":"unique","column":"name"}])";
+    result = foundation_registry.execute({"dataset.validate", std::string(R"({"path":"datasets/sample.csv","rules":)") + valid_rules + "}"});
+    assert(result.ok && result.output.find("\"valid\":true") != std::string::npos &&
+           result.output.find("\"rows_checked\":2") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"numeric_range","column":"value","min":1,"max":2},{"type":"allowed_values","column":"name","values":["alpha","beta"]},{"type":"unique_combination","columns":["name","value"]}]})"});
+    assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"numeric_range","column":"value","min":2}]})"});
+    assert(result.ok && result.output.find("\"valid\":false") != std::string::npos &&
+           result.output.find("numeric_range:value") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"allowed_values","column":"name","values":["alpha"]}]})"});
+    assert(result.ok && result.output.find("\"valid\":false") != std::string::npos &&
+           result.output.find("allowed_values:name") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/duplicate-combo.csv","rules":[{"type":"unique_combination","columns":["region","code"]}]})"});
+    assert(result.ok && result.output.find("\"valid\":false") != std::string::npos &&
+           result.output.find("unique_combination:region,code") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", std::string(R"({"dataset":"dataset://analysis/csv-sales","rules":)") + valid_rules + "}"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           result.output.find("\"valid\":true") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", std::string(R"({"dataset":"dataset://analysis/sales","rules":)") + valid_rules + "}"});
+    assert(!result.ok && result.failure_code == "tool.dataset.validate.unsupported_format");
+    result = foundation_registry.execute({"dataset.validate", std::string(R"({"resource":"resource://uploads/sales.csv","rules":)") + valid_rules + "}"});
+    assert(result.ok && result.output.find("\"valid\":true") != std::string::npos);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","dataset":"dataset://analysis/sales","rules":[{"type":"unique","column":"name"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"rules":[{"type":"unique","column":"name"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"../outside.csv","rules":[{"type":"unique","column":"name"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"regex","column":"name"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"unique"}]})"});
+    assert(!result.ok);
+    result = foundation_registry.execute({"dataset.validate", R"({"path":"datasets/sample.csv","rules":[{"type":"unique","column":"absent"}]})"});
+    assert(!result.ok && result.failure_code == "tool.dataset.validate.invalid_rule");
+    for (const auto * invalid : {
+            R"({"type":"numeric_range","column":"value","min":3,"max":1})",
+            R"({"type":"allowed_values","column":"name","values":[]})",
+            R"({"type":"unique_combination","columns":["name","absent"]})",
+            R"({"type":"numeric_range","column":"value","min":1,"unexpected":true})"}) {
+        result = foundation_registry.execute({"dataset.validate",
+            std::string(R"({"path":"datasets/sample.csv","rules":[)") + invalid + "]}"});
+        assert(!result.ok && (result.failure_code == "tool.dataset.validate.invalid_rule" ||
+            result.failure_code == "tool.invalid_arguments"));
+    }
+    common_registered_tool throwing_adapter;
+    throwing_adapter.name = "throwing_adapter";
+    throwing_adapter.version = 1;
+    throwing_adapter.executor_id = "test.throwing_adapter";
+    throwing_adapter.arguments_schema = R"({"type":"object"})";
+    throwing_adapter.handler = [](const std::string &) -> common_tool_execution_result {
+        throw std::runtime_error("adapter failure fixture");
+    };
+    assert(foundation_registry.register_tool(std::move(throwing_adapter), error));
+    result = foundation_registry.execute({"throwing_adapter", "{}"});
+    assert(!result.ok && result.failure_code == "tool.executor_exception" &&
+           result.raw_diagnostic == "adapter failure fixture");
+    const auto saved_descriptor = foundation_data.stored_descriptor;
+    common_tool_catalog data_catalog;
+    common_tool_bootstrap_result data_bootstrap;
+    if (!data_catalog.bootstrap("analysis", data_bootstrap, error)) return 1;
+    common_tool_registry data_registry;
+    common_tool_adapter_result data_adapters;
+    if (!common_register_native_tool_adapters(
+            data_catalog, "analysis", foundation_bindings, data_registry,
+            data_adapters, error) || !data_registry.contains("data.join")) return 1;
+    assert(data_registry.contains("artifact.export"));
+    assert(!data_registry.is_read_only("artifact.export"));
+    assert(data_registry.is_policy_gated("artifact.export"));
+    std::vector<common_chat_tool> data_chat_tools;
+    assert(common_tool_profile_to_chat_tools(
+        data_catalog, "analysis", data_registry, data_chat_tools, error));
+    assert(std::any_of(data_chat_tools.begin(), data_chat_tools.end(), [](const auto & tool) {
+        return tool.name == "artifact.export";
+    }));
+    common_chat_msg unapproved_export;
+    unapproved_export.role = "assistant";
+    unapproved_export.tool_calls.push_back({
+        "artifact.export", R"({"name":"unapproved.txt","content":"not authorized"})", ""});
+    common_tool_chat_dispatch_result unapproved_dispatch;
+    assert(common_tool_dispatch_chat_calls(
+        unapproved_export, data_registry, 1, unapproved_dispatch, error));
+    assert(unapproved_dispatch.executed == 0);
+    assert(data_registry.contains("artifact.export"));
+    assert(!data_registry.is_read_only("artifact.export"));
+    assert(data_registry.is_policy_gated("artifact.export"));
+    foundation_data.stored_descriptor.origin.kind = "derived";
+    foundation_data.stored_descriptor.ref.uri = "dataset://agent/turn/turn-1/step-1";
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://agent/turn/turn-1/step-1"})"});
+    assert(result.ok && foundation_data.last_operation == "data.query");
+    foundation_data.stored_descriptor.ref.uri = "dataset://agent/turn/turn-2/step-1";
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://agent/turn/turn-2/step-1"})"});
+    assert(!result.ok && result.failure_code == "tool.dataset.out_of_scope");
+    result = data_registry.execute({"data.join", R"({"left":"dataset://agent/turn/turn-2/step-1","right":"dataset://agent/turn/turn-2/step-1","on":[{"left":"id","right":"id"}]})"});
+    if (result.ok || result.failure_code != "tool.dataset.out_of_scope") return 1;
+    foundation_data.stored_descriptor = saved_descriptor;
+    foundation_data.stored_descriptor.ref.source_representation =
+        (repository / "datasets" / "sample.csv").string();
+    result = data_registry.execute({"data.join", R"({"left":"dataset://analysis/sales","right":"dataset://analysis/sales","on":[{"left":"name","right":"name"}]})"});
+    if (!result.ok || foundation_data.last_operation != "data.join") return 1;
+    foundation_data.stored_descriptor = saved_descriptor;
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","limit":10})"});
+    assert(result.ok && foundation_data.last_operation == "data.query");
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":{"status":"failed"}})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("where":[{"field":"status","operator":"=","value":"failed"}])") != std::string::npos);
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":{"title":{"contains":"GDP"}}})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("where":[{"field":"title","operator":"contains","value":"GDP"}])") != std::string::npos);
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":[{"field":"title","operator":"contains","value":"GDP"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("operator":"contains","value":"GDP")") != std::string::npos);
+    result = foundation_registry.execute({"data.query", R"({"dataset":"dataset://tool-events","where":"status -eq \"failed\" and attempt -gt 1"})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("field":"status")") != std::string::npos &&
+           foundation_data.last_request.find(R"("operator":"=","value":"failed")") != std::string::npos &&
+           foundation_data.last_request.find(R"("field":"attempt","operator":">","value":1)") != std::string::npos);
+    result = foundation_registry.execute({"data.filter", R"({"dataset":"dataset://tool-events","conditions":[{"field":"status","operator":"=","value":"failed"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.filter");
+    result = foundation_registry.execute({"data.filter", R"({"dataset":"dataset://tool-events","conditions":{"status":{"in":["failed","blocked"]}}})"});
+    assert(result.ok && foundation_data.last_operation == "data.filter" &&
+           foundation_data.last_request.find(R"("operator":"in","value":["failed","blocked"])") != std::string::npos);
+    result = foundation_registry.execute({"data.aggregate", R"({"dataset":"dataset://tool-events","measures":[{"function":"count","column":"*"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.aggregate");
+    result = foundation_registry.execute({"data.join", R"({"left":"dataset://analysis/sales","right":"dataset://analysis/sales","on":[{"left":"id","right":"id"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.join");
+    result = foundation_registry.execute({"data.transform", R"({"dataset":"dataset://analysis/sales","operations":[{"type":"rename","from":"x","to":"y"}]})"});
+    assert(result.ok && foundation_data.last_operation == "data.transform");
+    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"dataset://analysis/sales","columns":["value"]})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.describe");
+    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"dataset://analysis/sales","column":"value","group_by":"region"})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.describe" &&
+           foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&
+           foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos);
+    result = foundation_registry.execute({"statistics.describe", R"({"dataset":"dataset://analysis/sales","columns":"value"})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.describe" &&
+           foundation_data.last_request.find(R"("columns":["value"])") != std::string::npos);
+    result = foundation_registry.execute({"statistics.outliers", R"({"dataset":"dataset://analysis/sales","column":"value","group_by":"region"})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.outliers" &&
+           foundation_data.last_request.find(R"("columns":["value"])" ) != std::string::npos &&
+           foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos);
+    result = foundation_registry.execute({"statistics.value_counts", R"({"dataset":"dataset://analysis/sales","column":"region","limit":5})"});
+    assert(result.ok && foundation_data.last_operation == "statistics.value_counts");
+    result = foundation_registry.execute({"data.aggregate", R"({"dataset":"dataset://analysis/sales","group_by":"region","sum":"amount"})"});
+    assert(result.ok && foundation_data.last_operation == "data.aggregate" &&
+           foundation_data.last_request.find(R"("group_by":["region"])" ) != std::string::npos &&
+           foundation_data.last_request.find(R"("function":"sum","column":"amount")" ) != std::string::npos);
+    result = foundation_registry.execute({"data.aggregate", R"json({"dataset":"dataset://analysis/sales","select":"sum(amount)"})json"});
+    assert(result.ok && foundation_data.last_operation == "data.aggregate" &&
+           foundation_data.last_request.find(R"("measures":[{"function":"sum","column":"amount"}])") != std::string::npos &&
+           foundation_data.last_request.find(R"("select")") == std::string::npos);
+    result = foundation_registry.execute({"data.join", R"({"left":"dataset://analysis/sales","right":"dataset://analysis/sales","on":"id"})"});
+    assert(result.ok && foundation_data.last_operation == "data.join" &&
+           foundation_data.last_request.find(R"("left":"id","right":"id")" ) != std::string::npos);
+    result = foundation_registry.execute({"dataset.sample", R"({"dataset":"dataset://analysis/sales","limit":1})"});
+    assert(result.ok && foundation_data.last_operation == "data.query" &&
+           foundation_data.last_request.find(R"("limit":1)" ) != std::string::npos);
+    const auto writes_before_text_export = foundation_resources.requests.size();
+    result = foundation_registry.execute({"artifact.export", R"({"name":"summary.txt","content":"artifact result"})"});
+    assert(result.ok && result.output.find("resource://") != std::string::npos);
+    result = foundation_registry.execute({"artifact.export", R"({"format":"markdown","name":"grounded-report"})"});
+    assert(result.ok);
+    const auto report_export = nlohmann::json::parse(result.output);
+    assert(!report_export.value("resource", std::string{}).empty() &&
+        !report_export.value("report_resource", std::string{}).empty() &&
+        !report_export.value("snapshot_resource", std::string{}).empty() &&
+        !report_export.value("markdown_resource", std::string{}).empty() &&
+        !report_export.value("manifest_resource", std::string{}).empty() &&
+        report_export.value("report_id", std::string{}) == "report:report-plan" &&
+        report_export.value("revision", uint64_t(0)) == 1 &&
+        report_export.contains("coverage_complete") && !report_export["coverage_complete"].get<bool>());
+    assert(foundation_resources.requests.size() == writes_before_text_export + 5 &&
+        foundation_resources.requests[writes_before_text_export + 1].mime_type == "application/json" &&
+        foundation_resources.requests[writes_before_text_export + 2].mime_type == "application/vnd.llama-agent.report+json" &&
+        foundation_resources.requests[writes_before_text_export + 3].mime_type == "text/markdown" &&
+        foundation_resources.requests[writes_before_text_export + 3].text.find("Coverage incomplete") != std::string::npos &&
+        foundation_resources.requests[writes_before_text_export + 4].text.find(report_export.value("export_id", std::string{})) != std::string::npos);
+    const auto writes_before_retry=foundation_resources.requests.size();
+    // Simulate a publication predating renderer versioning. Retry and format
+    // changes must preserve that stored document rather than rebuilding it.
+    const auto published_report_uri=report_export.value("report_resource",std::string{});
+    auto legacy_report=nlohmann::json::parse(foundation_resources.contents.at(published_report_uri));
+    legacy_report.erase("markdown_renderer_version");
+    foundation_resources.contents[published_report_uri]=legacy_report.dump();
+    result = foundation_registry.execute({"artifact.export", R"({"format":"markdown","name":"grounded-report"})"});
+    assert(result.ok);
+    const auto retried_report=nlohmann::json::parse(result.output);
+    assert(retried_report.value("manifest_resource",std::string{})==report_export.value("manifest_resource",std::string{}));
+    assert(foundation_resources.requests.size()==writes_before_retry);
+    result = foundation_registry.execute({"artifact.export", R"({"format":"docx","name":"grounded-report"})"});
+    assert(result.ok);
+    assert(docx_processing_called);
+    assert(docx_processing_request.source_uri == retried_report.value("markdown_resource", std::string{}));
+    assert(docx_processing_request.target_representation == "docx");
+    assert(docx_processing_request.target_media_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    assert(docx_processing_request.purpose == agent_resource_processing_purpose::artifact_generation);
+    const auto docx_export = nlohmann::json::parse(result.output);
+    assert(docx_export.value("format", std::string{}) == "docx" &&
+        docx_export.value("mime_type", std::string{}) == "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    assert(docx_export.value("report_resource",std::string{})==published_report_uri);
+    assert(foundation_resources.contents.at(published_report_uri)==legacy_report.dump());
+    assert(std::any_of(foundation_resources.requests.begin(), foundation_resources.requests.end(), [](const auto & request) {
+        return request.source_tool == "artifact.export" &&
+            request.mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+            request.text == "test-docx-bytes";
+    }));
+    const auto document_uri=report_export.value("report_resource",std::string{});
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",document_uri}}.dump()});
+    assert(result.ok);
+    auto opened_document=nlohmann::json::parse(result.output);
+    assert(opened_document.value("revision",uint64_t(0))==1&&opened_document.contains("markdown"));
+    assert(opened_document.contains("rendered_markdown"));
+    assert(!opened_document["rendered_markdown"].get<std::string>().empty());
+    assert(opened_document["document"]["id"] == report_export["report_id"]);
+    auto edited_markdown=opened_document.value("markdown",std::string{});
+    edited_markdown+="\n## User edits\n\nUser-edited report text.\n";
+    const auto save_args=nlohmann::json{{"document_uri",document_uri},{"expected_revision",1},
+        {"markdown",edited_markdown},{"operation_id","adapter-test-save-1"}};
+    result=foundation_registry.execute({"document.save",save_args.dump()});
+    assert(result.ok);
+    const auto saved_document=nlohmann::json::parse(result.output);
+    assert(saved_document.value("revision",uint64_t(0))==2&&!saved_document.value("reused",false));
+    assert(saved_document["diff"].value("base_revision",uint64_t(0))==1&&
+        saved_document["diff"]["blocks"].size()>=1&&
+        saved_document["diff"]["blocks"][0].value("new_text",std::string{}).find("User-edited")!=std::string::npos);
+    result=foundation_registry.execute({"document.save",save_args.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("reused",false));
+    auto conflict_args=save_args;conflict_args["operation_id"]="adapter-test-save-conflict";
+    result=foundation_registry.execute({"document.save",conflict_args.dump()});
+    assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+    // An unchanged legacy revision is a no-op, but still reserves its operation
+    // ID so a retry cannot silently substitute a different payload.
+    auto install_editor_fixture=[&](const std::string & id){
+        auto fixture=legacy_report;fixture["id"]=id;fixture["revision"]=1;fixture["schema_version"]=1;fixture.erase("content_fingerprint");
+        agent_resource_put_request put;put.name=id+".json";put.mime_type="application/vnd.llama-agent.report+json";put.text=fixture.dump();
+        agent_resource_descriptor resource;std::string error;
+        assert(foundation_resources.put_text(put,resource,error));
+        return resource.uri;
+    };
+    const auto no_op_uri=install_editor_fixture("report-no-op");
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",no_op_uri}}.dump()});assert(result.ok);
+    auto no_op_args=nlohmann::json{{"document_uri",no_op_uri},{"expected_revision",1},
+        {"markdown",nlohmann::json::parse(result.output)["markdown"]},{"operation_id","unchanged-save"}};
+    result=foundation_registry.execute({"document.save",no_op_args.dump()});assert(result.ok&&nlohmann::json::parse(result.output)["revision"]==1);
+    const auto no_op_fingerprint=nlohmann::json::parse(result.output)["content_fingerprint"];
+    result=foundation_registry.execute({"document.save",no_op_args.dump()});assert(result.ok);
+    assert(nlohmann::json::parse(result.output)["content_fingerprint"]==no_op_fingerprint);
+    auto changed_no_op=no_op_args;changed_no_op["markdown"]=no_op_args["markdown"].get<std::string>()+"\n## New section\n\nChanged.\n";
+    result=foundation_registry.execute({"document.save",changed_no_op.dump()});assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+
+    // A report resource written before its operation/head is not a published
+    // revision. Retrying from the original base remains possible.
+    for(const auto * failing_mime:{"application/vnd.llama-agent.document-operation+json","application/vnd.llama-agent.document-head+json"}){
+        const auto interrupted_uri=install_editor_fixture(std::string(failing_mime).find("head")!=std::string::npos?"report-head-failure":"report-operation-failure");
+        auto interrupted_args=changed_no_op;interrupted_args["document_uri"]=interrupted_uri;interrupted_args["operation_id"]="interrupted-save";
+        foundation_resources.fail_mime=failing_mime;
+        result=foundation_registry.execute({"document.save",interrupted_args.dump()});assert(!result.ok);
+        foundation_resources.fail_mime.clear();
+        result=foundation_registry.execute({"document.save",interrupted_args.dump()});
+        assert(result.ok&&nlohmann::json::parse(result.output)["revision"]==2);
+    }
+
+    const auto large_uri=install_editor_fixture("report-large-proposal");
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",large_uri}}.dump()});assert(result.ok);
+    const auto large_markdown=nlohmann::json::parse(result.output)["markdown"].get<std::string>()+"\n## Long clarification\n\n"+std::string(70000,'a')+"\n";
+    result=foundation_registry.execute({"document.propose_patch",nlohmann::json{{"document_uri",large_uri},{"expected_revision",1},{"markdown",large_markdown},{"summary","Large but bounded clarification."}}.dump()});assert(result.ok);
+    const auto large_proposal=nlohmann::json::parse(result.output);assert(large_proposal.contains("diff"));
+    result=foundation_registry.execute({"document.apply_patch",nlohmann::json{{"document_uri",large_uri},{"expected_revision",1},
+        {"proposal_uri",large_proposal["proposal_uri"]},{"operation_id","large-proposal-apply"}}.dump()});assert(result.ok);
+    const auto large_saved_uri=nlohmann::json::parse(result.output)["document_uri"].get<std::string>();
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",large_saved_uri}}.dump()});assert(result.ok);
+    const auto large_opened=nlohmann::json::parse(result.output);
+    assert(large_opened["rendered_markdown"].get<std::string>().size() > 65536);
+    assert(large_opened["document"]["sections"].back()["blocks"][0]["author"]=="model");
+    assert(large_opened["document"]["sections"].back()["blocks"][0]["review_state"]=="unreviewed");
+    const auto & target_section=large_opened["document"]["sections"].back();
+    auto block_proposal=nlohmann::json{{"document_uri",large_saved_uri},{"expected_revision",2},
+        {"operation","replace"},{"section_id",target_section["id"]},{"block_id",target_section["blocks"][0]["id"]},
+        {"text","A bounded replacement."},{"summary","Replace only the selected block."}};
+    result=foundation_registry.execute({"document.propose_patch",block_proposal.dump()});assert(result.ok);
+    auto unknown_block=block_proposal;unknown_block["block_id"]="not-a-report-block";
+    result=foundation_registry.execute({"document.propose_patch",unknown_block.dump()});assert(!result.ok);
+    auto escaping_block=block_proposal;escaping_block["text"]="Changed.\n\n## Another section\n\nUnrelated content.";
+    result=foundation_registry.execute({"document.propose_patch",escaping_block.dump()});assert(!result.ok);
+    // A newer report composition supersedes an earlier editor head. Further
+    // edits must continue its revision rather than becoming permanently stale.
+    auto recomposed_json=nlohmann::json::parse(foundation_resources.contents.at(large_saved_uri));
+    recomposed_json["revision"]=3;recomposed_json["editor_parent_uri"]="";recomposed_json["editor_operation_id"]="";recomposed_json["editor_markdown_uri"]="";
+    common_agent_artifact_document recomposed;std::string recomposition_error,recomposed_markdown,recomposed_editable;
+    assert(common_agent_artifact_document_from_json(recomposed_json.dump(),recomposed,recomposition_error));
+    assert(common_agent_artifact_render_markdown(recomposed,recomposed_markdown,recomposition_error));
+    assert(common_agent_artifact_render_editable_markdown(recomposed,recomposed_editable,recomposition_error));
+    auto publish_fixture=[&](const std::string & name,const std::string & mime,const std::string & text,const std::string & key){
+        agent_resource_put_request put;put.name=name;put.mime_type=mime;put.text=text;put.metadata.processing_cache_key=key;
+        agent_resource_descriptor resource;assert(foundation_resources.put_text(put,resource,recomposition_error));return resource.uri;
+    };
+    const auto recomposed_uri=publish_fixture("recomposed-r3.json","application/vnd.llama-agent.report+json",recomposed_json.dump(),"");
+    const auto recomposed_md_uri=publish_fixture("recomposed-r3.md","text/markdown",recomposed_markdown,"");
+    publish_fixture("recomposed-r3-manifest.json","application/json",nlohmann::json{{"report_id",recomposed.id},{"revision",3},
+        {"report_resource",recomposed_uri},{"markdown_resource",recomposed_md_uri},{"resource",recomposed_md_uri},
+        {"snapshot_fingerprint",recomposed.snapshot_fingerprint}}.dump(),"artifact-export:"+recomposed.id+":r3:fixture:manifest");
+    result=foundation_registry.execute({"document.save",nlohmann::json{{"document_uri",recomposed_uri},{"expected_revision",3},
+        {"markdown",recomposed_editable+"\n## After recomposition\n\nAnother edit.\n"},{"operation_id","after-recomposition"}}.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output)["revision"]==4);
+    result=foundation_registry.execute({"document.open",nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})}}.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("markdown",std::string{}).find("User-edited report text.")!=std::string::npos);
+    result=foundation_registry.execute({"artifact.export",nlohmann::json{{"source_document",saved_document.value("document_uri",std::string{})},{"format","markdown"}}.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("report_resource",std::string{})==saved_document.value("document_uri",std::string{}));
+    const auto saved_document_export=nlohmann::json::parse(result.output);
+    const auto saved_export_markdown=foundation_resources.contents.at(saved_document_export.value("markdown_resource",std::string{}));
+    assert(saved_export_markdown.find("User-edited report text.")!=std::string::npos&&
+        saved_export_markdown.find("Coverage incomplete")!=std::string::npos);
+    auto proposal_markdown=edited_markdown+"\n## Reviewer note\n\nProposed clarification.\n";
+    result=foundation_registry.execute({"document.propose_patch",nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})},
+        {"expected_revision",2},{"markdown",proposal_markdown},{"summary","Clarify the edited result."}}.dump()});
+    assert(result.ok);
+    const auto proposal=nlohmann::json::parse(result.output);
+    result=foundation_registry.execute({"document.apply_patch",nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})},
+        {"proposal_uri",proposal.value("proposal_uri",std::string{})},{"expected_revision",2},{"operation_id","adapter-test-apply-1"}}.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("revision",uint64_t(0))==3);
+    result=foundation_registry.execute({"document.save",save_args.dump()});
+    assert(result.ok&&nlohmann::json::parse(result.output).value("revision",uint64_t(0))==2&&nlohmann::json::parse(result.output).value("reused",false));
+    auto stale_apply=nlohmann::json{{"document_uri",saved_document.value("document_uri",std::string{})},
+        {"proposal_uri",proposal.value("proposal_uri",std::string{})},{"expected_revision",2},{"operation_id","adapter-test-stale-apply"}};
+    result=foundation_registry.execute({"document.apply_patch",stale_apply.dump()});
+    assert(!result.ok&&result.failure_class==common_tool_failure_class::conflict);
+    result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"csv","name":"sales.csv"})"});
+    assert(result.ok && result.output.find("dataset://analysis/sales") != std::string::npos &&
+           foundation_resources.last_request.mime_type == "text/csv" &&
+           foundation_resources.last_request.text == "name,value\nalpha,1\nbeta,2\n" &&
+           foundation_resources.last_request.lineage.parent_uri == "dataset://analysis/sales" &&
+           foundation_resources.last_request.lineage.derivation == "artifact.export:dataset-csv");
+    result = foundation_registry.execute({"artifact.export", R"({"source_dataset":"dataset://analysis/sales","format":"json","name":"sales.json"})"});
+    assert(!result.ok);
+
+    common_tool_profile execution_profile;
+    execution_profile.id = "developer-execution";
+    execution_profile.members = {{"development.build", 1, true, "{}"}, {"development.test", 1, true, "{}"}};
+    execution_profile.allow_policy_gated_writes = true;
+    std::map<std::string, common_tool_profile> configured_profiles;
+    configured_profiles.emplace(execution_profile.id, execution_profile);
+    common_tool_catalog execution_catalog;
+    assert(execution_catalog.bootstrap("developer-execution", bootstrap, error, {}, configured_profiles));
+    common_tool_registry execution_registry;
+    common_native_tool_bindings execution_bindings;
+    common_agent_sandbox_request captured_request;
+    execution_bindings.sandbox_execute = [&captured_request](common_agent_sandbox_request request) {
+        captured_request = std::move(request);
+        return common_tool_execution_result::success(R"({"status":"completed","exit_code":0})");
+    };
+    assert(common_register_native_tool_adapters(execution_catalog, "developer-execution", execution_bindings, execution_registry, adapters, error));
+    assert(execution_registry.is_policy_gated("development.build"));
+    result = execution_registry.execute({"development.build", R"({"target":"llama-agent","configuration":"Debug"})"});
+    assert(result.ok && captured_request.command.program == "agent.development.build" && captured_request.command.arguments[0] == "llama-agent");
+    result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","filter":"workspace"})"});
+    assert(result.ok && captured_request.command.program == "agent.development.test" &&
+        captured_request.command.arguments[1] == "--filter=workspace");
+    result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","resource_refs":["resource://input.txt"]})"});
+    assert(result.ok && captured_request.workspace.input_resources.size() == 1 &&
+            captured_request.workspace.input_resources[0].uri == "resource://input.txt");
+    result = execution_registry.execute({"development.build", R"({"target":"llama-agent","source_snapshot_ref":"resource://snapshot/code.json"})"});
+    assert(result.ok && !captured_request.source_snapshot_ref.empty() &&
+        captured_request.workspace.input_resources.size() == 1 &&
+        captured_request.workspace.input_resources[0].uri == "resource://snapshot/code.json");
+    result = execution_registry.execute({"development.build", R"({"target":"llama-agent","source_snapshot_ref":"resource://snapshot/code.json","resource_refs":["resource://snapshot/code.json"]})"});
+    assert(result.ok && captured_request.workspace.input_resources.size() == 1);
+    result = execution_registry.execute({"development.test", R"({"target":"agent-smoke","timeout_ms":"invalid"})"});
+    assert(!result.ok);
+    common_tool_registry native_network_registry;
+    common_native_tool_bindings native_network_bindings;
+    assert(common_register_native_tool_adapters(research_catalog, "research", native_network_bindings, native_network_registry, adapters, error));
+    result = native_network_registry.execute({"web.fetch", R"({"url":"http://127.0.0.1/test"})"});
+    assert(!result.ok && result.failure_class == common_tool_failure_class::network);
+    result = native_network_registry.execute({"web.fetch", R"({"url":"https://example.org/data","accept":"application/json\r\nX-Injected: true"})"});
+    assert(!result.ok && result.failure_code == "tool.web_fetch.out_of_bounds" &&
+           result.failure_class == common_tool_failure_class::validation);
+
+    test_investigation_store investigation_store;
+    investigation_store.source.ref.uri = "dataset://investigation/logs/security";
+    investigation_store.source.ref.name = "security";
+    investigation_store.source.ref.source_provider = "logs";
+    investigation_store.source.ref.source_request_json = nlohmann::json{{"relation_profiles", nlohmann::json::array({
+        {{"id", "auth-observed-v1"}, {"event_type", "authentication"},
+            {"from_kind", "user"}, {"to_kind", "host"}, {"relation_kind", "authenticated_to"},
+            {"from_role", "user"}, {"to_role", "host"}}})}}.dump();
+    investigation_store.source.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
+    investigation_store.source.columns = {{"event.id", common_agent_dataset_column_type::string, false},
+        {"event.type", common_agent_dataset_column_type::string, false},
+        {"event.outcome", common_agent_dataset_column_type::string, true},
+        {"@timestamp", common_agent_dataset_column_type::string, true},
+        {"user.id", common_agent_dataset_column_type::string, true},
+        {"host.name", common_agent_dataset_column_type::string, true},
+        {"@source.index", common_agent_dataset_column_type::string, false},
+        {"@source.id", common_agent_dataset_column_type::string, false}};
+    common_investigation_case_revision investigation_case;
+    investigation_case.case_id = "graph-case";
+    investigation_case.title = "Authentication chain";
+    investigation_case.question = "Which host received the login?";
+    investigation_case.source_id = "logs";
+    investigation_case.window_start_ms = 100;
+    investigation_case.window_end_ms = 1000;
+    investigation_case.scope.namespace_id = "tenant-a";
+    investigation_case.scope.project_id = "project-a";
+    investigation_case.scope.session_id = "session-a";
+    investigation_case.entities = {
+        {"user:logs:alice", "logs", common_investigation_entity_kind::user, "alice", "alice", "", 0, 0},
+        {"host:logs:app1", "logs", common_investigation_entity_kind::host, "app1", "app1", "", 0, 0},
+    };
+    investigation_case.events = {{"event:1", "logs", "doc-1", "authentication", {200, 210, 0, true},
+        {"user:logs:alice", "host:logs:app1"}, "resource://raw/doc-1", "resource://normalized/doc-1", {}, {}}};
+    investigation_case.events[0].outcome = "success";
+    investigation_case.relations = {{"rel:1", "logs", "user:logs:alice", "host:logs:app1",
+        common_investigation_relation_kind::authenticated_to, 200, 200, true, 1,
+        "auth-v1", "1", "observed", {"event:1"}}};
+    investigation_store.seed(investigation_case);
+    common_tool_catalog investigation_catalog;
+    assert(investigation_catalog.bootstrap("investigation", bootstrap, error));
+    common_native_tool_bindings investigation_bindings;
+    investigation_bindings.data_store = &investigation_store;
+    investigation_bindings.tool_scope = investigation_case.scope;
+    test_resource_store investigation_resources;
+    investigation_resources.available_uris.insert("resource://session/long-text");
+    investigation_bindings.resource_runtime.store = &investigation_resources;
+    investigation_bindings.resource_runtime.namespace_id = investigation_case.scope.namespace_id;
+    investigation_bindings.resource_runtime.session_id = investigation_case.scope.session_id;
+    investigation_bindings.resource_runtime.project_id = investigation_case.scope.project_id;
+    common_tool_registry investigation_registry;
+    assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
+        investigation_bindings, investigation_registry, adapters, error));
+    assert(!investigation_registry.is_read_only("investigate.case.create") &&
+        investigation_registry.is_policy_gated("investigate.case.create"));
+    assert(!investigation_registry.is_read_only("investigate.collect") &&
+        investigation_registry.is_policy_gated("investigate.collect"));
+    assert(!investigation_registry.is_read_only("investigate.claim.hypothesize") &&
+        investigation_registry.is_policy_gated("investigate.claim.hypothesize"));
+    assert(!investigation_registry.is_read_only("investigate.report.compose") &&
+        investigation_registry.is_policy_gated("investigate.report.compose"));
+    assert(investigation_registry.is_read_only("investigate.source.list") &&
+        !investigation_registry.is_policy_gated("investigate.source.list"));
+    assert(investigation_registry.is_read_only("investigate.case.open") &&
+        !investigation_registry.is_policy_gated("investigate.case.open"));
+    result = investigation_registry.execute({"investigate.case.open", R"({"case_id":"graph-case"})"});
+    assert(result.ok && result.output.find("first_entity_id") != std::string::npos &&
+        result.output.find("\"counts\"") != std::string::npos &&
+        result.output.find("\"events\":[") == std::string::npos);
+    result = investigation_registry.execute({"investigate.case.list", R"({"limit":10})"});
+    assert(result.ok && result.output.find("graph-case") != std::string::npos);
+    result = investigation_registry.execute({"investigate.source.list", R"({"limit":10})"});
+    assert(result.ok && result.output.find("\"source_id\":\"logs\"") != std::string::npos);
+    result = investigation_registry.execute({"investigate.case.create",
+        R"({"title":"New case","question":"What happened?","source_id":"logs","window_start_ms":100,"window_end_ms":1000})"});
+    assert(result.ok && result.output.find("case-") != std::string::npos);
+    const auto created_search_case = nlohmann::json::parse(result.output);
+    const auto search_case_id = created_search_case.value("case_id", std::string{});
+    assert(!search_case_id.empty() && investigation_store.cases.at(search_case_id).sources.size() == 1 &&
+        investigation_store.cases.at(search_case_id).sources[0].processing_status == "not_collected" &&
+        !investigation_store.cases.at(search_case_id).sources[0].complete);
+    // Unrestricted acquisition remains bounded by identity, page size and cursor.
+    {
+        const auto count = investigation_store.cases.size();
+        const auto invalid = investigation_registry.execute({"investigate.case.create",
+            R"({"title":"Invalid source","question":"What happened?","source_id":"d1"})"});
+        assert(!invalid.ok && invalid.failure_code == "tool.investigation.source_invalid" &&
+            invalid.failure_class == common_tool_failure_class::validation && !invalid.retryable &&
+            investigation_store.cases.size() == count);
+        investigation_store.denied_sources.insert("logs");
+        const auto denied = investigation_registry.execute({"investigate.case.create",
+            R"({"title":"Denied source","question":"What happened?","source_id":"logs"})"});
+        assert(!denied.ok && denied.failure_code == "tool.investigation.source_denied" &&
+            denied.failure_class == common_tool_failure_class::policy && investigation_store.cases.size() == count);
+        investigation_store.denied_sources.erase("logs");
+    }
+    result = investigation_registry.execute({"investigate.case.create",
+        R"({"title":"Available identity evidence","question":"What happened?","source_id":"logs"})"});
+    assert(result.ok);
+    const auto unrestricted_id = nlohmann::json::parse(result.output).at("case_id").get<std::string>();
+    assert(investigation_store.cases.at(unrestricted_id).window_start_ms == 0 &&
+        investigation_store.cases.at(unrestricted_id).window_end_ms == 0);
+    result = investigation_registry.execute({"investigate.collect", nlohmann::json{
+        {"case_id",unrestricted_id},{"expected_revision",1},
+        {"dataset","dataset://investigation/logs/security"},{"identifier_field","user.id"},
+        {"identifier_value","alice"},{"limit",20}}.dump()});
+    assert(result.ok && investigation_store.executed_queries.back().at("where").size() == 1);
+    const auto retained_events = investigation_store.cases.at(unrestricted_id).events.size();
+    result = investigation_registry.execute({"investigate.case.update_scope", nlohmann::json{
+        {"case_id",unrestricted_id},{"expected_revision",2},{"window_start_ms",100},{"window_end_ms",1000}}.dump()});
+    assert(result.ok && investigation_store.cases.at(unrestricted_id).revision == 3 &&
+        investigation_store.cases.at(unrestricted_id).events.size() == retained_events &&
+        !investigation_store.cases.at(unrestricted_id).sources.front().complete);
+    result = investigation_registry.execute({"investigate.case.update_scope", nlohmann::json{
+        {"case_id",unrestricted_id},{"expected_revision",2},{"window_start_ms",0},{"window_end_ms",0}}.dump()});
+    assert(!result.ok);
+    result = investigation_registry.execute({"investigate.case.update_scope", nlohmann::json{
+        {"case_id",unrestricted_id},{"expected_revision",3},{"window_start_ms",0},{"window_end_ms",0}}.dump()});
+    assert(result.ok && investigation_store.cases.at(unrestricted_id).revision == 4);
+    result = investigation_registry.execute({"investigate.collect", nlohmann::json{
+        {"case_id",unrestricted_id},{"expected_revision",4},
+        {"dataset","dataset://investigation/logs/security"},
+        {"window_start_ms",100},{"window_end_ms",1000},{"limit",20}}.dump()});
+    assert(result.ok && investigation_store.executed_queries.back().at("where").size() == 2 &&
+        investigation_store.cases.at(unrestricted_id).window_start_ms == 0);
+    const auto time_only_receipt = nlohmann::json::parse(result.output).at("query_parameters");
+    assert(!time_only_receipt.contains("identifier_field") && time_only_receipt.at("window_start_ms") == 100);
+    result = investigation_registry.execute({"investigate.collect", nlohmann::json{
+        {"case_id",unrestricted_id},{"expected_revision",5},
+        {"dataset","dataset://investigation/logs/security"},{"limit",20}}.dump()});
+    assert(result.ok && investigation_store.executed_queries.back().at("where").empty());
+    result = investigation_registry.execute({"investigate.collect", nlohmann::json{
+        {"case_id",unrestricted_id},{"expected_revision",6},
+        {"dataset","dataset://investigation/logs/security"},{"identifier_field","host.name"},
+        {"identifier_value","known-host"},{"limit",20}}.dump()});
+    assert(result.ok && investigation_store.executed_queries.back().at("where").size() == 1 &&
+        investigation_store.executed_queries.back().at("where").front().at("field") == "host.name");
+    result = investigation_registry.execute({"investigate.case.create",
+        R"({"title":"Resource first","question":"Explore the available evidence","resource_uri":"resource://session/long-text"})"});
+    assert(result.ok);
+    const auto resource_first_id = nlohmann::json::parse(result.output).at("case_id").get<std::string>();
+    result = investigation_registry.execute({"investigate.source.attach", nlohmann::json{
+        {"case_id",resource_first_id},{"expected_revision",1},{"provider_id","logs"}}.dump()});
+    assert(result.ok && investigation_store.cases.at(resource_first_id).source_id == "logs" &&
+        investigation_store.cases.at(resource_first_id).window_start_ms == 0 &&
+        investigation_store.cases.at(resource_first_id).window_end_ms == 0);
+    result = investigation_registry.execute({"investigate.case.create",
+        R"({"title":"Invalid window","question":"What happened?","source_id":"logs","window_start_ms":100})"});
+    assert(!result.ok);
+    result = investigation_registry.execute({"investigate.case.create",
+        R"({"title":"Document case","question":"What was reported?","resource_uri":"resource://session/long-text","resource_kind":"document"})"});
+    assert(result.ok);
+    const auto created_document_case = nlohmann::json::parse(result.output);
+    const auto document_case_id = created_document_case.value("case_id", std::string{});
+    assert(investigation_store.cases.at(document_case_id).source_id.empty() &&
+        investigation_store.cases.at(document_case_id).window_start_ms == 0 &&
+        investigation_store.cases.at(document_case_id).sources.size() == 1 &&
+        investigation_store.cases.at(document_case_id).sources[0].kind == common_investigation_source_kind::document &&
+        investigation_store.cases.at(document_case_id).sources[0].resource_uri != "resource://session/long-text" &&
+        investigation_resources.last_request.scope == common_runtime_resource_scope::project &&
+        investigation_resources.last_request.lineage.parent_uri == "resource://session/long-text");
+    const auto document_source_id = investigation_store.cases.at(document_case_id).sources[0].id;
+    result = investigation_registry.execute({"investigate.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 1},
+        {"resource_uri", "resource://session/long-text"}, {"kind", "log_file"}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 2 &&
+        investigation_store.cases.at(document_case_id).sources.size() == 2 &&
+        investigation_store.cases.at(document_case_id).sources[1].kind == common_investigation_source_kind::log_file);
+    result = investigation_registry.execute({"investigate.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 1},
+        {"resource_uri", "resource://session/long-text"}, {"kind", "log_file"}}.dump()});
+    assert(result.ok && result.output.find("\"reused\":true") != std::string::npos &&
+        investigation_store.cases.at(document_case_id).revision == 2);
+    result = investigation_registry.execute({"investigate.document.prepare", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 2}, {"source_id", document_source_id}}.dump()});
+    assert(result.ok && result.output.find("\"reused\":true") != std::string::npos);
+    const auto statement_args = nlohmann::json{{"case_id", document_case_id}, {"expected_revision", 2},
+        {"idempotency_key", "extract-1"}, {"analysis_kind", "actor_relationship"},
+        {"source_ids", nlohmann::json::array({document_source_id})},
+        {"statements", nlohmann::json::array({{{"id", "statement-a"}, {"kind", "reported_event"},
+            {"text", "A source statement"}, {"actor_ids", nlohmann::json::array({"actor-alice"})},
+            {"anchor", {{"source_id", document_source_id},
+                {"resource_uri", investigation_store.cases.at(document_case_id).sources[0].representation_uri},
+                {"byte_offset", 0}, {"byte_length", 5}, {"quote", "xxxxx"}}}}})},
+        {"comparisons", nlohmann::json::array()}};
+    result = investigation_registry.execute({"investigate.statement.record", statement_args.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 3 &&
+        investigation_store.cases.at(document_case_id).statements.size() == 1 &&
+        investigation_store.cases.at(document_case_id).statements[0].anchor.quote_verified &&
+        investigation_store.cases.at(document_case_id).analyses[0].kind == "actor_relationship");
+    result = investigation_registry.execute({"investigate.statement.record", statement_args.dump()});
+    assert(result.ok && result.output.find("\"reused\":true") != std::string::npos &&
+        result.output.find("\"published_revision\":3") != std::string::npos &&
+        investigation_store.cases.at(document_case_id).revision == 3);
+    auto invalid_statement_args = statement_args;
+    invalid_statement_args["expected_revision"] = 3;
+    invalid_statement_args["idempotency_key"] = "bad-anchor";
+    invalid_statement_args["statements"][0]["anchor"]["byte_offset"] = 0.5;
+    result = investigation_registry.execute({"investigate.statement.record", invalid_statement_args.dump()});
+    assert(!result.ok && investigation_store.cases.at(document_case_id).revision == 3);
+    invalid_statement_args["statements"][0]["anchor"]["byte_offset"] = 0;
+    invalid_statement_args["statements"][0]["anchor"]["quote"] = "yyyyy";
+    result = investigation_registry.execute({"investigate.statement.record", invalid_statement_args.dump()});
+    assert(!result.ok && investigation_store.cases.at(document_case_id).revision == 3);
+    result = investigation_registry.execute({"investigate.claim.hypothesize", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 3}, {"claim_id", "document-hypothesis"},
+        {"text", "A testable explanation based on the source statements."}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 4);
+    result = investigation_registry.execute({"investigate.statement.record", statement_args.dump()});
+    assert(result.ok && result.output.find("\"revision\":4") != std::string::npos &&
+        result.output.find("\"published_revision\":3") != std::string::npos &&
+        result.output.find("\"reused\":true") != std::string::npos);
+    result = investigation_registry.execute({"investigate.case.items", nlohmann::json{
+        {"case_id", document_case_id}, {"case_revision", 4}, {"type", "statements"}, {"limit", 10}}.dump()});
+    assert(result.ok && result.output.find("statement-a") != std::string::npos &&
+        result.output.find("quote_verified\":true") != std::string::npos);
+    result = investigation_registry.execute({"investigate.report.compose", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 4}}.dump()});
+    assert(result.ok && result.output.find("source_manifest_uri") != std::string::npos);
+    const auto frozen_document_report = nlohmann::json::parse(result.output);
+    std::string frozen_manifest, frozen_manifest_error;
+    assert(investigation_resources.read_text(frozen_document_report.at("source_manifest_uri"), {},
+        1024 * 1024, frozen_manifest, frozen_manifest_error));
+    assert(frozen_manifest.find("statement-a") != std::string::npos &&
+        frozen_manifest.find(document_source_id) != std::string::npos &&
+        frozen_manifest.find("representation_hash") != std::string::npos);
+    result = investigation_registry.execute({"investigate.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 4}, {"provider_id", "logs"},
+        {"window_start_ms", 100}, {"window_end_ms", 1000}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 5 &&
+        investigation_store.cases.at(document_case_id).source_id == "logs" &&
+        investigation_store.cases.at(document_case_id).sources.size() == 3);
+    result = investigation_registry.execute({"investigate.collect", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 5},
+        {"dataset", "dataset://investigation/logs/security"}, {"identifier_field", "user.id"},
+        {"identifier_value", "alice"}, {"limit", 20}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 6 &&
+        investigation_store.cases.at(document_case_id).events.size() == 1 &&
+        investigation_store.cases.at(document_case_id).events[0].source_id == "logs" &&
+        investigation_store.cases.at(document_case_id).relations.size() == 1);
+    auto secondary_source = investigation_store.source;
+    secondary_source.ref.uri = "dataset://investigation/secondary/security";
+    secondary_source.ref.source_provider = "logs-secondary";
+    investigation_store.additional_sources.push_back(secondary_source);
+    result = investigation_registry.execute({"investigate.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 6}, {"provider_id", "logs-secondary"}}.dump()});
+    assert(result.ok);
+    result = investigation_registry.execute({"investigate.collect", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 7},
+        {"dataset", secondary_source.ref.uri}, {"identifier_field", "user.id"},
+        {"identifier_value", "alice"}, {"limit", 20}}.dump()});
+    const auto & mixed_case = investigation_store.cases.at(document_case_id);
+    assert(result.ok && mixed_case.revision == 8 && mixed_case.events.size() == 2 &&
+        mixed_case.events[0].id != mixed_case.events[1].id && mixed_case.relations.size() == 2 &&
+        mixed_case.entities.size() == 4 && common_investigation_case_validate(mixed_case, error));
+    const auto investigation_authority = make_agent_resource_read_authority(
+        investigation_bindings.resource_runtime, static_cast<int64_t>(std::time(nullptr)));
+    assert(common_investigation_authorize_sources(mixed_case, investigation_bindings.tool_scope,
+        investigation_store, &investigation_resources, investigation_authority, error));
+    investigation_store.denied_sources.insert("logs-secondary");
+    assert(!common_investigation_authorize_sources(mixed_case, investigation_bindings.tool_scope,
+        investigation_store, &investigation_resources, investigation_authority, error));
+    result = investigation_registry.execute({"investigate.case.open", nlohmann::json{{"case_id", document_case_id}}.dump()});
+    assert(!result.ok);
+    investigation_store.denied_sources.clear();
+    result = investigation_registry.execute({"investigate.statement.record", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 8}, {"idempotency_key", "mixed-analysis"},
+        {"analysis_kind", "narrative_comparison"}, {"source_ids", {document_source_id, "provider-logs"}},
+        {"statements", nlohmann::json::array()}, {"comparisons", nlohmann::json::array()}}.dump()});
+    assert(result.ok && investigation_store.cases.at(document_case_id).revision == 9);
+    agent_resource_put_request pdf_request;
+    pdf_request.name = "investigation-original.pdf";
+    pdf_request.mime_type = "application/pdf";
+    pdf_request.bytes = "synthetic-pdf";
+    pdf_request.scope = common_runtime_resource_scope::session;
+    agent_resource_descriptor pdf_resource;
+    assert(investigation_resources.put_bytes(pdf_request, pdf_resource, error));
+    result = investigation_registry.execute({"investigate.source.attach", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 9}, {"resource_uri", pdf_resource.uri}}.dump()});
+    assert(result.ok);
+    const auto pdf_source_id = nlohmann::json::parse(result.output).at("source_id").get<std::string>();
+    test_investigation_text_processor text_processor(investigation_resources);
+    auto processing_bindings = investigation_bindings;
+    processing_bindings.resource_processing_service = &text_processor;
+    common_tool_registry processing_registry;
+    assert(common_register_native_tool_adapters(investigation_catalog, "investigation", processing_bindings,
+        processing_registry, adapters, error));
+    result = processing_registry.execute({"investigate.document.prepare", nlohmann::json{
+        {"case_id", document_case_id}, {"expected_revision", 10}, {"source_id", pdf_source_id}}.dump()});
+    assert(result.ok);
+    const auto & prepared_source = investigation_store.cases.at(document_case_id).sources.back();
+    assert(prepared_source.representation_uri != "resource://processor/derived-text" &&
+        investigation_resources.resources.at(prepared_source.representation_uri).scope == common_runtime_resource_scope::project &&
+        prepared_source.processor_version == "test-ocr-v1" && !prepared_source.complete &&
+        prepared_source.processing_limitations.size() == 1);
+    result = investigation_registry.execute({"investigate.graph.expand",
+        R"({"case_id":"graph-case","case_revision":1,"center_entity_id":"user:logs:alice"})"});
+    assert(result.ok && result.output.find("host:logs:app1") != std::string::npos &&
+        result.output.find("event:1") != std::string::npos);
+    const auto timestamp_column = std::find_if(investigation_store.source.columns.begin(),
+        investigation_store.source.columns.end(), [](const auto & column) { return column.name == "@timestamp"; });
+    const auto saved_timestamp_column = *timestamp_column;
+    investigation_store.source.columns.erase(timestamp_column);
+    result = investigation_registry.execute({"investigate.collect",
+        R"({"case_id":"graph-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
+    assert(!result.ok && result.failure_code == "tool.investigation.timestamp_unmapped" &&
+        investigation_store.cases.at("graph-case").revision == 1);
+    investigation_store.source.columns.push_back(saved_timestamp_column);
+    const auto resource_request_count_before_collection = investigation_resources.requests.size();
+    result = investigation_registry.execute({"investigate.collect",
+        R"({"case_id":"graph-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
+    assert(result.ok && result.output.find("collected_events") != std::string::npos &&
+        investigation_store.cases.at("graph-case").events.size() == 2 &&
+        investigation_store.cases.at("graph-case").events[1].source_document_id == "doc-2" &&
+        investigation_store.cases.at("graph-case").events[1].source_index == "logs-2026.10" &&
+        investigation_store.cases.at("graph-case").events[1].time.has_event_time &&
+        investigation_store.cases.at("graph-case").events[1].time.event_time_ms == 300 &&
+        investigation_store.cases.at("graph-case").events[1].entity_roles.at("user") == "entity:logs:user:alice" &&
+        investigation_store.cases.at("graph-case").events[1].entity_roles.at("host") == "entity:logs:host:db2" &&
+        investigation_store.cases.at("graph-case").entities.size() == 4 &&
+        investigation_resources.requests.size() == resource_request_count_before_collection + 2);
+    assert(std::any_of(investigation_store.cases.at("graph-case").relations.begin(),
+        investigation_store.cases.at("graph-case").relations.end(), [](const auto & relation) {
+            return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), "event:1") !=
+                relation.evidence_event_ids.end();
+        }));
+    {
+        auto paged=investigation_store.cases.at("graph-case");
+        paged.case_id="paged-search";paged.revision=1;paged.entities.clear();paged.events.clear();
+        paged.relations.clear();paged.claims.clear();paged.gaps.clear();paged.analyses.clear();
+        for(auto & source:paged.sources) {source.processing_status="not_collected";source.complete=false;source.processing_limitations.clear();}
+        investigation_store.cases.emplace(paged.case_id,paged);
+        auto page=nlohmann::json::parse(investigation_store.virtual_page);
+        page["rows"][0][0]="page-one";page["rows"][0][6]="page-one";
+        page["complete"]=false;page["scan_truncated"]=true;page["result_truncated"]=true;
+        page["total"]=2;page["total_exact"]=true;
+        investigation_store.virtual_pages[0]=page.dump();
+        page["rows"][0][0]="page-two";page["rows"][0][6]="page-two";
+        page["complete"]=true;page["scan_truncated"]=false;page["result_truncated"]=false;
+        investigation_store.virtual_pages[1]=page.dump();
+        nlohmann::json args={{"case_id",paged.case_id},{"expected_revision",1},
+            {"dataset","dataset://investigation/logs/security"},{"identifier_field","user.id"},{"identifier_value","alice"},{"limit",1}};
+        const auto first=investigation_registry.execute({"investigate.collect",args.dump()});
+        assert(first.ok);
+        const auto saved=nlohmann::json::parse(first.output);
+        assert(saved["more_data"]=="yes" && saved["next_offset"]==1 && !saved["next_cursor"].get<std::string>().empty());
+        const auto query_count=investigation_store.executed_queries.size();
+        const auto resource_count=investigation_resources.requests.size();
+        // Retry after a lost response, then reconstruct the actual persisted codec.
+        const auto replay=investigation_registry.execute({"investigate.collect",args.dump()});
+        assert(replay.ok && nlohmann::json::parse(replay.output)["reused"]==true &&
+            investigation_store.executed_queries.size()==query_count && investigation_resources.requests.size()==resource_count);
+        common_investigation_case_revision restored;
+        assert(common_investigation_case_from_json(common_investigation_case_to_json(investigation_store.cases.at(paged.case_id)),restored,error));
+        investigation_store.cases[paged.case_id]=restored;
+        args["expected_revision"]=2;args["cursor"]=saved["next_cursor"];
+        auto other=args;other["identifier_value"]="bob";
+        assert(!investigation_registry.execute({"investigate.collect",other.dump()}).ok && investigation_store.executed_queries.size()==query_count);
+        const auto second=investigation_registry.execute({"investigate.collect",args.dump()});
+        assert(second.ok);
+        const auto end=nlohmann::json::parse(second.output);
+        assert(end["more_data"]=="no" && end["exhausted"]==true && end["complete"]==false &&
+            end["next_cursor"]=="" && end["pagination_consistency"]=="unverified_live_offset" &&
+            investigation_store.executed_queries.back()["offset"]==1 && investigation_store.cases.at(paged.case_id).events.size()==2);
+        const auto after_second=investigation_store.executed_queries.size();
+        const auto second_replay=investigation_registry.execute({"investigate.collect",args.dump()});
+        assert(second_replay.ok && nlohmann::json::parse(second_replay.output)["reused"]==true &&
+            investigation_store.executed_queries.size()==after_second && investigation_store.cases.at(paged.case_id).revision==3);
+        args.erase("cursor");args["expected_revision"]=3;
+        const auto first_replay=investigation_registry.execute({"investigate.collect",args.dump()});
+        assert(first_replay.ok && nlohmann::json::parse(first_replay.output)["revision"]==3 &&
+            nlohmann::json::parse(first_replay.output)["published_revision"]==2);
+        const auto sources=investigation_registry.execute({"investigate.case.items",nlohmann::json{
+            {"case_id",paged.case_id},{"case_revision",3},{"type","sources"}}.dump()});
+        assert(sources.ok && sources.output.find("collection_context")!=std::string::npos && sources.output.find("page-two")==std::string::npos);
+        args["idempotency_key"]="explicit-refresh";
+        const auto refreshed=investigation_registry.execute({"investigate.collect",args.dump()});
+        assert(refreshed.ok && nlohmann::json::parse(refreshed.output)["reused"]==false &&
+            investigation_store.executed_queries.size()==after_second+1 && investigation_store.cases.at(paged.case_id).events.size()==2);
+        args["expected_revision"]=4;args["identifier_value"]="bob";
+        assert(!investigation_registry.execute({"investigate.collect",args.dump()}).ok);
+        args["identifier_value"]="alice";args["idempotency_key"]="malformed-page";
+        investigation_store.virtual_pages[0]=R"({"columns":["event.id"],"rows":[[]],"complete":true})";
+        const auto invalid=investigation_registry.execute({"investigate.collect",args.dump()});
+        assert(!invalid.ok && invalid.failure_code=="tool.investigation.collect_invalid_result" &&
+            investigation_store.cases.at(paged.case_id).revision==4);
+        investigation_store.virtual_pages.clear();
+    }
+    const auto & newly_collected_event = investigation_store.cases.at("graph-case").events[1];
+    if (newly_collected_event.outcome != "success" || newly_collected_event.entity_roles.at("user") != "entity:logs:user:alice" ||
+            newly_collected_event.entity_roles.at("host") != "entity:logs:host:db2") {
+        std::cerr << "new authentication events must preserve user and host endpoint roles\n";
+        return 20;
+    }
+    const auto collected_auth_relation = std::find_if(investigation_store.cases.at("graph-case").relations.begin(),
+        investigation_store.cases.at("graph-case").relations.end(), [](const auto & relation) {
+            return !relation.evidence_event_ids.empty() && relation.evidence_event_ids[0] ==
+                "event:logs:logs-2026.10:doc-2";
+        });
+    if (collected_auth_relation == investigation_store.cases.at("graph-case").relations.end() ||
+            collected_auth_relation->from_entity_id != "entity:logs:user:alice" ||
+            collected_auth_relation->to_entity_id != "entity:logs:host:db2") {
+        std::cerr << "configured authentication profiles must produce the declared directed endpoints\n";
+        return 21;
+    }
+    result = investigation_registry.execute({"investigate.analyze",
+        R"({"case_id":"graph-case","analysis":"graph_metrics"})"});
+    assert(result.ok && result.output.find("betweenness_normalized") != std::string::npos &&
+        result.output.find("\"complete\":true") != std::string::npos);
+    result = investigation_registry.execute({"investigate.analyze",
+        R"({"case_id":"graph-case","analysis":"temporal_path","start_entity_id":"user:logs:alice","goal_entity_id":"host:logs:app1"})"});
+    assert(result.ok && result.output.find("event:1") != std::string::npos &&
+        result.output.find("shortest_hop_count") != std::string::npos);
+    const auto evidence_relation = std::find_if(investigation_store.cases.at("graph-case").relations.begin(),
+        investigation_store.cases.at("graph-case").relations.end(), [](const auto & relation) {
+            return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), "event:1") !=
+                relation.evidence_event_ids.end();
+        });
+    assert(evidence_relation != investigation_store.cases.at("graph-case").relations.end());
+    investigation_store.cases.at("graph-case").events[1].entity_ids.push_back("user:logs:alice");
+    evidence_relation->evidence_event_ids.push_back(investigation_store.cases.at("graph-case").events[1].id);
+    result = investigation_registry.execute({"investigate.events",
+        nlohmann::json{{"case_id", "graph-case"}, {"case_revision", 2}, {"relation_id", evidence_relation->id}, {"limit", 1}}.dump()});
+    assert(result.ok && result.output.find("doc-1") != std::string::npos && result.output.find("next_cursor") != std::string::npos &&
+        result.output.find("\"has_more\":true") != std::string::npos);
+    const auto event_page = nlohmann::json::parse(result.output);
+    result = investigation_registry.execute({"investigate.events", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 2}, {"relation_id", evidence_relation->id},
+        {"limit", 1}, {"cursor", event_page.at("next_cursor")}}.dump()});
+    assert(result.ok && result.output.find("doc-2") != std::string::npos && result.output.find("\"has_more\":false") != std::string::npos);
+    result = investigation_registry.execute({"investigate.events", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 1}, {"relation_id", evidence_relation->id}}.dump()});
+    assert(!result.ok && result.failure_code == "tool.investigation.stale_cursor");
+    result = investigation_registry.execute({"investigate.events", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 2}, {"entity_id", "alice"}}.dump()});
+    assert(!result.ok && result.failure_code == "tool.investigation.entity_unavailable");
+    result = investigation_registry.execute({"investigate.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 2}, {"type", "entities"}, {"limit", 1}}.dump()});
+    assert(result.ok && result.output.find("\"has_more\":true") != std::string::npos);
+    const auto item_page = nlohmann::json::parse(result.output);
+    result = investigation_registry.execute({"investigate.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 2}, {"type", "entities"},
+        {"limit", 1}, {"cursor", item_page.at("next_cursor")}}.dump()});
+    assert(result.ok && result.output.find("\"case_revision\":2") != std::string::npos &&
+        result.output.find("\"items\":[") != std::string::npos);
+    result = investigation_registry.execute({"investigate.case.items",
+        R"({"case_id":"graph-case","case_revision":"2","type":"entities"})"});
+    assert(!result.ok);
+    result = investigation_registry.execute({"investigate.claim.hypothesize",
+        R"({"case_id":"graph-case","expected_revision":2,"claim_id":"h-1","text":"The login may be unusual.","supporting_event_ids":["event:1"]})"});
+    assert(result.ok && result.output.find("hypothesis") != std::string::npos &&
+        investigation_store.cases.at("graph-case").revision == 3 &&
+        investigation_store.cases.at("graph-case").claims[0].state == common_investigation_claim_state::hypothesis);
+    agent_resource_put_request report_snapshot_request;
+    report_snapshot_request.name="selected-visualization.png";
+    report_snapshot_request.mime_type="image/png";
+    report_snapshot_request.bytes=base64::decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==");
+    report_snapshot_request.bytes_are_authoritative=true;
+    report_snapshot_request.scope=common_runtime_resource_scope::session;
+    report_snapshot_request.source_provider="native";
+    report_snapshot_request.source_tool="visualize.snapshot";
+    report_snapshot_request.lineage.parent_uri="resource://test/visualization.json";
+    report_snapshot_request.lineage.chunk_count=1;
+    report_snapshot_request.lineage.byte_length=report_snapshot_request.bytes.size();
+    report_snapshot_request.lineage.derivation="visualize.snapshot:png-v1";
+    agent_resource_descriptor report_snapshot;
+    assert(investigation_resources.put_bytes(report_snapshot_request,report_snapshot,error));
+    const auto resource_request_count_before_report = investigation_resources.requests.size();
+    result = investigation_registry.execute({"investigate.report.compose", nlohmann::json{
+        {"case_id", "graph-case"}, {"expected_revision", 3},
+        {"visualization_uris", {report_snapshot.uri}}}.dump()});
+    assert(result.ok && result.output.find("report_uri") != std::string::npos &&
+        investigation_resources.requests.size() == resource_request_count_before_report + 3);
+    const auto composed_report = nlohmann::json::parse(result.output);
+    const auto & frozen_report_markdown = investigation_resources.contents.at(
+        composed_report.at("markdown_uri").get<std::string>());
+    assert(frozen_report_markdown.find("## Timeline") != std::string::npos &&
+        frozen_report_markdown.find("1970-01-01T00:00:00.200Z (event_time_ms=200)") != std::string::npos &&
+        frozen_report_markdown.find("## Visualization snapshots") != std::string::npos &&
+        frozen_report_markdown.find(report_snapshot.uri) != std::string::npos &&
+        frozen_report_markdown.find("authenticated_to") != std::string::npos &&
+        frozen_report_markdown.find("Hypothesis:") != std::string::npos &&
+        frozen_report_markdown.find("event:1") != std::string::npos);
+    assert(std::any_of(result.resource_refs.begin(), result.resource_refs.end(), [&](const auto & resource) {
+        return resource.uri == composed_report.at("report_uri").get<std::string>() &&
+            resource.mime_type == "application/vnd.llama-agent.document+json";
+    }));
+    common_agent_artifact_document reopened_investigation_report;
+    assert(common_agent_artifact_document_from_json(
+        investigation_resources.contents.at(composed_report.at("report_uri").get<std::string>()),
+        reopened_investigation_report, error));
+    assert(reopened_investigation_report.kind == common_agent_artifact_document_kind::document &&
+        reopened_investigation_report.snapshot_uri == composed_report.at("source_manifest_uri") &&
+        reopened_investigation_report.sections.size() == 1);
+    std::string reopened_report_markdown;
+    assert(common_agent_artifact_render_markdown(reopened_investigation_report, reopened_report_markdown, error) &&
+        reopened_report_markdown.find(report_snapshot.uri) != std::string::npos &&
+        reopened_report_markdown.find("## Timeline") != std::string::npos);
+    result = investigation_registry.execute({"investigate.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 3}, {"type", "reports"}, {"limit", 10}}.dump()});
+    assert(result.ok);
+    const auto indexed_reports = nlohmann::json::parse(result.output);
+    assert(indexed_reports.at("items").size() == 1 &&
+        indexed_reports.at("items")[0].at("report_uri") == composed_report.at("report_uri") &&
+        indexed_reports.at("items")[0].at("case_revision") == 3);
+    const auto graph_case_report = std::find_if(investigation_store.reports.begin(), investigation_store.reports.end(),
+        [](const auto & report) { return report.case_id == "graph-case"; });
+    assert(graph_case_report != investigation_store.reports.end());
+    auto second_indexed_report = *graph_case_report;
+    second_indexed_report.content_fingerprint = "sha256:second-report";
+    second_indexed_report.report_uri = "resource://reports/second.json";
+    investigation_store.reports.push_back(second_indexed_report);
+    result = investigation_registry.execute({"investigate.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 3}, {"type", "reports"}, {"limit", 1}}.dump()});
+    assert(result.ok);
+    const auto first_report_page = nlohmann::json::parse(result.output);
+    assert(first_report_page.at("items").size() == 1 && first_report_page.at("has_more") == true);
+    result = investigation_registry.execute({"investigate.case.items", nlohmann::json{
+        {"case_id", "graph-case"}, {"case_revision", 3}, {"type", "reports"}, {"limit", 1},
+        {"cursor", first_report_page.at("next_cursor")}}.dump()});
+    assert(result.ok && nlohmann::json::parse(result.output).at("items").size() == 1 &&
+        nlohmann::json::parse(result.output).at("has_more") == false);
+    auto foreign_scope = investigation_bindings;
+    foreign_scope.tool_scope.namespace_id = "tenant-b";
+    common_tool_registry foreign_investigation_registry;
+    assert(common_register_native_tool_adapters(investigation_catalog, "investigation",
+        foreign_scope, foreign_investigation_registry, adapters, error));
+    result = foreign_investigation_registry.execute({"investigate.case.open",
+        R"({"case_id":"graph-case"})"});
+    assert(!result.ok && result.failure_code == "tool.investigation.case_unavailable");
+
+    auto collision_case = investigation_case;
+    collision_case.case_id = "index-id-collision-case";
+    collision_case.entities.clear(); collision_case.events.clear(); collision_case.relations.clear();
+    collision_case.claims.clear(); collision_case.gaps.clear(); collision_case.revision = 1;
+    collision_case.fingerprint.clear();
+    investigation_store.seed(collision_case);
+    investigation_store.virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","@source.index","@source.id"],"rows":[["same-id","authentication","1970-01-01T00:00:00.300Z","alice","app-a","logs-a","same-id"],["same-id","not_authentication","1970-01-01T00:00:00.400Z","alice","app-b","logs-b","same-id"]],"complete":true,"scan_truncated":false,"result_truncated":false})";
+    result = investigation_registry.execute({"investigate.collect", R"({"case_id":"index-id-collision-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
+    const auto & collision_events = investigation_store.cases.at("index-id-collision-case").events;
+    assert(result.ok && collision_events.size() == 2 && collision_events[0].source_document_id == "same-id" &&
+        collision_events[1].source_document_id == "same-id" && collision_events[0].source_index != collision_events[1].source_index &&
+        collision_events[0].id != collision_events[1].id);
+    assert(std::none_of(investigation_store.cases.at("index-id-collision-case").relations.begin(),
+        investigation_store.cases.at("index-id-collision-case").relations.end(), [&](const auto & relation) {
+            return std::find(relation.evidence_event_ids.begin(), relation.evidence_event_ids.end(), collision_events[1].id) !=
+                relation.evidence_event_ids.end();
+        }));
+    const auto & collision_gaps = investigation_store.cases.at("index-id-collision-case").gaps;
+    if (std::find(collision_gaps.begin(), collision_gaps.end(),
+            "one_or_more_events_have_no_declared_relation_profile_and_remain_unlinked_observations") == collision_gaps.end() ||
+            result.output.find("unlinked_observations") == std::string::npos) {
+        std::cerr << "unmatched profile limitations must survive relation building and publication\n";
+        return 22;
+    }
+    auto outcome_case = collision_case;
+    outcome_case.case_id = "authentication-outcomes";
+    investigation_store.source.columns.push_back({"event_outcome", common_agent_dataset_column_type::string, true});
+    investigation_store.seed(outcome_case);
+    investigation_store.virtual_page = R"({"columns":["event.id","event.type","@timestamp","user.id","host.name","event_outcome"],"rows":[["success","authentication",300,"alice","app","success"],["failed","authentication",400,"alice","app","failure"],["unknown","authentication",500,"alice","app",null]],"complete":true,"scan_truncated":false,"result_truncated":false})";
+    result = investigation_registry.execute({"investigate.collect", R"({"case_id":"authentication-outcomes","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user.id","identifier_value":"alice","limit":20})"});
+    const auto & outcomes = investigation_store.cases.at("authentication-outcomes");
+    if (!result.ok || outcomes.events.size() != 3 || outcomes.relations.size() != 1 ||
+            outcomes.events[0].outcome != "success" || outcomes.events[1].outcome != "failure" ||
+            !outcomes.events[2].outcome.empty() || outcomes.relations[0].event_count != 1 ||
+            outcomes.relations[0].evidence_event_ids != std::vector<std::string>{outcomes.events[0].id} ||
+            outcomes.relations[0].first_seen_ms != 300 || outcomes.relations[0].last_seen_ms != 300 ||
+            outcomes.gaps.empty() ||
+            nlohmann::json::parse(investigation_resources.requests.back().text)["events"][1]["outcome"] != "failure") {
+        std::cerr << "collection must preserve outcomes without counting failed or unknown logons as authenticated access\n";
+        return 61;
+    }
+    result = investigation_registry.execute({"investigate.events", R"({"case_id":"authentication-outcomes","case_revision":2,"limit":20})"});
+    const auto outcome_page = nlohmann::json::parse(result.output);
+    if (!result.ok || outcome_page["events"].size() != 3 ||
+            outcome_page["events"][1]["outcome"] != "failure") {
+        std::cerr << "paginated event consumers must receive the retained source outcome\n";
+        return 62;
+    }
+    auto logical_case = collision_case;
+    logical_case.case_id = "logical-field-case";
+    investigation_store.seed(logical_case);
+    investigation_store.source.columns = {{"event_id", common_agent_dataset_column_type::string, false},
+        {"event_type", common_agent_dataset_column_type::string, false},
+        {"event_time", common_agent_dataset_column_type::string, false},
+        {"user_id", common_agent_dataset_column_type::string, false},
+        {"host_name", common_agent_dataset_column_type::string, false},
+        {"process_id", common_agent_dataset_column_type::string, false},
+        {"process_start_time", common_agent_dataset_column_type::string, false}};
+    investigation_store.virtual_page = R"({"columns":["event_id","event_type","event_time","user_id","host_name","process_id","process_start_time"],"rows":[["logical-doc","authentication",300,"alice","app-logical","42","start-1"]],"complete":false,"scan_truncated":true,"result_truncated":true})";
+    result = investigation_registry.execute({"investigate.collect", R"({"case_id":"logical-field-case","expected_revision":1,"dataset":"dataset://investigation/logs/security","identifier_field":"user_id","identifier_value":"alice","limit":20})"});
+    const auto & logical_events = investigation_store.cases.at("logical-field-case").events;
+    if (!result.ok || logical_events.size() != 1 ||
+            logical_events[0].entity_roles.at("host") != "entity:logs:host:app-logical" ||
+            logical_events[0].entity_roles.at("process") != "entity:logs:process:app-logical:42@start-1" ||
+            result.output.find("source page is partial") == std::string::npos) {
+        std::cerr << "logical source mappings and partial collection limitations must reach the published case\n";
+        return 23;
+    }
+    const auto normalized_evidence = nlohmann::json::parse(investigation_resources.requests.back().text);
+    if (normalized_evidence.at("events")[0].at("entity_roles").at("host") !=
+            logical_events[0].entity_roles.at("host") ||
+            normalized_evidence.at("events")[0].at("collected_time_ms") != logical_events[0].time.collected_time_ms) {
+        std::cerr << "immutable normalization evidence must preserve endpoint roles and collection time\n";
+        return 24;
+    }
+    // Tool-level contracts for uploaded logs use the same retained-resource,
+    // normalization, publication and paginated event paths as search pages.
+    agent_resource_put_request uploaded_log;
+    uploaded_log.name = "uploaded-investigation.jsonl";
+    uploaded_log.mime_type = "text/plain";
+    uploaded_log.scope = common_runtime_resource_scope::project;
+    uploaded_log.bytes = "{\"type\":\"authentication\",\"ts\":500,\"user\":\"alex\",\"host\":\"app\"}\ninvalid\n{\"type\":\"network\",\"ts\":700}\n";
+    agent_resource_descriptor uploaded_log_descriptor;
+    if (!investigation_resources.put_bytes(uploaded_log, uploaded_log_descriptor, error)) return 25;
+    result = investigation_registry.execute({"investigate.case.create",nlohmann::json{
+        {"title","Uploaded logs"},{"question","What do these records show?"},
+        {"resource_uri",uploaded_log_descriptor.uri},{"resource_kind","log_file"}}.dump()});
+    if (!result.ok) { std::cerr << "uploaded log case creation failed\n"; return 26; }
+    const auto uploaded_case_id = nlohmann::json::parse(result.output).at("case_id").get<std::string>();
+    const auto uploaded_source_id = investigation_store.cases.at(uploaded_case_id).sources.front().id;
+    nlohmann::json import_args = {{"case_id",uploaded_case_id},{"expected_revision",1},
+        {"source_id",uploaded_source_id},{"format","jsonl"},{"limit",2},{"idempotency_key","page-one"},
+        {"fields",{{"event.type","type"},{"@timestamp","ts"},{"user.id","user"},{"host.id","host"}}}};
+    result = investigation_registry.execute({"investigate.log.import",import_args.dump()});
+    if (!result.ok) { std::cerr << "uploaded log import failed: " << result.failure_code << '\n'; return 27; }
+    const auto imported_page = nlohmann::json::parse(result.output);
+    if (imported_page.at("collected_events") != 1 || imported_page.at("rejected_count") != 1 ||
+            imported_page.at("exhausted") != false || imported_page.at("next_cursor").get<std::string>().empty()) return 28;
+    const auto first_log_event = investigation_store.cases.at(uploaded_case_id).events.front();
+    if (first_log_event.source_line != 1 || first_log_event.source_byte_offset != 0 ||
+            first_log_event.source_byte_length != uploaded_log.bytes.find('\n') || first_log_event.parser_version.empty()) return 29;
+    result = investigation_registry.execute({"investigate.log.import",import_args.dump()});
+    if (!result.ok || nlohmann::json::parse(result.output).at("reused") != true ||
+            investigation_store.cases.at(uploaded_case_id).revision != 2) return 30;
+    auto wrong_retry = import_args; wrong_retry["format"] = "csv";
+    result = investigation_registry.execute({"investigate.log.import",wrong_retry.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.idempotency_conflict") return 31;
+    import_args["expected_revision"] = 2; import_args["idempotency_key"] = "page-two";
+    import_args["cursor"] = imported_page.at("next_cursor");
+    result = investigation_registry.execute({"investigate.log.import",import_args.dump()});
+    if (!result.ok) { std::cerr << "uploaded log continuation failed\n"; return 32; }
+    const auto exhausted_page = nlohmann::json::parse(result.output);
+    const auto & imported_case = investigation_store.cases.at(uploaded_case_id);
+    if (exhausted_page.at("exhausted") != true || exhausted_page.at("source_complete") != false ||
+            imported_case.events.size() != 2 || imported_case.sources.front().log_import_next_record != 3 ||
+            imported_case.sources.front().log_import_rejected_records != 1 || imported_case.sources.front().complete) return 33;
+    result = investigation_registry.execute({"investigate.events",nlohmann::json{
+        {"case_id",uploaded_case_id},{"case_revision",3}}.dump()});
+    if (!result.ok || nlohmann::json::parse(result.output).at("events").size() != 2)
+        { std::cerr << "uploaded log events require a window-free read in document-only cases\n"; return 34; }
+    result = investigation_registry.execute({"investigate.events",nlohmann::json{
+        {"case_id",uploaded_case_id},{"case_revision",3},{"entity_id","entity:any"},{"relation_id","relation:any"}}.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.events_invalid") return 43;
+    const auto & log_source = imported_case.sources.front();
+    const auto actor_offset = uploaded_log.bytes.find("alex");
+    result = investigation_registry.execute({"investigate.statement.record",nlohmann::json{
+        {"case_id",uploaded_case_id},{"expected_revision",3},{"idempotency_key","anchored-actor"},
+        {"analysis_kind","actor_relationship"},{"source_ids",nlohmann::json::array({uploaded_source_id})},
+        {"comparisons",nlohmann::json::array()},{"statements",nlohmann::json::array({{
+            {"id","log-statement"},{"kind","statement"},{"text","The log names alex."},
+            {"anchor",{{"source_id",uploaded_source_id},{"resource_uri",log_source.representation_uri},
+                {"byte_offset",actor_offset},{"byte_length",4},{"quote","alex"}}},
+            {"mentions",nlohmann::json::array({{{"name","alex"},{"kind","person"},{"byte_offset",actor_offset}}})}}})}}.dump()});
+    if (!result.ok || investigation_store.cases.at(uploaded_case_id).actor_mentions.size() != 1 ||
+            investigation_store.cases.at(uploaded_case_id).actors.size() != 1) return 35;
+    const auto reviewed_case_id = uploaded_case_id;
+    // Ordinary registered adapters have no user authority, regardless of args.
+    nlohmann::json user_review_args={{"case_id",reviewed_case_id},{"expected_revision",4},
+        {"idempotency_key","user-association"},{"actor_ids",nlohmann::json::array({"unknown-a","unknown-b"})},
+        {"kind","identity"},{"decision","same_actor"}};
+    result=investigation_registry.execute({"investigate.association.review",user_review_args.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.user_review_required") return 36;
+    // Add another independently anchored candidate through the model proposal
+    // path before exercising the host-only review binding.
+    auto & review_case=investigation_store.cases.at(reviewed_case_id);
+    auto second_mention=review_case.actor_mentions.front(); second_mention.id="separate-mention";
+    review_case.actor_mentions.push_back(second_mention);
+    review_case.actors.push_back({"separate-actor","alex",{second_mention.id}});
+    user_review_args["actor_ids"]=nlohmann::json::array({review_case.actors.front().id,"separate-actor"});
+    auto review_bindings=investigation_bindings;
+    review_bindings.investigation_reviewer_id="authenticated-session:tenant-a/session-a";
+    common_tool_registry review_registry;
+    if (!common_register_native_tool_adapters(investigation_catalog,"investigation",review_bindings,review_registry,adapters,error)) return 37;
+    result=review_registry.execute({"investigate.association.review",user_review_args.dump()});
+    if (!result.ok || investigation_store.cases.at(reviewed_case_id).association_reviews.size() != 1 ||
+        investigation_store.cases.at(reviewed_case_id).revision != 5) return 38;
+    result=review_registry.execute({"investigate.association.review",user_review_args.dump()});
+    if (!result.ok || nlohmann::json::parse(result.output).at("reused") != true ||
+        investigation_store.cases.at(reviewed_case_id).association_reviews.size() != 1) return 39;
+    auto changed_review=user_review_args; changed_review["decision"]="different_actors";
+    result=review_registry.execute({"investigate.association.review",changed_review.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.idempotency_conflict") return 40;
+    auto stale_review=user_review_args; stale_review["idempotency_key"]="another-review";
+    result=review_registry.execute({"investigate.association.review",stale_review.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.revision_conflict") return 41;
+    result=investigation_registry.execute({"investigate.case.items",nlohmann::json{
+        {"case_id",reviewed_case_id},{"case_revision",5},{"type","actor_groups"}}.dump()});
+    if (!result.ok || nlohmann::json::parse(result.output).at("items").size() != 1) return 42;
+    // Unknown evidence is invalid input, never a revision conflict. The
+    // rejected proposal must not publish a claim or advance the revision.
+    const auto baseline = investigation_store.cases.at(reviewed_case_id).revision;
+    const auto claims_before = investigation_store.cases.at(reviewed_case_id).claims.size();
+    result = investigation_registry.execute({"investigate.claim.hypothesize", nlohmann::json{
+        {"case_id", reviewed_case_id}, {"expected_revision", baseline}, {"claim_id", "unknown-evidence-regression"},
+        {"text", "An explicitly proposed hypothesis"}, {"supporting_event_ids", nlohmann::json::array({"invented-event"})}}.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.publication_invalid" ||
+        result.failure_class != common_tool_failure_class::validation ||
+        investigation_store.cases.at(reviewed_case_id).revision != baseline ||
+        investigation_store.cases.at(reviewed_case_id).claims.size() != claims_before) return 43;
+    investigation_store.fail_publication = true;
+    result = investigation_registry.execute({"investigate.claim.hypothesize", nlohmann::json{
+        {"case_id", reviewed_case_id}, {"expected_revision", baseline}, {"claim_id", "storage-failure-regression"},
+        {"text", "An unsupported but explicitly labeled hypothesis"}}.dump()});
+    if (result.ok || result.failure_code != "tool.investigation.publication_failed" ||
+        result.failure_class != common_tool_failure_class::execution ||
+        investigation_store.cases.at(reviewed_case_id).revision != baseline) return 44;
+    investigation_store.fail_publication = false;
+    std::filesystem::remove_all(repository);
+    return 0;
+}

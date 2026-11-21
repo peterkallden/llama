@@ -2,6 +2,9 @@
 #include <atomic>
 #include <thread>
 #include "base64.hpp"
+#include "src/llama-ext.h"
+#include "src/llama-adapter.h"
+#include "src/llama-context.h"
 #include "server-chat.h"
 #include "server-common.h"
 #include "server-decision.h"
@@ -25,6 +28,7 @@
 #include "base64.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cinttypes>
 #include <deque>
@@ -338,6 +342,7 @@ struct server_slot {
     bool has_next_token = true;
     bool has_new_line   = false;
     bool truncated      = false;
+    bool flydelta_overlay_applied = false;
 
     stop_type stop;
 
@@ -399,12 +404,30 @@ struct server_slot {
     }
 
     std::vector<common_adapter_lora_info> lora;
+    // The active request-scoped control vector. It stays attached to the
+    // slot while its prompt/KV state is reusable.
+    server_task_cvec_ptr cvec;
+    server_task_residual_patch_ptr residual_patch;
+    llama_residual_patch_ref residual_patch_ref;
+    bool residual_patch_applied = false;
+    bool cvec_batch_enabled = false;
+    server_task_capture_request_ptr capture_request;
+    server_task_capture_result capture_result;
+    server_task_layer_reduction_result layer_reduction_result;
     int32_t alora_invocation_start = -1;
 
     // sampling
     json json_schema;
 
     common_sampler_ptr smpl;
+
+    // Internal teacher-forced scoring state.  The target sequence is fed
+    // through the normal decode loop one token at a time, but is never
+    // sampled or exposed as a completion.
+    llama_tokens teacher_forced_tokens;
+    size_t teacher_forced_index = 0;
+    double teacher_forced_logprob = 0.0;
+    bool teacher_forced_device = false;
 
     llama_token sampled; // in speculative mode, this is the last accepted token
 
@@ -455,6 +478,12 @@ struct server_slot {
         generated_tokens.clear();
         generated_token_probs.clear();
         json_schema = json();
+        teacher_forced_tokens.clear();
+        teacher_forced_index = 0;
+        teacher_forced_logprob = 0.0;
+        teacher_forced_device = false;
+        capture_request.reset();
+        capture_result = {};
 
         task_prev = std::move(task);
         task.reset();
@@ -508,9 +537,25 @@ struct server_slot {
 
     bool need_embd() const {
         GGML_ASSERT(task);
+        // Layer-input capture uses the dedicated embeddings_layer_inp output
+        // buffers and must not switch the whole context into embedding mode.
+        // Global embedding mode marks every prompt token as an output, which
+        // conflicts with the server's normal n_outputs_max budget.
         return task->need_embd();
     }
 
+    bool needs_embedding_output_at(size_t token_index) const {
+        GGML_ASSERT(task);
+        if (task->need_embd()) {
+            return true;
+        }
+        return task->params.capture && task->params.capture->enabled &&
+            token_index + 1 == static_cast<size_t>(task->n_tokens());
+    }
+
+    // if the context does not have a memory module then all embeddings have to be computed within a single ubatch
+    // also we cannot split if the pooling would require any past tokens
+    // (MTP supports splitting — uses task->need_embd() not need_embd())
     bool can_split() const {
         GGML_ASSERT(task);
         // a decision over a non-causal context reads the whole prompt in one batch
@@ -555,9 +600,17 @@ struct server_slot {
             return false;
         }
 
+        const bool cvec_equal = server_task_cvec_equal(cvec, other_slot.cvec);
+        const bool cvec_batch_compatible = cvec_batch_enabled &&
+            other_slot.cvec_batch_enabled &&
+            server_task_cvec_batch_compatible(cvec, other_slot.cvec);
+
+        const bool residual_patch_compatible = !residual_patch && !other_slot.residual_patch;
         return task->type == other_slot.task->type
             && inp_embd.size() == other_slot.inp_embd.size()
-            && are_lora_equal(lora, other_slot.lora);
+            && are_lora_equal(lora, other_slot.lora)
+            && (cvec_equal || cvec_batch_compatible)
+            && residual_patch_compatible;
     }
 
     // returns -1 if the generation is limitless
@@ -574,7 +627,7 @@ struct server_slot {
     }
 
     bool can_speculate() const {
-        return !!spec;
+        return !!spec && task && task->need_sampling();
     }
 
     // at temp 0 both p and q are point masses, so rejection is the same as sample-and-match
@@ -1070,6 +1123,13 @@ public:
 
     server_context_impl() {
         mtmd_helper_log_set(common_log_default_callback, nullptr);
+
+        const char * opt_in = getenv("LLAMA_SERVER_PER_SEQUENCE_CVEC");
+        cvec_batch_enabled = opt_in != nullptr &&
+            (std::string(opt_in) == "1" || std::string(opt_in) == "true");
+        if (cvec_batch_enabled) {
+            SRV_INF("%s", "per-sequence cvec batching is opt-in enabled\n");
+        }
     }
 
     ~server_context_impl() {
@@ -1088,16 +1148,58 @@ public:
         metrics.reset_bucket();
     }
 
+    bool per_sequence_cvec_batch_enabled() const {
+        return cvec_batch_enabled;
+    }
+
+    void set_per_sequence_cvec_batch_enabled(const bool enabled) {
+        cvec_batch_enabled = enabled;
+    }
+
+    bool per_sequence_factorized_cvec_batch_enabled() const {
+        return cvec_batch_enabled && factorized_cvec_batch_enabled;
+    }
+
+    void set_per_sequence_factorized_cvec_batch_enabled(const bool enabled) {
+        factorized_cvec_batch_enabled = enabled;
+    }
+
+    void set_teacher_scoring_backend(const std::string & backend) {
+        if (backend != "auto" && backend != "cpu" && backend != "backend") {
+            throw std::invalid_argument("teacher-scoring backend must be auto, cpu, or backend");
+        }
+        teacher_scoring_backend = backend;
+    }
+
+    bool agent_trace_enabled() const {
+        return trace_enabled;
+    }
+
+    void set_agent_trace_enabled(const bool enabled) {
+        trace_enabled = enabled;
+    }
+
 private:
     // note: accessing these fields outside of this class is not thread-safe
     // use server_context methods instead
 
     common_params params_base;
+    bool trace_enabled = false;
 
     // note: keep these alive - they determine the lifetime of the model, context, etc.
     common_init_result_ptr llama_init;
 
     llama_context * ctx_tgt = nullptr;
+
+    // Experimental opt-in. The scalar server path remains authoritative
+    // unless this is explicitly enabled and the current batch is compatible.
+    bool cvec_batch_enabled = false;
+    bool factorized_cvec_batch_enabled = false;
+    std::string teacher_scoring_backend = "auto";
+    bool cvec_batch_active = false;
+    server_task_cvec_batch cvec_batch_request;
+    llama_adapter_cvec_batch cvec_batch_device;
+    llama_layer_reduction_ref layer_reduction_ref;
 
     server_batch batch;
 
@@ -1133,6 +1235,14 @@ private:
 
     std::unique_ptr<server_prompt_cache> prompt_cache;
 
+    // Prompt-cache entries do not carry the request cvec identity. Once a
+    // cvec-backed task enters this resident context, stop loading or saving
+    // the global prompt cache for subsequent tasks. Otherwise a cache entry
+    // produced under one overlay could be selected for a task with another
+    // overlay (or no overlay) before launch_slot_with_task can compare the
+    // slot-local cvec pointer.
+    bool cvec_cache_isolation_active = false;
+
     server_metrics metrics;
 
     // queued prompt stats - llama_decode() is async, so the timing is only valid after a sync
@@ -1151,9 +1261,287 @@ private:
 
     bool sleeping = false;
 
+    uint64_t cvec_batch_binding_us = 0;
+    size_t cvec_batch_bound_bytes = 0;
+    size_t cvec_batch_basis_bound_bytes = 0;
+    size_t cvec_batch_basis_host_copy_bytes = 0;
+    size_t cvec_batch_coefficients_bound_bytes = 0;
+    size_t cvec_batch_physical_batch_size = 0;
+    bool cvec_batch_factorized_binding = false;
+    std::string cvec_batch_fallback_reason;
+    uint64_t cvec_batch_composition_us = 0;
+    size_t cvec_batch_overlay_resident_bytes = 0;
+    bool cvec_batch_basis_cache_hit = false;
+    bool cvec_batch_overlay_cache_hit = false;
+    size_t cvec_batch_basis_upload_count = 0;
+
     int64_t t_last_load_progress_ms = 0;
 
+    void clear_cvec_batch_binding() {
+        cvec_batch_binding_us = 0;
+        cvec_batch_bound_bytes = 0;
+        cvec_batch_basis_bound_bytes = 0;
+        cvec_batch_basis_host_copy_bytes = 0;
+        cvec_batch_coefficients_bound_bytes = 0;
+        cvec_batch_physical_batch_size = 0;
+        cvec_batch_factorized_binding = false;
+        cvec_batch_fallback_reason.clear();
+        cvec_batch_composition_us = 0;
+        cvec_batch_overlay_resident_bytes = 0;
+        cvec_batch_basis_cache_hit = false;
+        cvec_batch_overlay_cache_hit = false;
+        cvec_batch_basis_upload_count = 0;
+        if (!cvec_batch_active) {
+            cvec_batch_request.clear();
+            cvec_batch_device.clear_binding();
+            return;
+        }
+
+        // llama_decode() may submit work asynchronously when no logits are
+        // requested. Keep the table and callback alive until the backend has
+        // consumed the graph, then restore scalar cvec handling.
+        llama_synchronize(ctx_tgt);
+        ctx_tgt->set_adapter_cvec_batch(nullptr);
+        cvec_batch_device.clear_binding();
+        cvec_batch_request.clear();
+        cvec_batch_active = false;
+    }
+
+    bool prepare_cvec_batch_binding(std::string & error) {
+        error.clear();
+        cvec_batch_binding_us = 0;
+        cvec_batch_bound_bytes = 0;
+        cvec_batch_basis_bound_bytes = 0;
+        cvec_batch_basis_host_copy_bytes = 0;
+        cvec_batch_coefficients_bound_bytes = 0;
+        cvec_batch_physical_batch_size = 0;
+        cvec_batch_factorized_binding = false;
+        cvec_batch_fallback_reason.clear();
+        cvec_batch_composition_us = 0;
+        cvec_batch_overlay_resident_bytes = 0;
+        cvec_batch_basis_cache_hit = false;
+        cvec_batch_overlay_cache_hit = false;
+        cvec_batch_basis_upload_count = 0;
+        if (!cvec_batch_enabled || ctx_dft || !batch.slot_batched || batch.tokens.empty()) {
+            return false;
+        }
+
+        cvec_batch_request.clear();
+        server_task_cvec_ptr first;
+        bool distinct = false;
+        bool has_cvec = false;
+        bool has_missing_cvec = false;
+        std::unordered_set<int32_t> seen_slots;
+        std::vector<int32_t> slot_ids;
+        for (const auto & token : batch.tokens) {
+            if (!seen_slots.insert(token.id_slot).second) {
+                continue;
+            }
+            slot_ids.push_back(token.id_slot);
+            if (token.id_slot < 0 || token.id_slot >= static_cast<int32_t>(slots.size())) {
+                error = "per-sequence cvec batch contains an invalid slot";
+                return false;
+            }
+            const auto & cvec = slots[token.id_slot].cvec;
+            if (!cvec) {
+                has_missing_cvec = true;
+                continue;
+            }
+            has_cvec = true;
+            if (!first) {
+                first = cvec;
+            } else {
+                distinct = distinct || !server_task_cvec_equal(first, cvec);
+            }
+        }
+
+        // A normal batch with no active FlyDelta overlay is not a cvec batch;
+        // leave the authoritative scalar path untouched. A partial batch is
+        // unsafe because one sequence would otherwise receive another
+        // sequence's overlay, so reject it explicitly.
+        if (!has_cvec) {
+            return false;
+        }
+        if (has_missing_cvec) {
+            error = "per-sequence cvec batch cannot mix cvec and non-cvec slots";
+            return false;
+        }
+
+        for (const int32_t slot_id : slot_ids) {
+            if (!cvec_batch_request.add(slot_id, slots[slot_id].cvec, error)) {
+                return false;
+            }
+        }
+
+        // Multiple identical overlays still use the scalar path: there is no
+        // per-sequence information for the device table to preserve. A single
+        // sparse overlay is different. Keeping its sparse layer layout avoids
+        // materialising and uploading a dense, all-layer cvec solely because
+        // this ubatch happens to contain one sequence.
+        const bool has_factorized = cvec_batch_request.has_factorized();
+        const bool single_sparse = slot_ids.size() == 1 &&
+            cvec_batch_request.has_sparse();
+        if (!distinct && !single_sparse && !has_factorized) {
+            cvec_batch_request.clear();
+            return false;
+        }
+
+        std::vector<llama_seq_id> seq_ids;
+        std::vector<const float *> data;
+        size_t data_len = 0;
+        int32_t n_embd = 0;
+        int32_t il_start = 1;
+        int32_t il_end = 0;
+        const bool factorized = factorized_cvec_batch_enabled && has_factorized;
+        const bool sparse = cvec_batch_request.has_sparse() || has_factorized;
+        const auto binding_started = std::chrono::steady_clock::now();
+        bool used_factorized_binding = false;
+        size_t factorized_basis_bytes = 0;
+        size_t factorized_coefficients_bytes = 0;
+        size_t sparse_values_bytes = 0;
+        std::vector<uint32_t> layer_indices;
+        bool applied = false;
+        if (factorized) {
+            std::shared_ptr<const server_task_cvec::factorized_basis_data> basis;
+            std::vector<const float *> coefficients;
+            const bool materialized = cvec_batch_request.materialize_factorized(
+                seq_ids, basis, coefficients, n_embd, error);
+            if (materialized && basis && basis->data) {
+                try {
+                    applied = cvec_batch_device.apply_factorized_composed(*model_tgt,
+                        ctx_tgt->get_sched(), seq_ids,
+                        basis->fingerprint, basis->data->data(), basis->data->size(),
+                        coefficients, basis->rank, n_embd, basis->layer_indices);
+                } catch (const std::exception & exception) {
+                    error = std::string("factorized cvec preflight allocation failed: ") +
+                        exception.what();
+                }
+                used_factorized_binding = applied;
+                if (applied) {
+                    factorized_basis_bytes = basis->data->size() * sizeof(float);
+                    factorized_coefficients_bytes = coefficients.size() *
+                        static_cast<size_t>(basis->rank) * sizeof(float);
+                    cvec_batch_basis_cache_hit = cvec_batch_device.resident_basis_cache_hit();
+                    cvec_batch_overlay_cache_hit = cvec_batch_device.composed_overlay_cache_hit();
+                    cvec_batch_basis_upload_count = cvec_batch_device.last_basis_upload_count();
+                    cvec_batch_composition_us = cvec_batch_device.last_composition_us();
+                    cvec_batch_overlay_resident_bytes = cvec_batch_device.composed_overlay_bytes();
+                }
+            }
+            layer_indices = basis ? basis->layer_indices : std::vector<uint32_t>{};
+            if (!applied) {
+                const std::string factorized_error = error.empty()
+                    ? "factorized_backend_composition_or_allocation_unavailable" : error;
+                error.clear();
+                std::vector<std::vector<float>> owned_rows;
+                applied = cvec_batch_request.materialize_factorized_sparse(
+                    seq_ids, owned_rows, data, n_embd, layer_indices, error) &&
+                    !owned_rows.empty() &&
+                    cvec_batch_device.apply_sparse(
+                        *model_tgt, seq_ids, data, owned_rows.front().size(),
+                        n_embd, layer_indices);
+                if (applied) {
+                    sparse_values_bytes = owned_rows.size() * owned_rows.front().size() * sizeof(float);
+                    cvec_batch_fallback_reason = factorized_error;
+                    SRV_WRN("factorized cvec binding fell back to sparse: %s\n",
+                        factorized_error.c_str());
+                }
+            }
+        } else if (has_factorized) {
+            std::vector<std::vector<float>> owned_rows;
+            applied = cvec_batch_request.materialize_factorized_sparse(
+                seq_ids, owned_rows, data, n_embd, layer_indices, error) &&
+                !owned_rows.empty() &&
+                cvec_batch_device.apply_sparse(
+                    *model_tgt, seq_ids, data, owned_rows.front().size(),
+                    n_embd, layer_indices);
+            if (applied) {
+                sparse_values_bytes = owned_rows.size() * owned_rows.front().size() * sizeof(float);
+                cvec_batch_fallback_reason = "factorized_cvec_batch_not_enabled";
+                SRV_INF("%s", "factorized cvec disabled; using sparse fallback\n");
+            }
+        } else if (sparse) {
+            applied = cvec_batch_request.materialize_sparse(
+                seq_ids, data, data_len, n_embd, layer_indices, error) &&
+                cvec_batch_device.apply_sparse(
+                    *model_tgt, seq_ids, data, data_len, n_embd, layer_indices);
+            if (applied) sparse_values_bytes = data_len * seq_ids.size() * sizeof(float);
+        } else {
+            applied = cvec_batch_request.materialize(
+                seq_ids, data, data_len, n_embd, il_start, il_end, error) &&
+                cvec_batch_device.apply(
+                    *model_tgt, seq_ids, data, data_len, n_embd, il_start, il_end);
+            if (applied) sparse_values_bytes = data_len * seq_ids.size() * sizeof(float);
+        }
+        if (!applied) {
+            if (error.empty()) {
+                error = "failed to allocate per-sequence cvec table";
+            }
+            cvec_batch_request.clear();
+            return false;
+        }
+
+        cvec_batch_binding_us = static_cast<uint64_t>(std::chrono::duration_cast<
+            std::chrono::microseconds>(std::chrono::steady_clock::now() - binding_started).count());
+        cvec_batch_physical_batch_size = seq_ids.size();
+        cvec_batch_factorized_binding = used_factorized_binding;
+        if (used_factorized_binding) {
+            cvec_batch_basis_bound_bytes = factorized_basis_bytes;
+            // Count basis staging only on a new cache entry. This is a
+            // logical payload estimate, not a measured transport statistic.
+            cvec_batch_basis_host_copy_bytes = cvec_batch_basis_cache_hit
+                ? 0 : factorized_basis_bytes;
+            cvec_batch_coefficients_bound_bytes = cvec_batch_overlay_cache_hit
+                ? 0 : factorized_coefficients_bytes;
+            cvec_batch_bound_bytes = cvec_batch_basis_host_copy_bytes +
+                cvec_batch_coefficients_bound_bytes;
+        } else {
+            cvec_batch_bound_bytes = sparse_values_bytes;
+        }
+
+        ctx_tgt->set_adapter_cvec_batch(&cvec_batch_device.ref());
+        cvec_batch_active = true;
+        const char * binding_mode = used_factorized_binding
+            ? "factorized binding"
+            : factorized ? "sparse fallback" : single_sparse ? "sparse binding" : "batch";
+        const char * representation = used_factorized_binding
+            ? "factorized" : sparse ? "sparse" : "dense";
+        SRV_INF("per-sequence cvec %s bound rows=%zu representation=%s layers=%zu\n",
+            binding_mode, seq_ids.size(), representation,
+            (factorized || sparse) ? layer_indices.size() : static_cast<size_t>(il_end - il_start + 1));
+        const auto & trace_cvec = slots[slot_ids.front()].cvec;
+        if (trace_cvec && !trace_cvec->execution_batch_id.empty()) {
+            std::string arm_ids;
+            for (const int32_t slot_id : slot_ids) {
+                if (!arm_ids.empty()) arm_ids += ',';
+                arm_ids += slots[slot_id].cvec->execution_arm_id;
+            }
+            SRV_INF("FlyDelta physical coefficient batch batch=%s wave=%s phase=%s strategy=%s requested_rows=%zu physical_rows=%zu arms=[%s] representation=%s fallback=%s\n",
+                trace_cvec->execution_batch_id.c_str(), trace_cvec->execution_wave_id.c_str(),
+                trace_cvec->execution_phase.c_str(), trace_cvec->execution_strategy.c_str(),
+                slot_ids.size(), seq_ids.size(), arm_ids.c_str(), representation,
+                cvec_batch_fallback_reason.empty() ? "none" : cvec_batch_fallback_reason.c_str());
+        }
+        if (used_factorized_binding) {
+            SRV_INF("per-sequence cvec composition count=%u overlay_cache=%s basis_cache=%s basis_uploads=%zu basis_host_copy_bytes=%zu basis_resident_bytes=%zu coefficient_transfer_bytes=%zu overlay_resident_bytes=%zu compose_us=%" PRIu64 " bind_us=%" PRIu64 " physical_rows=%zu placement=%s\n",
+                cvec_batch_overlay_cache_hit ? 0u : 1u,
+                cvec_batch_overlay_cache_hit ? "hit" : "miss",
+                cvec_batch_basis_cache_hit ? "hit" : "miss",
+                cvec_batch_basis_upload_count, cvec_batch_basis_host_copy_bytes,
+                cvec_batch_device.resident_basis_bytes(),
+                cvec_batch_coefficients_bound_bytes, cvec_batch_overlay_resident_bytes,
+                cvec_batch_composition_us, cvec_batch_binding_us, seq_ids.size(),
+                cvec_batch_device.device_resident() ? "device_batch" : "backend_batch");
+        } else if (!cvec_batch_fallback_reason.empty()) {
+            SRV_WRN("per-sequence cvec fallback reason=%s rows=%zu representation=%s\n",
+                cvec_batch_fallback_reason.c_str(), seq_ids.size(), representation);
+        }
+        return true;
+    }
+
     void destroy() {
+        clear_cvec_batch_binding();
+        cvec_batch_device.clear();
         spec.reset();
         spec_init.reset();
 
@@ -1548,6 +1936,7 @@ private:
             slot.id      = i;
             slot.ctx_tgt = ctx_tgt;
             slot.ctx_dft = ctx_dft;
+            slot.cvec_batch_enabled = cvec_batch_enabled && ctx_dft == nullptr;
             slot.mem.init(ctx_tgt, ctx_dft);
             slot.spec    = spec.get();
             slot.n_ctx   = n_ctx_slot();
@@ -1901,6 +2290,114 @@ private:
     }
 
     bool launch_slot_with_task(server_slot & slot, server_task && task) {
+        if (task.params.cvec) {
+            std::string cvec_error;
+            if (!server_task_cvec_validate(
+                    *task.params.cvec,
+                    llama_model_n_embd_inp(model_tgt),
+                    llama_model_n_layer(model_tgt),
+                    64 * 1024 * 1024,
+                    cvec_error)) {
+                send_error(task, "invalid request control vector: " + cvec_error, ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (ctx_dft && !server_task_cvec_validate(
+                    *task.params.cvec,
+                    llama_model_n_embd_inp(model_dft),
+                    llama_model_n_layer(model_dft),
+                    64 * 1024 * 1024,
+                    cvec_error)) {
+                send_error(task, "request control vector is incompatible with speculative model: " + cvec_error,
+                    ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+        }
+
+        if (task.params.residual_patch) {
+            std::string patch_error;
+            if (!server_task_residual_patch_validate(
+                    *task.params.residual_patch,
+                    llama_model_n_embd_inp(model_tgt), llama_model_n_layer(model_tgt),
+                    64 * 1024 * 1024, patch_error)) {
+                send_error(task, "invalid residual patch: " + patch_error, ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (ctx_dft) {
+                send_error(task, "residual patch does not support speculative decoding", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (task.params.residual_patch->absolute_position >= task.n_tokens()) {
+                send_error(task, "residual patch position is outside this prompt", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (task.params.residual_patch->sequence_id >= 0 &&
+                    task.params.residual_patch->sequence_id != slot.id) {
+                send_error(task, "residual patch sequence identity does not match its server slot", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (slot.prompt.n_tokens() > 0) {
+                SLT_TRC(slot, "%s", "clearing cache for residual patch request\n");
+                slot.prompt_clear();
+            }
+            slot.residual_patch = task.params.residual_patch;
+            slot.residual_patch_applied = false;
+        } else {
+            slot.residual_patch.reset();
+            slot.residual_patch_applied = false;
+        }
+
+        // llama_set_adapter_cvec() is context-wide, so a slot may retain its
+        // prompt/KV state only while the cvec identity is unchanged.
+        if (!server_task_cvec_equal(slot.cvec, task.params.cvec)) {
+            if (slot.prompt.n_tokens() > 0) {
+                SLT_TRC(slot, "%s", "clearing cache for control-vector change\n");
+                slot.prompt_clear();
+            }
+            slot.cvec = task.params.cvec;
+            slot.flydelta_overlay_applied = false;
+        }
+
+        slot.capture_request = task.params.capture;
+        slot.capture_result = {};
+        slot.layer_reduction_result = {};
+        if (slot.capture_request && slot.capture_request->enabled) {
+            const auto & capture = *slot.capture_request;
+            if (capture.layer_indices.empty()) {
+                send_error(task, "FlyDelta capture requested no layers", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (capture.max_bytes == 0) {
+                send_error(task, "FlyDelta capture has no byte budget", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            const size_t n_layers = static_cast<size_t>(llama_model_n_layer(model_tgt));
+            for (const uint32_t layer : capture.layer_indices) {
+                if (layer >= n_layers) {
+                    send_error(task, "FlyDelta capture layer is outside the loaded model", ERROR_TYPE_INVALID_REQUEST);
+                    return false;
+                }
+                llama_set_embeddings_layer_inp(slot.ctx_tgt, layer, true);
+            }
+        }
+        if (task.params.layer_reduction && task.params.layer_reduction->enabled) {
+            const auto & reduction = *task.params.layer_reduction;
+            const size_t n_layers = static_cast<size_t>(llama_model_n_layer(model_tgt));
+            if (reduction.direction.empty()) {
+                send_error(task, "layer reduction direction is empty", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (reduction.layer >= n_layers) {
+                send_error(task, "layer reduction layer is outside the loaded model", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (reduction.direction.size() != static_cast<size_t>(llama_model_n_embd(model_tgt))) {
+                send_error(task, "layer reduction direction does not match the model embedding width",
+                    ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            llama_set_embeddings_layer_inp(slot.ctx_tgt, reduction.layer, true);
+        }
+
         auto task_loras = get_task_lora(task);
 
         // the state can come from the prompt cache, so it is compared with its own lora config, not with the one of the last task
@@ -1969,6 +2466,14 @@ private:
             send_error(task, "Prompt contains invalid tokens", ERROR_TYPE_INVALID_REQUEST);
             return false;
         }
+
+        slot.teacher_forced_tokens = task.teacher_forced_tokens;
+        slot.teacher_forced_index = 0;
+        slot.teacher_forced_logprob = 0.0;
+        // This flag describes the complete target sequence, not whether any
+        // one token happened to run on a device. It is narrowed after each
+        // graph execution below.
+        slot.teacher_forced_device = teacher_scoring_backend != "cpu";
 
         SLT_DBG(slot, "launching slot : %s\n", safe_json_to_str(slot.to_json()).c_str());
 
@@ -2284,6 +2789,220 @@ private:
         send_error(slot.task->id, error, type, slot.task->n_tokens(), slot.n_ctx);
     }
 
+    void capture_prompt_boundary(server_slot & slot, const common_batch & batch_view, int32_t batch_row) {
+        if (!slot.capture_request || !slot.capture_request->enabled || slot.capture_result.attempted) {
+            return;
+        }
+
+        const auto & request = *slot.capture_request;
+        auto & result = slot.capture_result;
+        result.attempted = true;
+        result.layer_indices = request.layer_indices;
+        result.position = request.position;
+        result.model_profile_fingerprint = request.model_profile_fingerprint;
+        result.capture_layout_revision = request.capture_layout_revision;
+        result.token_index = request.token_index < 0
+            ? static_cast<int32_t>(slot.task->n_tokens()) - 1
+            : request.token_index;
+
+        const int32_t n_prompt = slot.task->n_tokens();
+        result.prompt_token_count = n_prompt;
+        const size_t n_embd = static_cast<size_t>(llama_model_n_embd(model_tgt));
+        if (result.token_index < 0 || result.token_index >= n_prompt) {
+            result.failure_reason = "prompt token index is out of range";
+            return;
+        }
+        const size_t value_bytes = result.layer_indices.size() * n_embd * sizeof(float);
+        if (n_embd == 0 || value_bytes > request.max_bytes) {
+            result.failure_reason = "FlyDelta capture exceeds its byte budget";
+            return;
+        }
+
+        result.n_embd = static_cast<uint32_t>(n_embd);
+        result.token_id = slot.task->tokens[result.token_index];
+        result.values.reserve(result.layer_indices.size() * n_embd);
+        const llama_pos capture_pos = request.token_index < 0
+            ? batch_view.tokens[batch_row].pos[0]
+            : static_cast<llama_pos>(request.token_index);
+        for (const uint32_t layer : result.layer_indices) {
+            const float * row = llama_get_embeddings_layer_inp_row(slot.ctx_tgt, layer, slot.id, capture_pos);
+            if (row == nullptr) {
+                result.values.clear();
+                result.n_embd = 0;
+                result.failure_reason = "requested sequence/position is not present in the latest layer-input capture";
+                return;
+            }
+            result.values.insert(result.values.end(), row, row + n_embd);
+        }
+        result.captured = true;
+    }
+
+    void prepare_layer_reductions() {
+        layer_reduction_ref.entries.clear();
+        llama_set_layer_reductions(ctx_tgt, nullptr);
+
+        const auto in_batch = [this](int32_t id) {
+            return std::any_of(batch.tokens.begin(), batch.tokens.end(),
+                [id](const server_batch::token & token) { return token.id_slot == id; });
+        };
+        for (auto & overlay : slots) {
+            if (!overlay.task || !overlay.task->params.layer_reduction ||
+                    !overlay.task->params.layer_reduction->enabled) {
+                continue;
+            }
+            const auto & request = *overlay.task->params.layer_reduction;
+            overlay.layer_reduction_result = {};
+            overlay.layer_reduction_result.layer = request.layer;
+            if (request.baseline_group_id.empty()) {
+                // This is the paired reference row. It participates in the
+                // graph and cvec batch, but it does not own a reduction of
+                // its own; the overlay row consumes it as baseline.
+                continue;
+            }
+            auto baseline = std::find_if(slots.begin(), slots.end(), [&](const server_slot & candidate) {
+                return candidate.task && candidate.task->params.layer_reduction &&
+                    candidate.task->params.layer_reduction->enabled &&
+                    candidate.task->params.layer_reduction->group_id == request.baseline_group_id;
+            });
+            if (baseline == slots.end() || !in_batch(overlay.id) || !in_batch(baseline->id)) {
+                overlay.layer_reduction_result.failure_reason =
+                    "baseline and overlay are not in the same physical batch";
+                continue;
+            }
+            if (request.direction.empty()) {
+                overlay.layer_reduction_result.failure_reason = "empty reduction direction";
+                continue;
+            }
+            llama_layer_reduction_entry entry;
+            entry.layer = request.layer;
+            entry.baseline_sequence_id = baseline->id;
+            entry.overlay_sequence_id = overlay.id;
+            entry.absolute_position = request.absolute_position;
+            entry.direction = request.direction.data();
+            entry.n_embd = request.direction.size();
+            layer_reduction_ref.entries.push_back(std::move(entry));
+        }
+        if (!layer_reduction_ref.entries.empty()) {
+            llama_set_layer_reductions(ctx_tgt, &layer_reduction_ref);
+        }
+    }
+
+    void send_teacher_score(server_slot & slot) {
+        auto res = std::make_unique<server_task_result_teacher_score>();
+        res->id = slot.task->id;
+        res->id_slot = slot.id;
+        // A response reader may own a wave of teacher-score tasks. Preserve
+        // the task's slot within that wave just as completion results do;
+        // otherwise every score result keeps the default index 0 and the
+        // reader treats the second result as a duplicate.
+        res->index = slot.task->index;
+        res->total_logprob = slot.teacher_forced_logprob;
+        res->token_count = slot.teacher_forced_tokens.size();
+        res->teacher_scoring_representation = teacher_scoring_backend == "cpu"
+            ? "cpu_logits" : slot.teacher_forced_device
+                ? "device_graph_target_logprob" : "cpu_graph_target_logprob";
+        res->teacher_scoring_device = slot.teacher_forced_device;
+        res->teacher_scoring_returned_bytes = teacher_scoring_backend == "cpu"
+            ? slot.teacher_forced_tokens.size() * llama_vocab_n_tokens(vocab) * sizeof(float)
+            : slot.teacher_forced_tokens.size() * sizeof(float);
+        res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
+        res->flydelta_cvec_binding_us = cvec_batch_binding_us;
+        res->flydelta_cvec_bound_bytes = cvec_batch_bound_bytes;
+        res->flydelta_cvec_basis_bound_bytes = cvec_batch_basis_bound_bytes;
+        res->flydelta_cvec_basis_host_copy_bytes = cvec_batch_basis_host_copy_bytes;
+        res->flydelta_cvec_coefficients_bound_bytes = cvec_batch_coefficients_bound_bytes;
+        res->flydelta_cvec_physical_batch_size = cvec_batch_physical_batch_size;
+        res->flydelta_cvec_factorized_binding = cvec_batch_factorized_binding;
+        res->flydelta_cvec_basis_cache_hit = cvec_batch_basis_cache_hit;
+        res->flydelta_cvec_overlay_cache_hit = cvec_batch_overlay_cache_hit;
+        res->flydelta_cvec_basis_upload_count = cvec_batch_basis_upload_count;
+        res->flydelta_cvec_overlay_resident_bytes = cvec_batch_overlay_resident_bytes;
+        res->flydelta_cvec_composition_us = cvec_batch_composition_us;
+        res->flydelta_cvec_fallback_reason = cvec_batch_fallback_reason;
+        queue_results.send(std::move(res));
+    }
+
+    bool score_teacher_forced_token(server_slot & slot, int32_t tok_idx) {
+        if (slot.teacher_forced_index >= slot.teacher_forced_tokens.size()) {
+            send_error(slot, "teacher-forced scoring state exhausted before a target token was scored",
+                ERROR_TYPE_SERVER);
+            slot.release();
+            return false;
+        }
+
+        const llama_token target = slot.teacher_forced_tokens[slot.teacher_forced_index];
+        if (teacher_scoring_backend != "cpu") {
+            const float logprob = llama_get_teacher_forced_logprob_ith(ctx_tgt, tok_idx);
+            const bool on_device = llama_get_teacher_forced_logprob_is_device(ctx_tgt, tok_idx);
+            if (!std::isfinite(logprob) ||
+                    (teacher_scoring_backend == "backend" && !on_device)) {
+                send_error(slot, teacher_scoring_backend == "backend" && !on_device
+                    ? "teacher-forced backend scoring is unavailable: score graph ran on CPU"
+                    : "teacher-forced graph scoring returned an invalid score",
+                    ERROR_TYPE_SERVER);
+                slot.release();
+                return false;
+            }
+            slot.teacher_forced_logprob += logprob;
+            slot.teacher_forced_device = slot.teacher_forced_device && on_device;
+            slot.teacher_forced_index++;
+            slot.stats.n_gen++;
+            if (slot.teacher_forced_index == slot.teacher_forced_tokens.size()) {
+                send_teacher_score(slot);
+                slot.i_batch = -1;
+                slot.release();
+                return true;
+            }
+            slot.sampled = target;
+            slot.has_next_token = true;
+            slot.i_batch = -1;
+            return true;
+        }
+        const float * logits = llama_get_logits_ith(ctx_tgt, tok_idx);
+        const size_t n_vocab = llama_vocab_n_tokens(vocab);
+        if (logits == nullptr || target < 0 || static_cast<size_t>(target) >= n_vocab) {
+            send_error(slot, "teacher-forced scoring did not return valid logits",
+                ERROR_TYPE_SERVER);
+            slot.release();
+            return false;
+        }
+
+        float maximum = logits[0];
+        for (size_t i = 1; i < n_vocab; ++i) {
+            maximum = std::max(maximum, logits[i]);
+        }
+        double normalizer = 0.0;
+        for (size_t i = 0; i < n_vocab; ++i) {
+            normalizer += std::exp(static_cast<double>(logits[i] - maximum));
+        }
+        if (!std::isfinite(normalizer) || normalizer <= 0.0) {
+            send_error(slot, "teacher-forced scoring received invalid logits",
+                ERROR_TYPE_SERVER);
+            slot.release();
+            return false;
+        }
+
+        slot.teacher_forced_logprob +=
+            static_cast<double>(logits[target] - maximum) - std::log(normalizer);
+        slot.teacher_forced_index++;
+        slot.stats.n_gen++;
+
+        if (slot.teacher_forced_index == slot.teacher_forced_tokens.size()) {
+            send_teacher_score(slot);
+            slot.i_batch = -1;
+            slot.release();
+            return true;
+        }
+
+        // The scored token becomes the next prompt token.  pre_decode() will
+        // append it through handle_last_sampled_token(), causing the next
+        // decode to produce logits for the following target token.
+        slot.sampled = target;
+        slot.has_next_token = true;
+        slot.i_batch = -1;
+        return true;
+    }
+
     void send_error(const int id_task, const std::string & error, const enum error_type type = ERROR_TYPE_SERVER, const int32_t n_prompt_tokens = 0, const int32_t n_ctx = 0) {
         SRV_ERR("task id = %d, error: %s\n", id_task, error.c_str());
 
@@ -2357,6 +3076,10 @@ private:
     }
 
     void send_final_response(server_slot & slot) {
+        if (slot.residual_patch && !slot.residual_patch_applied) {
+            send_error(slot, "residual patch did not match an executed batch row", ERROR_TYPE_INVALID_REQUEST);
+            return;
+        }
         auto res = std::make_unique<server_task_result_cmpl_final>();
 
         res->id      = slot.task->id;
@@ -2415,6 +3138,47 @@ private:
         }
 
         res->generation_params = slot.task->params; // copy the parameters
+        res->flydelta_overlay_applied = slot.flydelta_overlay_applied;
+        res->capture = std::move(slot.capture_result);
+        for (const auto & entry : layer_reduction_ref.entries) {
+            if (entry.overlay_sequence_id != slot.id) {
+                continue;
+            }
+            res->layer_reduction.available = entry.available;
+            res->layer_reduction.layer = entry.layer;
+            res->layer_reduction.dot_shift_delta = entry.dot_shift_delta;
+            res->layer_reduction.shift_squared = entry.shift_squared;
+            res->layer_reduction.delta_squared = entry.delta_squared;
+            res->layer_reduction.residual_squared = entry.residual_squared;
+            res->layer_reduction.failure_reason = entry.failure_reason;
+        }
+        if (!res->layer_reduction.available &&
+                !slot.layer_reduction_result.failure_reason.empty()) {
+            res->layer_reduction = slot.layer_reduction_result;
+        }
+        if (slot.residual_patch) {
+            const auto & patch = *slot.residual_patch;
+            res->residual_patch_observation.attempted = true;
+            res->residual_patch_observation.applied = slot.residual_patch_applied;
+            res->residual_patch_observation.layer = patch.layer;
+            res->residual_patch_observation.absolute_position = patch.absolute_position;
+            res->residual_patch_observation.sequence_id = slot.id;
+            res->residual_patch_observation.site = patch.site;
+        }
+        res->flydelta_device_batch = cvec_batch_active && cvec_batch_device.device_resident();
+        res->flydelta_cvec_binding_us = cvec_batch_binding_us;
+        res->flydelta_cvec_bound_bytes = cvec_batch_bound_bytes;
+        res->flydelta_cvec_basis_bound_bytes = cvec_batch_basis_bound_bytes;
+        res->flydelta_cvec_basis_host_copy_bytes = cvec_batch_basis_host_copy_bytes;
+        res->flydelta_cvec_coefficients_bound_bytes = cvec_batch_coefficients_bound_bytes;
+        res->flydelta_cvec_physical_batch_size = cvec_batch_physical_batch_size;
+        res->flydelta_cvec_factorized_binding = cvec_batch_factorized_binding;
+        res->flydelta_cvec_basis_cache_hit = cvec_batch_basis_cache_hit;
+        res->flydelta_cvec_overlay_cache_hit = cvec_batch_overlay_cache_hit;
+        res->flydelta_cvec_basis_upload_count = cvec_batch_basis_upload_count;
+        res->flydelta_cvec_overlay_resident_bytes = cvec_batch_overlay_resident_bytes;
+        res->flydelta_cvec_composition_us = cvec_batch_composition_us;
+        res->flydelta_cvec_fallback_reason = cvec_batch_fallback_reason;
 
         queue_results.send(std::move(res));
     }
@@ -2592,13 +3356,121 @@ private:
     bool tokenize_cli_input(server_task & task) {
         try {
             auto & prompt = task.cli_prompt;
+            const size_t prompt_bytes = prompt.size();
             if (mctx != nullptr) {
-                task.tokens = process_mtmd_prompt(mctx, prompt, task.cli_files, init_opt);
+                if (task.type == SERVER_TASK_TYPE_TEACHER_FORCED_SCORE) {
+                    send_error(task, "teacher-forced server scoring does not support multimodal CLI prompts yet",
+                        ERROR_TYPE_INVALID_REQUEST);
+                    return false;
+                }
+                if (task.cli_prompt_parts.parts.empty()) {
+                    task.tokens = process_mtmd_prompt(mctx, prompt, task.cli_files, init_opt);
+                } else {
+                    mtmd::bitmaps bitmaps;
+                    std::vector<mtmd_helper::video_ptr> videos;
+                    for (const auto & file : task.cli_files) {
+                        auto bitmap = mtmd_helper_bitmap_init_from_buf(mctx, file.data(), file.size(), false, init_opt);
+                        if (!bitmap.bitmap) throw std::runtime_error("failed to load media");
+                        bitmaps.entries.emplace_back(bitmap.bitmap);
+                        if (bitmap.video_ctx) videos.emplace_back(bitmap.video_ctx);
+                    }
+                    std::vector<std::string> text_storage;
+                    std::vector<bool> flags;
+                    std::vector<int> bitmap_index;
+                    size_t media = 0;
+                    const std::string marker = get_media_marker();
+                    if (marker.empty()) throw std::runtime_error("empty media marker");
+                    for (const auto & part : task.cli_prompt_parts.parts) {
+                        size_t start = 0;
+                        while (start < part.text.size()) {
+                            const size_t pos = part.is_input ? std::string::npos : part.text.find(marker, start);
+                            const size_t end = pos == std::string::npos ? part.text.size() : pos;
+                            if (end > start) {
+                                text_storage.push_back(part.text.substr(start, end - start));
+                                flags.push_back(!part.is_input);
+                                bitmap_index.push_back(-1);
+                            }
+                            if (pos == std::string::npos) break;
+                            if (media >= bitmaps.entries.size()) throw std::runtime_error("missing media for prompt marker");
+                            text_storage.emplace_back();
+                            flags.push_back(false);
+                            bitmap_index.push_back(static_cast<int>(media++));
+                            start = pos + marker.size();
+                        }
+                    }
+                    if (media != bitmaps.entries.size()) throw std::runtime_error("unused media in prompt");
+                    std::vector<mtmd_input_text> texts(text_storage.size());
+                    std::vector<mtmd_input_part> parts(text_storage.size());
+                    std::vector<const mtmd_input_part *> pointers;
+                    auto bitmap_ptrs = bitmaps.c_ptr();
+                    for (size_t i = 0; i < parts.size(); ++i) {
+                        texts[i] = {text_storage[i].data(), text_storage[i].size(), false, flags[i]};
+                        parts[i] = bitmap_index[i] < 0 ? mtmd_input_part{&texts[i], nullptr} : mtmd_input_part{nullptr, bitmap_ptrs[size_t(bitmap_index[i])]};
+                        pointers.push_back(&parts[i]);
+                    }
+                    mtmd::input_chunks chunks(mtmd_input_chunks_init());
+                    if (mtmd_tokenize_from_parts(mctx, chunks.ptr.get(), pointers.data(), pointers.size(), true) != 0) throw std::runtime_error("failed to tokenize structured multimodal prompt");
+                    task.tokens = server_tokens(chunks, true);
+                }
             } else {
-                task.tokens = std::move(tokenize_input_prompts(vocab, mctx, prompt, true, true, init_opt)[0]);
+                task.tokens = task.cli_prompt_parts.parts.empty() ?
+                    std::move(tokenize_input_prompts(vocab, mctx, prompt, true, true, init_opt)[0]) :
+                    server_tokens(common_chat_tokenize_prompt(vocab, task.cli_prompt_parts), false);
+            }
+
+            if (prompt_bytes > 0 && task.tokens.empty()) {
+                send_error(task,
+                    "CLI prompt tokenization produced no tokens for non-empty prompt",
+                    ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (prompt_bytes > 0 && getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr) {
+                SRV_INF("agent resident server trace: task=%d cli_prompt_bytes=%zu token_count=%zu capture=%s\n",
+                    task.id,
+                    prompt_bytes,
+                    task.tokens.size(),
+                    task.params.capture && task.params.capture->enabled ? "yes" : "no");
+            }
+
+            if (task.type == SERVER_TASK_TYPE_TEACHER_FORCED_SCORE) {
+                if (task.teacher_forced_target.empty()) {
+                    send_error(task, "teacher-forced scoring target is empty", ERROR_TYPE_INVALID_REQUEST);
+                    return false;
+                }
+
+                // Tokenize the complete prefix+target as one string.  This
+                // preserves tokenizer boundary behavior (including leading
+                // whitespace merges) and makes the suffix explicit only if
+                // the prefix tokenization is unchanged.
+                auto combined_parts = task.cli_prompt_parts;
+                combined_parts.append(task.teacher_forced_target, false);
+                server_tokens combined = task.cli_prompt_parts.parts.empty() ?
+                    std::move(tokenize_input_prompts(vocab, mctx, prompt + task.teacher_forced_target, true, true, init_opt)[0]) :
+                    server_tokens(common_chat_tokenize_prompt(vocab, combined_parts), false);
+                if (combined.size() <= task.tokens.size()) {
+                    send_error(task, "teacher-forced scoring target produced no continuation tokens",
+                        ERROR_TYPE_INVALID_REQUEST);
+                    return false;
+                }
+                for (size_t i = 0; i < task.tokens.size(); ++i) {
+                    if (task.tokens[i] != combined[i]) {
+                        send_error(task, "teacher-forced scoring continuation crosses the prompt token boundary",
+                            ERROR_TYPE_INVALID_REQUEST);
+                        return false;
+                    }
+                }
+                const auto & combined_tokens = combined.get_tokens();
+                task.teacher_forced_tokens.assign(
+                    combined_tokens.begin() + task.tokens.size(), combined_tokens.end());
             }
             task.cli_prompt.clear();
+            task.cli_prompt_parts.parts.clear();
             task.cli_files.clear();
+            // A task can be deferred when all resident slots are occupied.
+            // Its tokenized prompt must survive that retry; otherwise the
+            // second process_single_task() pass would tokenize the now-empty
+            // cli_prompt and silently replace a valid prompt with zero tokens.
+            task.cli = false;
         } catch (const std::exception & e) {
             send_error(task, std::string("Failed to format input: ") + e.what(), ERROR_TYPE_INVALID_REQUEST);
             return false;
@@ -2640,8 +3512,13 @@ private:
         size_t idx = 0;
         GGML_ASSERT(child_slots.size() == parent_task.child_tasks.size());
         for (auto * slot : child_slots) {
-            // keep the state that the child task is about to overwrite
-            if (prompt_cache && slot->prompt_save(*prompt_cache)) {
+            if (parent_task.child_tasks[idx].params.cvec && !cvec_cache_isolation_active) {
+                cvec_cache_isolation_active = true;
+                if (prompt_cache) prompt_cache->states.clear();
+            }
+            // Keep only cache states that are valid without an overlay.
+            if (prompt_cache && !cvec_cache_isolation_active &&
+                    parent_task.child_tasks[idx].params.cache_prompt && slot->prompt_save(*prompt_cache)) {
                 prompt_cache->update();
             }
 
@@ -2959,6 +3836,7 @@ private:
 
         switch (task.type) {
             case SERVER_TASK_TYPE_COMPLETION:
+            case SERVER_TASK_TYPE_TEACHER_FORCED_SCORE:
             case SERVER_TASK_TYPE_INFILL:
             case SERVER_TASK_TYPE_TRANSCRIBE_RT:
             case SERVER_TASK_TYPE_REALTIME:
@@ -2982,6 +3860,14 @@ private:
 
                     const int id_task = task.id;
 
+                    if (task.params.cvec && !cvec_cache_isolation_active) {
+                        cvec_cache_isolation_active = true;
+                        if (prompt_cache) {
+                            prompt_cache->states.clear();
+                        }
+                        SRV_TRC("%s", "cvec-backed task entered cache-isolated mode\n");
+                    }
+
                     const auto plan = slot_sched.select(get_slot_infos(), task, get_task_lora(task));
 
                     server_slot * slot = plan.id_slot == -1 ? nullptr : get_slot_by_id(plan.id_slot);
@@ -2992,6 +3878,13 @@ private:
 
                     if (slot == nullptr) {
                         // if no slot is available, we defer this task for processing later
+                        if (getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr) {
+                            SRV_INF("agent resident server trace: defer task=%d cli=%s prompt_bytes=%zu token_count=%zu\n",
+                                id_task,
+                                task.cli ? "yes" : "no",
+                                task.cli_prompt.size(),
+                                task.tokens.size());
+                        }
                         SRV_DBG("no slot is available, defer task, id_task = %d\n", id_task);
                         queue_tasks.defer(std::move(task));
                         break;
@@ -2999,6 +3892,13 @@ private:
 
                     if (slot->is_processing()) {
                         // if requested slot is unavailable, we defer this task for processing later
+                        if (getenv("LLAMA_AGENT_RESIDENT_TRACE") != nullptr) {
+                            SRV_INF("agent resident server trace: defer-busy task=%d cli=%s prompt_bytes=%zu token_count=%zu\n",
+                                id_task,
+                                task.cli ? "yes" : "no",
+                                task.cli_prompt.size(),
+                                task.tokens.size());
+                        }
                         SRV_DBG("requested slot is unavailable, defer task, id_task = %d\n", id_task);
                         queue_tasks.defer(std::move(task));
                         break;
@@ -3017,7 +3917,7 @@ private:
                     }
 
                     // the task is not deferred past this point
-                    if (plan.update_cache && prompt_cache) {
+                    if (plan.update_cache && prompt_cache && task.params.cache_prompt && !cvec_cache_isolation_active) {
                         update_prompt_cache(*slot, task);
                     }
 
@@ -3031,7 +3931,7 @@ private:
                         break; // drop the task
                     }
 
-                    if (params_base.cache_idle_slots) {
+                    if (params_base.cache_idle_slots && !cvec_cache_isolation_active) {
                         for (auto & slot : slots) {
                             if (!slot.is_processing()) {
                                 SLT_TRC(slot, "%s", "saving idle slot to prompt cache\n");
@@ -3386,6 +4286,29 @@ private:
                     callback(slot);
                 } catch (const std::exception & e) {
                     SLT_ERR(slot, "got exception: %s\n", e.what());
+                    if (agent_trace_enabled() &&
+                            slot.task != nullptr &&
+                            !slot.task->params.sampling.grammar.empty()) {
+                        std::string generated = slot.generated.text;
+                        constexpr size_t max_trace_bytes = 4096;
+                        if (generated.size() > max_trace_bytes) {
+                            generated.resize(max_trace_bytes);
+                            generated += "...[truncated]";
+                        }
+                        std::fprintf(stderr,
+                            "agent grammar trace: event=exception slot=%d task=%d "
+                            "grammar=present lazy=%s triggers=%zu generated_tokens=%zu "
+                            "generated_bytes=%zu error=%s generated=%s\n",
+                            slot.id,
+                            slot.task->id,
+                            slot.task->params.sampling.grammar_lazy ? "yes" : "no",
+                            slot.task->params.sampling.grammar_triggers.size(),
+                            slot.generated_tokens.size(),
+                            slot.generated.text.size(),
+                            e.what(),
+                            generated.c_str());
+                        std::fflush(stderr);
+                    }
                     send_error(slot, std::string("got exception: ") + e.what(), ERROR_TYPE_SERVER);
                     slot.release();
                 }
@@ -3399,6 +4322,29 @@ private:
                 callback(*slot);
             } catch (const std::exception & e) {
                 SLT_ERR(*slot, "got exception: %s\n", e.what());
+                if (agent_trace_enabled() &&
+                        slot->task != nullptr &&
+                        !slot->task->params.sampling.grammar.empty()) {
+                    std::string generated = slot->generated.text;
+                    constexpr size_t max_trace_bytes = 4096;
+                    if (generated.size() > max_trace_bytes) {
+                        generated.resize(max_trace_bytes);
+                        generated += "...[truncated]";
+                    }
+                    std::fprintf(stderr,
+                        "agent grammar trace: event=exception slot=%d task=%d "
+                        "grammar=present lazy=%s triggers=%zu generated_tokens=%zu "
+                        "generated_bytes=%zu error=%s generated=%s\n",
+                        slot->id,
+                        slot->task->id,
+                        slot->task->params.sampling.grammar_lazy ? "yes" : "no",
+                        slot->task->params.sampling.grammar_triggers.size(),
+                        slot->generated_tokens.size(),
+                        slot->generated.text.size(),
+                        e.what(),
+                        generated.c_str());
+                    std::fflush(stderr);
+                }
                 send_error(*slot, std::string("got exception: ") + e.what(), ERROR_TYPE_SERVER);
                 slot->release();
             }
@@ -3507,6 +4453,9 @@ private:
     }
 
     void update_slots() {
+        clear_cvec_batch_binding();
+        llama_set_residual_patch(ctx_tgt, nullptr);
+
 #ifdef DEBUG_TIMINGS
         static int64_t t_prev = 0;
         int64_t t_start = ggml_time_us();
@@ -3577,6 +4526,8 @@ private:
 
         GGML_ASSERT(batch.slot_batched || batch.size() == 0);
 
+        prepare_layer_reductions();
+
         if (batch.slot_batched) {
             auto & slot_batched      = batch.slot_batched;
             auto & alora_scale       = batch.alora_scale;
@@ -3585,6 +4536,61 @@ private:
             // TODO @ngxson : alora handling is too messy, need to refactor it to be more clear and maintainable
             // apply lora, only need to do it once per batch
             common_set_adapter_lora(ctx_tgt, slot_batched->lora);
+
+            // Prefer the existing backend-resident sparse table whenever it
+            // can represent this exact request. This includes a one-row
+            // sparse binding. The scalar dense bridge remains the CPU and
+            // compatibility fallback.
+            bool sparse_cvec_bound = false;
+            if (cvec_batch_enabled) {
+                std::string cvec_batch_error;
+                if (!prepare_cvec_batch_binding(cvec_batch_error) && !cvec_batch_error.empty()) {
+                    SRV_ERR("failed to prepare per-sequence cvec batch: %s\n", cvec_batch_error.c_str());
+                    abort_all_slots("failed to prepare per-sequence cvec batch: " + cvec_batch_error);
+                    return;
+                }
+                sparse_cvec_bound = cvec_batch_active;
+            }
+
+            const auto & cvec = slot_batched->cvec;
+            const auto apply_cvec = [&cvec, sparse_cvec_bound](llama_context * context) {
+                if (sparse_cvec_bound) {
+                    // set_adapter_cvec() intentionally clears cvec_batch, so
+                    // do not invoke it after the device binding is installed.
+                    return 0;
+                }
+                return cvec
+                    ? llama_set_adapter_cvec(
+                        context,
+                        cvec->data.data(),
+                        cvec->data.size(),
+                        cvec->n_embd,
+                        cvec->il_start,
+                        cvec->il_end)
+                    : llama_set_adapter_cvec(context, nullptr, 0, 0, 0, 0);
+            };
+            const int32_t cvec_result = apply_cvec(ctx_tgt);
+            const int32_t cvec_draft_result = ctx_dft ? apply_cvec(ctx_dft) : 0;
+            if (cvec_result != 0 || cvec_draft_result != 0) {
+                SRV_ERR("failed to apply request control vector for slot %d\n", slot_batched->id);
+                abort_all_slots("failed to apply request control vector");
+                return;
+            }
+            if (slot_batched->residual_patch) {
+                const auto & patch = *slot_batched->residual_patch;
+                slot_batched->residual_patch_ref = {
+                    patch.operation == server_task_residual_patch_operation::replace
+                        ? llama_residual_patch_operation::replace
+                        : llama_residual_patch_operation::add,
+                    patch.layer,
+                    patch.absolute_position,
+                    slot_batched->id,
+                    patch.values.data(),
+                    patch.values.size(),
+                    &slot_batched->residual_patch_applied,
+                };
+                llama_set_residual_patch(ctx_tgt, &slot_batched->residual_patch_ref);
+            }
 
             // if the lora is temporarily disabled for an alora, re-enable it
             // for next time
@@ -3824,7 +4830,7 @@ private:
 
             generating.push_back(&slot);
 
-            if (spec) {
+            if (spec && slot.task->need_sampling()) {
                 common_speculative_get_draft_params(spec.get(), slot.id).drafting = false;
 
                 const bool use_ckpt_tgt = ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
@@ -4437,7 +5443,7 @@ private:
                         add_ok &= batch.add(slot.id,
                             cur_tok,
                             /* pos       = */ slot.prompt.tokens.pos_next(),
-                            /* output    = */ slot.need_embd(),
+                            /* output    = */ slot.needs_embedding_output_at(slot.prompt.n_tokens()),
                             /* is_prompt = */ true);
                         if (!slot.task->decision.order.empty()) {
                             batch.set_decision_order(batch.size() - 1, slot.task->decision.order[slot.prompt.n_tokens()]);
@@ -4506,7 +5512,9 @@ private:
                         slot.stats.n_gen = 0;
                         slot.i_batch     = batch.size() - 1;
 
-                        slot.init_sampler();
+                        if (slot.task->need_sampling()) {
+                            slot.init_sampler();
+                        }
                     } else {
                         // skip ordinary mid-prompt checkpoints, unless the batch starts a user
                         // message or we are near the end of the prompt
@@ -4646,11 +5654,65 @@ private:
         // note: the sync is done here too, so that the wait is also covered by the yield
         int ret = 0;
         queue_tasks.yield_to_queue([&]() {
+            if (cvec_batch_active) {
+                cvec_batch_device.begin_graph_observation();
+            }
+            std::vector<llama_seq_id> teacher_seq_ids;
+            std::vector<llama_token> teacher_targets;
+            if (teacher_scoring_backend != "cpu") {
+                teacher_seq_ids.reserve(batch.tokens.size());
+                teacher_targets.reserve(batch.tokens.size());
+                for (int i = off; i < off + batch.view.size(); ++i) {
+                    const auto & token = batch.tokens[i];
+                    if (!token.output || token.id_slot < 0 ||
+                            token.id_slot >= static_cast<int32_t>(slots.size())) continue;
+                    const auto & slot = slots[token.id_slot];
+                    if (!slot.task || slot.task->type != SERVER_TASK_TYPE_TEACHER_FORCED_SCORE ||
+                            slot.teacher_forced_index >= slot.teacher_forced_tokens.size()) continue;
+                    teacher_seq_ids.push_back(slot.id);
+                    teacher_targets.push_back(slot.teacher_forced_tokens[slot.teacher_forced_index]);
+                }
+            }
+            llama_set_teacher_forced_targets(ctx_tgt,
+                teacher_seq_ids.empty() ? nullptr : teacher_seq_ids.data(),
+                teacher_targets.empty() ? nullptr : teacher_targets.data(),
+                teacher_targets.size());
             ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());
             if (ret == 0 && has_output) {
                 llama_synchronize(ctx_tgt);
             }
         });
+
+        const std::string callback_failure = cvec_batch_active
+            ? cvec_batch_device.callback_failure_reason() : std::string{};
+        if (ret == 0 && cvec_batch_active &&
+                (!callback_failure.empty() || !cvec_batch_device.callback_applied())) {
+            const std::string reason = "cvec graph callback failed: " +
+                (callback_failure.empty()
+                    ? std::string("no overlay operation was added to the graph")
+                    : callback_failure);
+            SRV_ERR("%s\n", reason.c_str());
+            llama_synchronize(ctx_tgt);
+            abort_all_slots(reason);
+            clear_cvec_batch_binding();
+            return true;
+        }
+
+        // Do not report an overlay merely because its host-side binding was
+        // accepted. Mark only slots whose decode graph completed after the
+        // scalar cvec or sequence-specific callback path was actually used.
+        if (ret == 0) {
+            std::unordered_set<int32_t> applied_slots;
+            for (const auto & token : batch.tokens) {
+                if (!applied_slots.insert(token.id_slot).second || token.id_slot < 0 ||
+                        token.id_slot >= static_cast<int32_t>(slots.size())) {
+                    continue;
+                }
+                if (slots[token.id_slot].cvec) {
+                    slots[token.id_slot].flydelta_overlay_applied = true;
+                }
+            }
+        }
 
         if (ret != 0) {
             {
@@ -4784,7 +5846,23 @@ private:
                 return;
             }
 
+            if (slot.task->type == SERVER_TASK_TYPE_TEACHER_FORCED_SCORE) {
+                if (slot.state == SLOT_STATE_DONE_PROMPT) {
+                    slot.state = SLOT_STATE_GENERATING;
+                } else if (slot.state != SLOT_STATE_GENERATING) {
+                    return;
+                }
+
+                // Unlike completion sampling, this reads the current logits
+                // for the known target token and queues that token for the
+                // next decode step. No sampler or stop policy is involved.
+                const int tok_idx = slot.i_batch - off;
+                score_teacher_forced_token(slot, tok_idx);
+                return;
+            }
+
             if (slot.state == SLOT_STATE_DONE_PROMPT) {
+                capture_prompt_boundary(slot, batch.view, slot.i_batch - off);
                 if (slot.task->type == SERVER_TASK_TYPE_EMBEDDING) {
                     // prompt evaluated for embedding
                     send_embedding(slot, batch.view);
@@ -4802,6 +5880,18 @@ private:
 
                 if (slot.task->type == SERVER_TASK_TYPE_DECISION) {
                     send_decision(slot, batch.view, slot.i_batch - off);
+                    slot.release();
+                    slot.i_batch = -1;
+                    return;
+                }
+
+                // n_predict=0 is the server's prompt-evaluation-only mode.
+                // Finish after the prompt so diagnostic FlyDelta arms can
+                // capture and return without sampling a throwaway token.
+                if (!slot.has_budget()) {
+                    slot.stop = STOP_TYPE_LIMIT;
+                    slot.has_next_token = false;
+                    send_final_response(slot);
                     slot.release();
                     slot.i_batch = -1;
                     return;
@@ -4834,6 +5924,12 @@ private:
 
             slot.i_batch = -1;
 
+            completion_token_output result;
+            result.tok          = id;
+            result.text_to_send = common_token_to_piece(
+                slot.ctx_tgt, result.tok, accept_special_token(slot, result.tok));
+            result.prob         = 1.0f; // TODO: set it here instead of doing inside populate_token_probs
+
             common_sampler_accept(slot.smpl.get(), id, true);
 
             // here we have synchronized the llama_context (due to the sampling above), so we can do time measurement
@@ -4849,11 +5945,6 @@ private:
 
             slot.stats.update_gen_last();
 
-            completion_token_output result;
-            result.tok          = id;
-            result.text_to_send = common_token_to_piece(slot.ctx_tgt, result.tok, accept_special_token(slot, result.tok));
-            result.prob         = 1.0f; // TODO: set it here instead of doing inside populate_token_probs
-
             if (slot.task->params.sampling.n_probs > 0) {
                 populate_token_probs(slot, result, slot.task->params.post_sampling_probs, params_base.special, tok_idx);
             }
@@ -4864,6 +5955,26 @@ private:
                 send_final_response(slot);
                 slot.release();
 
+                return;
+            }
+
+            // The agent reader independently recognizes the first complete
+            // JSON object and requests cancellation. Finish it here as well:
+            // otherwise the server can sample one extra token before that
+            // cancellation is observed, which makes a completed grammar look
+            // like an empty-stack error to the next sampler accept.
+            const bool output_schema = slot.task != nullptr &&
+                slot.task->params.sampling.grammar.type == COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT;
+            json completed;
+            if (output_schema) {
+                completed = json::parse_no_throw(slot.generated.text);
+            }
+            if (output_schema && !completed.is_discarded()) {
+                slot.stop = STOP_TYPE_EOS;
+                slot.has_next_token = false;
+                slot.print_timings();
+                send_final_response(slot);
+                slot.release();
                 return;
             }
 
@@ -5167,6 +6278,34 @@ void server_context::terminate() {
 
 llama_context * server_context::get_llama_context() const {
     return impl->ctx_tgt;
+}
+
+bool server_context::per_sequence_cvec_batch_enabled() const {
+    return impl->per_sequence_cvec_batch_enabled();
+}
+
+bool server_context::per_sequence_factorized_cvec_batch_enabled() const {
+    return impl->per_sequence_factorized_cvec_batch_enabled();
+}
+
+void server_context::set_per_sequence_cvec_batch_enabled(const bool enabled) {
+    impl->set_per_sequence_cvec_batch_enabled(enabled);
+}
+
+void server_context::set_per_sequence_factorized_cvec_batch_enabled(const bool enabled) {
+    impl->set_per_sequence_factorized_cvec_batch_enabled(enabled);
+}
+
+void server_context::set_teacher_scoring_backend(const std::string & backend) {
+    impl->set_teacher_scoring_backend(backend);
+}
+
+void server_context::set_agent_trace_enabled(const bool enabled) {
+    impl->set_agent_trace_enabled(enabled);
+}
+
+bool server_context::agent_trace_enabled() const {
+    return impl->agent_trace_enabled();
 }
 
 server_response_reader server_context::get_response_reader() {

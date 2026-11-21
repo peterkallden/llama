@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 using chat_template_caps = jinja::caps;
@@ -224,12 +225,50 @@ struct common_chat_msg_delimiters {
 };
 
 struct common_chat_tool {
+    common_chat_tool() = default;
+    common_chat_tool(
+            std::string tool_name,
+            std::string tool_description,
+            std::string tool_parameters,
+            std::string tool_result_schema = {},
+            std::string tool_output_schema = {})
+        : name(std::move(tool_name)),
+          description(std::move(tool_description)),
+          parameters(std::move(tool_parameters)),
+          result_schema(std::move(tool_result_schema)),
+          output_schema(std::move(tool_output_schema)) {}
+
     std::string name;
     std::string description;
     std::string parameters;
 
     // withheld from the system prompt, a tool_reference reveals it later in the conversation
     bool defer_loading = false;
+    // Optional host-owned result contract. Chat templates do not need to
+    // render this field; planner/reflection prompt builders may use it to
+    // describe values available for plan bindings.
+    std::string result_schema;
+    // Canonical tool output schema. Unlike result_schema, this is not the
+    // model-facing projection and is suitable for exposing over MCP.
+    std::string output_schema;
+    // Canonical host-facing input schema; parameters may be a smaller
+    // model-facing projection.
+    std::string host_input_schema;
+    // Optional MCP Apps presentation metadata. It is transport metadata only;
+    // the tool runtime and policy remain authoritative for execution.
+    std::string mcp_ui_metadata;
+    // Narrow first-party MCP App capability for host-authorized document
+    // editing. This does not make the tool read-only or model policy-free.
+    bool mcp_app_write_authorized = false;
+    // Host/provider provenance for web app discovery. These are not model
+    // instructions; they support provider-scoped UI routing and authorization.
+    std::string mcp_provider_id;
+    std::string mcp_server_tool_name;
+    bool mcp_app_read_only = false;
+    // Host-declared OpenAPI collection/item relation; not model authority.
+    std::string collection_item_parameter;
+    std::string collection_items_pointer;
+    std::string item_lookup_parameter;
 };
 
 enum common_chat_tool_choice {
@@ -300,6 +339,8 @@ struct common_chat_prompt {
     // replace the last occurrence of `from`, user input parts are skipped
     void replace_last(const std::string & from, const std::string & to);
 };
+
+std::vector<llama_token> common_chat_tokenize_prompt(const llama_vocab * vocab, const common_chat_prompt & prompt);
 
 struct common_chat_params {
     common_chat_format                  format = COMMON_CHAT_FORMAT_CONTENT_ONLY;

@@ -1,0 +1,716 @@
+# Agent Bugs
+
+This file records agent-specific bugs that affected runtime behavior and the
+commits that fixed them.
+
+## MCP stdio handshake blocked by LSP-style framing
+
+- Affected area: both the MCP stdio client and server
+- Reproduction: send a compact JSON `initialize` request followed by a newline
+  to `scripts/agent-codex-mcp-tools.sh`. The old server waited for a blank
+  header line and never replied; Codex timed out during initialization.
+- Cause: both ends used `Content-Length` framing from LSP instead of the
+  MCP-required newline-delimited JSON transport. Tests using our own client
+  against our own server shared the bug and therefore passed. A configured,
+  enabled MCP entry and a self-client tool listing did not prove interoperability.
+- Correction: use a common bounded JSON-line codec for MCP client/server,
+  negotiate the requested supported protocol revision, omit unavailable
+  capabilities instead of emitting null, and support `ping`. Preserve LSP
+  framing only in the separate clangd implementation.
+- Regression coverage: the server smoke supplies literal independent wire
+  messages and checks actual calls, notification ordering, escaped newlines,
+  errors, version and capabilities. Buffered parser tests cover partial and
+  multiple responses, malformed JSON and message-size bounds. The real stdio
+  registration also forwards `outputSchema`, which was previously dropped.
+- Reproduction and model verification: `scripts/test-agent-codex-mcp-tools.py`
+  records raw requests/responses before starting a fresh Codex/GPT-5.6-luna
+  process and requires real MCP call events. Traces live under the supplied
+  work directory, outside Git.
+- The next real OpenAlex call exposed a separate stdio assembly bug:
+  `limits.tool_timeout_ms=30000` was dropped while constructing its tool
+  context, leaving the internal 1000 ms default. A completed network call
+  could therefore be reclassified as `mcp.tool_timeout`. Stdio now forwards
+  the configured timeout and MCP deadline policy, with a 1200 ms fake-provider
+  regression under a 5000 ms configured limit.
+
+## FlyDelta smoke device identity and phase budget reporting
+
+- Status: corrected locally; verification results are recorded with the runtime change
+- Affected area: resident FlyDelta model smokes and daemon arm finalization
+
+### Verification on 2026-10-14
+
+The complete build passed. The broad agent model-free CTest selection passed
+182/182 tests; four tests reported their configured `Skipped` status (native
+crash tooling and tests requiring a model/runtime). The focused codec,
+daemon-seam, coefficient-search and dataset-repair-contract tests also passed.
+
+The full-trace Qwen Instruct run used `GGML_VK_VISIBLE_DEVICES=1` and the
+optional `LLAMA_AGENT_EXPECTED_GPU=NVIDIA` preflight. The trace resolved the
+visible device to `NVIDIA GeForce 920MX`; there was no device-lost event. The
+preflight is opt-in and backend-generic. It does not make NVIDIA a runtime
+requirement; ordinary deployments leave `LLAMA_AGENT_EXPECTED_GPU` unset.
+
+The two selected dataset-query baselines ended at EOS, not at the token limit.
+They still failed the DSL contract: one reused `where[0]` for multiple
+predicates and emitted `select: * except ...`; the other combined two sort
+keys on one `order_by` line. Their host-canonical continuations were captured
+against the same original prompt, and teacher scoring used the observed bad
+continuations. Both replay relations remained `synthetic_replay`, with
+`learning_credit=none` as required. The measured source deltas produced one
+independent direction, so rank 2/4 and Deep evaluation were unavailable; no
+behavioral or rank comparison is claimed from this run.
+
+Build log: `/home/prbm/llama-agent-smokes/seam-fixes-20261014/full-build.log`.
+CTest log: `/home/prbm/llama-agent-smokes/seam-fixes-20261014/agent-model-free-final.log`.
+Model trace: `/home/prbm/llama-agent-smokes/seam-fixes-20261014/nvidia-matched/full-trace.log`.
+
+On this machine, unmasked Vulkan device 0 is Intel UHD 620 and device 1 is
+NVIDIA GeForce 920MX. `GGML_VK_VISIBLE_DEVICES=0` therefore does not select
+NVIDIA. Elevating the sandbox grants device access; it does not choose the
+device. After masking device 1, the backend renumbers that NVIDIA device to
+Vulkan0. Use its resolved description as the identity.
+
+Resident host tracing now records each visible GPU's name, description and
+memory. A model smoke may set `LLAMA_AGENT_EXPECTED_GPU=NVIDIA` to require
+exactly one matching visible GPU before model loading. On this host, pair it
+with `GGML_VK_VISIBLE_DEVICES=1`; these machine-specific indices must not be
+portable defaults.
+
+A generation stopped at its token limit previously reported
+`host_evaluated=true`, although the Oracle was skipped. It now reports
+`host_evaluated=false` and `generation_token_budget_exhausted`. Model and arm
+traces include the phase, token limit, decoded count, exhaustion and
+diagnostic-only status. A diagnostic `n_predict=0` stop is not exhausted
+generation. Whole-process timeouts are reported separately as incomplete.
+The smoke also reports when no baseline capture pairs permit a rank sweep,
+and no longer claims bootstrap overlay evaluation when no worker ran.
+
+The Intel run on 2026-10-14 returned malformed baselines; a later Intel
+control lost its Vulkan device during paired diagnostic scoring. These are
+not NVIDIA results and do not establish a factorized-overlay regression.
+Binding lifetime remains relevant: the server synchronizes an active batch
+before detaching its callback, clears transient binding state afterwards,
+and retains basis/table allocations until context destruction or replacement.
+A device-loss error during synchronization is not a model/Oracle verdict.
+
+The rank-sweep smoke also incorrectly used learning-eligible effective rank
+to admit experimental rank 2/4. Replay captures carry no learning credit, so
+that rank is zero even when distinct capture pairs span multiple directions.
+The smoke now measures rank with the existing low-rank basis builder over
+distinct raw capture pairs at the selected layer. It excludes derived
+trimmed/whitened variants and duplicates. Production evidence-depth and
+learning-credit gates are unchanged; experimental rank is reported separately.
+
+Replay deltas previously subtracted the generation-boundary captures of two
+different user prompts: the task and an instruction to echo a repair. That
+mixed the repair instruction into WHAT. Replay now uses the established
+forced-context method: the original system/user prefix plus either the exact
+observed assistant output or the host-validated canonical continuation,
+evaluated with zero generated tokens. Free generation remains the test of
+behavior. This remains experimental replay and earns no learning credit.
+Replay no longer buys a free model echo of that already-executed host repair.
+The canonical target is logged as host-derived, never as generated recovery.
+
+The flat DSL codec now accepts an exact string enum declared at the field's
+schema path without quotes (for example `where[0].operator: >=`). Previously
+the generic scalar tokenizer rejected punctuation before consulting the
+schema. Unknown operators remain rejected. Duplicate indexed field paths
+and semantic differences such as `>` versus `>=` remain errors.
+
+Teacher-margin scoring previously replaced an unparseable observed DSL call
+with the replay fixture's invented tool name. That measured a different
+decision from the actual argument error. Scoring now keeps the exact observed
+DSL continuation, including invalid arguments, whenever it has a valid DSL
+prefix. This does not execute or authorize that call. Fixture fallback is
+explicitly traced and used only when no such observed continuation exists.
+
+Machine-readable model/arm/credit events now use one locked stderr write.
+Previously, stdout JSON and resident-thread stderr logs could interleave in
+the redirected full trace, corrupting an arm record during context teardown.
+
+Broad model-free validation also found binaries compiled before the new
+generation-result layout linking against newer shared libraries. The
+two-pass backtrace failed while assigning a string at the new structure
+offset. Rebuild dependent test/smoke executables after header changes before
+running CTest; CTest alone does not build them. The low-rank and dataset-repair
+launchers now pass their actual executable targets to the shared optional
+build helper instead of only rebuilding `llama-agent`.
+
+## Cancelled inference task retained an occupied admission slot
+
+- Status: Reproduced with a model-free regression; corrected locally. Final
+  combined runtime/UI verification is deferred to the user's next browser run.
+- Affected area: asynchronous session turns, cancellation and inference admission
+
+In the local web session, document turns accepted at 15:43:06, 15:46:22
+and 15:49:23 on 2026-10-18 waited for inference capacity until their
+180-second turn deadlines. No `inference.started` event followed admission
+queueing. An earlier retry also reported an already registered waiter ID.
+
+The asynchronous worker captured its task through `this`. On destruction,
+the task's request, gate pointer and heap-backed lease identity were destroyed
+before the future joined the worker. Cancellation could therefore leave
+`active=1` after host execution had exited. A regression holding host execution
+across cancellation and final-handle destruction reproduced this exact leak.
+
+The worker now captures its inputs by value and the future joins before
+task-owned state is destroyed. Admission cancellation releases a just-granted
+lease, cancelled admission cannot submit a host turn, and executor submission
+exceptions release capacity. Queue timeouts identify the waiting phase.
+Session-manager and operation-manager smokes are registered as CTests.
+
+Live verification also exposed missing propagation below the host: resident
+server inference passed an always-false stop predicate to every response reader.
+Thus a cancelled host turn could continue model generation and legitimately
+retain its slot until generation finished. Generation options now carry the
+turn's transient stop callback; the runtime binds it for all generation purposes
+and compaction, and server generation/scoring readers consume it. The shared
+server reader checks cancellation before consuming a queued token and sends
+task cancellation immediately. A release-safe CTest covers runtime-to-backend
+callback propagation and cancellation with a partial response already queued.
+
+## Structured agent grammar failure before tool-family selection
+
+- Status: Fixed locally; contract tests and Qwen web smoke verified
+- Affected area: daemon/web agent turns with small local models such as Qwen
+- Symptom: a simple prompt such as `hi there` enters agent mode, llama.cpp
+  reports `Unexpected empty grammar stack after accepting piece`, and the web
+  request can remain suspended until its turn timeout
+
+### Description
+
+The web client correctly submits an agent turn, but the runtime previously
+reached the full structured planner/tool grammar before it had established
+whether the request needed tools at all. Small models could fail that grammar
+on an ordinary conversational prompt. A retry implemented as a nested chat
+call inside the failed resident turn was not a safe general fix: the failed
+structured-generation attempt could still own session-lane or
+inference-capacity state, so the nested retry could reuse the same runtime
+state and wait forever.
+
+### Why this was a bug
+
+Tool selection and ordinary conversation were coupled too late. The host must
+decide whether a turn needs external tools before exposing the larger planner
+contract. The daemon and CLI now both use automatic plan routing connected to
+`enable_tool_family_routing`, so the family selection phase is actually run
+before the full planner. This daemon wiring is important because the CLI and
+daemon have separate configuration adapters.
+
+### Chosen solution
+
+Use a bounded, host-owned family-selection phase before full planning:
+
+```text
+request
+  -> family selection
+       needs_tools=false -> ordinary chat
+       needs_tools=true  -> selected family contracts -> plan -> tools
+```
+
+The family view should contain only compact family descriptions. Individual
+tool contracts are exposed only after the model has selected the relevant
+families. A `needs_tools=false` result must never enter the structured tool
+planner. If family selection itself fails, ordinary chat is allowed only when
+the request has no attached resources and no plan/tool event has been created.
+Resource-bearing or already-planned turns fail closed and retain their agent
+semantics.
+
+Reflection, deliberation, and internal memory phases do not by themselves mean
+that an external tool is required. Explicit memory/resource/tool operations do
+count as host-owned work and must not be silently downgraded to chat.
+
+The implementation uses a bounded plain-text family contract rather than a
+JSON tool-call grammar for this first small-model decision:
+
+```text
+NO_TOOLS
+```
+
+or:
+
+```text
+TOOLS: dataset, data
+```
+
+`NO_TOOLS` routes to ordinary chat with no tool grammar at all. A selected
+family is filtered against the host-owned tool view before full planning. The
+empty-tool preparation path also deliberately leaves the grammar empty; an
+empty tool view is ordinary chat, not an empty structured tool-call grammar.
+The web client must not classify debugger/model error strings or implement its
+own semantic fallback.
+
+The implementation is covered by `test-tool-family-index`,
+`test-agent-prepared-generation`, the runtime/inference contract tests, and a
+Qwen-backed web smoke with resident tracing. The trace confirms the intended
+sequence: `tool_family_selection` -> `conversation` for `hi there`, with no
+planner grammar and no timeout.
+
+### Exact tool call emitted during family preflight
+
+A small model may copy a tool name from the user request and emit a direct
+call such as `document.tables(resource_id=r1)` during the family preflight.
+That response is not a valid execution request: the preflight has not exposed
+the tool schema and the arguments may be wrong. The host recognizes an exact
+call only when the name belongs to the already policy-filtered tool view, uses
+its owning family as a routing hint, and continues through normal schema
+exposure, binding and planning. The call is never executed from the preflight
+text. Unknown names and non-call mentions remain failures, preserving the
+fail-closed boundary.
+
+## Dataset attachment binding after compact planning
+
+- Status: Fixed locally; runtime JSON regression coverage passes
+- Affected area: dataset inspection of small-model turns with attached or
+  previously scoped resources
+- Symptom: a CSV upload succeeded, but a subsequent `dataset.inspect` could
+  report that the dataset reference was unavailable.
+
+The model-facing resource catalog uses compact handles: `rN` means a
+current-turn attachment and `sN` means a host-listed scoped resource. The
+normalizer previously selected the right `sN` candidate but accidentally
+copied the URI from the `rN` list. It also handled `resource:"r1"` for dataset
+tools but not the equivalent `dataset:"r1"` that a small model can emit when
+it follows the `dataset_ref` schema annotation. Both forms now resolve to the
+host-owned resource URI before the dataset adapter runs. With exactly one
+current attachment, a non-canonical model alias is treated as the implicit
+attachment default; explicit `dataset://...` references remain unchanged.
+
+The resolver now also performs exact host-owned name lookup across both lists.
+A unique filename such as `sales.csv` can therefore resolve to the matching
+attachment or prior scoped resource before dataset/document materialization.
+Multiple matches fail with a bounded `Choose one of` diagnostic; an unknown
+resource-only name fails with the candidate list rather than being interpreted
+as a filesystem path.
+
+## Dataset inventory was lost before planner generation
+
+- Status: Fixed locally; release-safe runtime and JSON contract tests pass,
+  and the Qwen+Nomic data smoke completes
+- Affected area: host-to-runtime request construction for registered datasets
+- Symptom: Qwen first emitted self-bindings and then a reference such as
+  `$datasets.datasets[0]`, but the planner request contained no visible dataset
+  inventory. The runtime consequently rejected the alias as undeclared or
+  could not bind it to a host dataset.
+
+The host had already selected and scoped the available dataset descriptors. The
+bug was at the boundary where the host execution state was copied into a new
+`common_agent_request`: `available_resources` was copied, but
+`available_datasets` was omitted. The planner therefore had code to render the
+inventory, but received an empty vector. The request builder now preserves the
+same scoped inventory that the host selected, and each entry explicitly shows
+its stable model-facing reference (`$datasets.datasets[index].dataset`) beside
+the host-approved name and URI.
+
+The regression test initially failed to catch this in release builds because
+its call to the runtime driver was inside `assert`; with `NDEBUG`, the runtime
+was never invoked. The inventory smoke now executes setup and the driver
+unconditionally and checks the first planner request with an explicit
+release-safe failure. This test protects both halves of the contract: the
+host must pass the inventory, and the compact planner context must make the
+binding visible to the model.
+
+## OpenAPI dataset URI and exposed-name drift
+
+- Status: Fixed locally; OpenAPI host and provider tests pass
+- Affected area: OpenAPI result materialization and follow-up `data.*` calls
+
+Two small contract mismatches were easy to miss in release-style builds. The
+OpenAPI provider was passing an undecorated prefix into the shared MCP naming
+helper, while the planner and documentation used dotted names such as
+`sales.listSales`. The provider now supplies a dotted prefix explicitly;
+ordinary MCP prefixes retain their underscore behavior. Separately, the host
+dataset scope guard had been written around an obsolete agent-prefixed URI,
+although the existing dataset importer emits `dataset://`. A follow-up data
+operation could therefore use an OpenAPI dataset outside its turn. The
+canonical scheme now goes through the descriptor and source-resource authority
+check, while the obsolete scheme is rejected.
+
+The provider smoke also enables the network capability explicitly and checks
+tool-view resolution without relying on `assert`, because release builds define
+`NDEBUG`. This keeps a filtered-away OpenAPI catalog from becoming a null
+dereference and makes the policy prerequisite visible in the test.
+
+## Dataflow results were not reusable by the next data step
+
+- Status: Fixed locally; Cozo, adapter, planner and Qwen+Nomic data smokes pass
+- Affected area: compact planner bindings and derived dataset scope
+
+The compact model could refer to a prior result as `joined` or `$joined.dataset`.
+The host now resolves bare prior aliases to the canonical dataset binding and
+automatically materializes a bounded result when a later plan step consumes the
+alias. The generated result uses `dataset://agent/turn/<turn>/step-<n>` and is
+accepted only in that turn. It is not a hidden extra model step, and it is not
+allowed to materialize truncated output.
+
+The same smoke exposed two older assumptions. A join has two dataset inputs
+(`left` and `right`), while aggregate/statistics use `dataset`; validation must
+not treat these forms as different kinds of resource. Also, the seed fixture
+registers datasets directly from CSV files under the repository root and does
+not create duplicate resource-store entries. Repository-backed sources are
+therefore checked against that root; turn-scoped resource-backed datasets still
+use the normal resource authority and fail outside their turn.
+
+The adapter now applies one shared dataset-scope helper to every structured-data
+input, including both sides of a join, and to descriptor inspection, selection
+and listing. A descriptor is accepted only when its source is readable through
+the active resource authority, is a current-turn derived dataset, or is a
+repository-backed file below the configured repository root. Listing therefore
+does not advertise descriptors that a subsequent operation would be unable to
+use.
+
+Small models also emitted a single join condition as an object, `where: true`
+for an unfiltered query, or copied a family description after the family ID.
+The host accepts only these unambiguous canonicalizations: one `{left,right}`
+condition becomes a one-item array, `where: true` is omitted, and a
+`known-family:description` token is reduced to its exact known family prefix.
+Unknown families and other malformed expressions remain hard failures.
+
+## Family selection allowed an ungrounded answer fallback
+
+- Status: Fixed locally; deterministic contract tests and a Qwen web smoke are
+  required for verification
+- Affected area: daemon/web agent turns using automatic plan routing
+- Symptom: a request such as `what time is it?` selected the `time` family, but
+  the planner could still produce a reasoning/answer step without completing
+  `time_now`. The turn then returned a placeholder-like answer instead of the
+  UTC value from the tool.
+
+### Cause and fix
+
+Family selection is a host-owned decision that says external evidence is
+needed. It must therefore not only narrow the model-facing tool view; it must
+also set the existing `require_tool_execution` request contract. The normal
+runtime guard then rejects answer-only fallback until a mandatory tool step has
+completed. This keeps the behavior aligned with ordinary CLI requests that
+already use the same contract, without adding a second family-specific
+execution path.
+
+The `time` family is described semantically as `Return the current time`. The
+family view remains compact and does not expose `time_now` until the model has
+selected the family; the later planner view contains the exact tool name and
+contract.
+
+Singleton tools with no required arguments now use the existing chat/tool
+driver directly after family selection. This is a fast path, not a second
+execution model: multi-tool and dataflow requests still use the normal plan
+compiler/runtime. The selected request remains marked as requiring tool
+execution, so the fast path also fails closed if the model emits no tool call.
+
+The host/bootstrap value `limits.max_tool_rounds: 0` is treated as “use the
+default budget” and resolves to 16 rounds. This avoids a misleading situation
+where required tool selection is enabled but the execution budget is
+accidentally zero; explicit positive limits remain authoritative.
+
+## Reflection request exceeded the model context
+
+- Status: Fixed locally; compact reflection projection and fallback regression
+  coverage added
+- Affected area: small-model reflection after planning and tool execution
+- Symptom: Qwen reported `request (3174 tokens) exceeds the available context
+  size (3072 tokens)` and the turn failed during reflection generation.
+
+Reflection now receives only compact plan state, relevant tool contracts,
+bounded observations, resource handles, the request and the draft. It omits the
+full tool catalog and memory/history projection. If the reduced request still
+does not fit, a draft is accepted only when every required tool step is
+resolved; otherwise the draft is discarded and the required work remains
+blocked. This preserves the fail-closed tool guarantee while allowing a valid
+answer to survive an optional quality-pass failure.
+
+## Resource upload scope drift at the daemon boundary
+
+- Status: Fixed locally; daemon scope regression test added
+- Affected area: authenticated TCP and Unix resource upload/read/list commands
+- Symptom: an upload could succeed, but the following turn could not read the
+  returned URI when the client omitted namespace/project fields.
+
+The JSONL parser supplies protocol defaults for omitted scope fields. A turn is
+then rebound to the authenticated token policy, so the resource and turn could
+end up in different authorities. The daemon now binds `put_resource`,
+`read_resource`, and `list_resources` to the authenticated namespace/project,
+regardless of whether the client omitted them or supplied conflicting values.
+`run_turn` and `execute_tool` use the same shared binding helper. This is an
+authorization consistency fix, not a permission expansion: the token policy
+still determines the effective scope. `test-agent-daemon-scope` covers omitted
+fields, conflicting fields, and the implicit caller session.
+
+## Research checkpoint missing turn identity for project-scoped plans
+
+- Status: Fixed and verified
+- Fix commit: `2ba75c1ff` (`Assign turn identity to agent runtime runs`)
+- Affected area: CLI agent-runtime research runs with `project` or `session` plan scope
+- Failure: `research workspace checkpoint requires bounded identity and sequence`
+
+### Description
+
+The CLI generated an implicit `memory_turn` only when the persisted plan scope
+was `turn`. Research workspaces are execution state for one operation and
+require a turn identity even when the plan itself is persisted at project or
+session scope. A model-backed research run could therefore generate a valid
+plan and then fail while creating its first research checkpoint, before any
+planned tool call was dispatched.
+
+### Why this was a bug
+
+Persisted plan scope and active operation identity are separate dimensions. The
+runtime correctly required bounded checkpoint identity, but the CLI incorrectly
+treated a non-turn plan scope as permission to omit the operation turn ID. The
+CLI now assigns an implicit bounded turn ID to every agent-runtime invocation
+when the caller did not provide one. The plan remains in its requested scope;
+only the active operation identity is filled in.
+
+## Resident server-context initialization before model loading
+
+- Status: Fixed and verified
+- Fix commit: `4813c990a` (`Initialize resident server context backend`)
+- Affected area: resident agent daemon inference on the server-context path
+- Verified with: Qwen and Phi model-backed daemon smoke runs, plus the
+  `runtime-server-context-host-invalid-model-paths` model-free smoke
+
+### Description
+
+The resident agent server-context host called `server_context::load_model()`
+before initializing the llama backend. This could make a daemon inference
+request hang during model loading, and it could also make invalid model paths
+fail inside the lower-level loading path instead of returning a bounded agent
+error.
+
+### Why this was a bug
+
+The server-context load path reports model-loading progress through code that
+uses the ggml timer. The timer is initialized by the llama backend bootstrap.
+Because the resident host had not performed that bootstrap, the load path used
+an uninitialized backend/timer state. This violated the runtime's initialization
+ordering contract and made a valid model-backed request fail to reach inference
+reliably.
+
+The host now performs the one-time `common_init()`, `llama_backend_init()`, and
+`llama_numa_init()` sequence before loading a model. It also validates that the
+configured model path is non-empty, exists, and is a regular file before
+entering the lower-level load path. Invalid paths therefore produce a bounded
+`turn.failed` result rather than hanging or crashing.
+
+The fix is intentionally contained in the agent resident host; it does not
+change the shared `tools/server/server-context.cpp` implementation.
+## MCP catalog advertised unexecutable memory tools
+
+- Status: Fixed locally; adapter and MCP regression coverage added
+- Affected area: inbound MCP `tools/list` and memory inspection
+- Symptom: `memory_inspect` and `memory_conflict_check` appeared in the MCP
+  catalog but were rejected by caller policy because no native adapter had
+  registered them. `memory_search` could also exceed the one-second generic
+  tool timeout while initializing the local embedding path.
+
+The memory adapter now registers both read-only tools and preserves their
+runtime scope. `memory_search` has a bounded 30-second tool budget, while the
+MCP request remains governed by the host's MCP timeout. A catalogued tool must
+have an executable adapter before it is treated as available; the adapter
+regression test covers inspection and conflict lookup.
+
+## Native launcher repository-root binding
+
+- Status: Fixed locally in the development launcher
+- Affected area: native MCP and web smoke tests for repository tools
+- Symptom: repository tools returned `not a git repository` even though the
+  launcher was started from the project checkout.
+
+The launcher previously mapped `tools.repository_root` to an empty temporary
+workspace. It now defaults that binding to the checkout and passes it as an
+explicit daemon override, while `LLAMA_AGENT_REPOSITORY_ROOT` remains
+available for a deliberately different fixture.
+
+## Relative sandbox workspace roots broke local PDF/OCR processors
+
+- Status: Fixed locally; direct MCP resource-read and full Codex PDF smoke pass
+- Affected area: CLI host sandbox assembly and local resource processors
+- Symptom: `resource.read` could fetch and inspect a PDF, but the configured
+  `mutool` page renderer reported that its source file did not exist. The
+  workspace root was relative, while the subprocess working directory was
+  already inside the per-operation source directory; the relative path was
+  consequently applied twice.
+- Correction: resolve relative workspace and artifact roots against the
+  repository root before constructing the sandbox and resource processor
+  hosts. Keep the example portable rather than hard-coding an absolute host
+  path. The audit profile grants only the PDF renderer and OCR execution
+  classes the bounded output/artifact permissions their processors require.
+- Verification: the saved OpenAlex → arXiv PDF fallback fetched a 2.2 MiB
+  PDF under the 10 MiB default, then materialized OCR text from all 15 pages.
+  The direct parser's malformed UTF-8 path also now degrades to OCR rather
+  than escaping as a JSON exception. Full trace:
+  `/home/prbm/llama-agent-smokes/codex-mcp-20261015/pdf-e2e-after-workspace-fix/`.
+
+## clangd MCP diagnostics hung, failed to load source files, and double-closed stdin
+
+- Status: Corrected locally and verified through the real MCP stdio server
+- Affected tools: `diagnostics.symbol`, `diagnostics.references`, and
+  `diagnostics.call_hierarchy`
+- Causes: the subprocess did not search `PATH`; the LSP reader used a blocking
+  buffered read that waited for 4 KiB even when a complete response was shorter;
+  location queries did not notify clangd that the source document was open; and
+  shutdown closed the subprocess-owned stdin stream before `subprocess_join`
+  closed it again.
+- Correction: enable executable lookup on `PATH`, read the LSP stream without
+  waiting for a full buffer, send one bounded `textDocument/didOpen` per
+  repository-contained source file, and let `subprocess_join` own stdin
+  cleanup. Source documents are limited to 4 MiB. Empty clangd workspace-symbol
+  results use the existing text search only as a clearly labeled
+  `text-fallback` with `semantic:false`.
+- Verification: live clangd protocol test exits cleanly; MCP call hierarchy
+  returns an in-repository caller and bounded callees; symbol lookup returns
+  labeled text matches when the clangd workspace index is empty. Targeted
+  adapter and protocol CTests pass. Traces:
+  `/home/prbm/llama-agent-smokes/codex-mcp-20261015/diagnostics-clangd-real-calls/`.
+- A later Codex/GPT-5.6-luna diagnostics run made calls to all eight advertised
+  diagnostics tools. The agent supplied an exact symbol and source line for
+  call hierarchy/references after the contract update. Symbol/references used
+  labeled text fallback where clangd's workspace index returned no match;
+  call hierarchy returned semantic results. Native crash analysis was invoked
+  with a source file and PDF rather than a binary/core pair and returned
+  `parse_failed`; this does not validate a successful native-crash analysis.
+  The final trace is under
+  `/home/prbm/llama-agent-smokes/codex-mcp-20261015/diagnostics-codex-final/`.
+
+## Diagnostics tool descriptions and parser fixtures disagreed
+
+- Status: Corrected locally; diagnostics model rerun pending
+- The call-hierarchy schema made location fields optional but the adapter
+  needs a path/line pair; its description now explains the two accepted pairs,
+  checks that the source line contains the requested symbol, and reports the
+  actual one-hop behavior instead of advertising an unused depth setting.
+  `diagnostics.include_graph` previously described generic compiler dependency
+  output while parsing only explicit arrows. It now accepts clang `-H` nesting
+  or explicit edges and rejects input with no recognized graph records; flat
+  `clang -M` output is explicitly excluded because it does not preserve
+  parent/child relationships. `diagnostics.format` now recognizes the common
+  “formatting differs” and clang-format violation forms instead of reporting
+  those outputs as clean.
+
+## CUDA release verification needs toolkit stubs and Debian dependency handling
+
+- Status: Workflow fix verified partially; release rerun pending
+- Affected area: CUDA agent release builds, CUDA agent tests, and Debian CUDA
+  package creation
+
+### Symptoms
+
+The CUDA release build initially timed out during `llama-agent-build-pack`
+because the Linux release job had a 60-minute limit. After the timeout was
+extended, the CUDA agent tests built successfully but could not start on a
+GitHub-hosted runner because no NVIDIA driver is present:
+
+    error while loading shared libraries: libcuda.so.1
+
+The first stub workaround used the wrong toolkit location, and the second
+attempt tried to create a symlink inside `/usr/local/cuda-13.3`, which is not
+writable by the runner. The workflow now discovers CUDA's `libcuda.so` stub,
+creates a `libcuda.so.1` symlink in `$RUNNER_TEMP`, and uses that directory
+only while running the agent tests. The Linux CUDA agent tests subsequently
+passed.
+
+The Debian CUDA package then failed in `dpkg-shlibdeps` because NVIDIA's
+`libcuda.so.1` and `libcudart.so.13` do not provide Debian shlibs metadata.
+The package workflow now excludes the bundled CUDA backend library from
+automatic shlib analysis, declares `cuda-cudart-13-3` explicitly, and
+documents the compatible NVIDIA driver as a host-level requirement.
+
+### Boundary
+
+The stub is a test-runner accommodation, not a replacement for CUDA. It
+validates agent contracts and startup paths without GPU execution. Actual
+CUDA inference still requires a compatible NVIDIA driver and GPU. A separate
+GPU-backed smoke test remains desirable if release validation must cover real
+CUDA execution rather than package buildability and agent tests.
+
+### Reproduction and follow-up
+
+The failures were observed in release workflow runs `33041796523`,
+`33050775631`, and `33060156841`. The workflow fixes are committed on the
+release branches; this documentation entry is intentionally local and has
+not been committed or pushed in this work session. The current release rerun
+is `33068725061`.
+## SQLite dataset provenance smoke build prerequisite
+
+The SQLite datastore smoke is an optional storage-profile test. A build with
+`LLAMA_AGENT_STORAGE_SQLITE=ON` requires the SQLite development package
+`libsqlite3-dev`, which supplies both the library and `sqlite3.h`. Runtime-only
+profiles intentionally keep SQLite disabled. This is a build prerequisite, not
+a runtime defect and not a reason to weaken or silently disable the smoke.
+
+## Full tool catalog exposed to ordinary chat
+
+A preview configured with `tools.profile=all-configured` exposed 76 tools to
+both the agent and direct chat entry points. A direct `Reply exactly OK`
+request rendered to 5,283 tokens and exceeded the configured 3,072-token
+resident context. The direct chat entry point bypassed the family preflight
+already used by automatic agent planning.
+
+Automatic chat now reuses the same family selection implementation as agent
+planning. `NO_TOOLS` exposes no tool schemas; selected families and their
+host-owned prerequisites remain bounded by the authorized catalog. Required
+tool execution and required attachment reads cannot become ordinary answers.
+Explicitly disabling automatic family routing retains the existing direct
+chat/tool contract.
+
+Resident completion requests count the fully template-rendered text with the
+resident model tokenizer before submission and reserve their requested output
+budget against the actual per-slot context. Oversized text fails without
+submitting a server task; mandatory schemas and messages are not truncated.
+Native media expansion remains validated by the server after media processing.
+`LLAMA_AGENT_RESIDENT_TRACE=1` records request identity, purpose, tool/message
+counts, rendered text token count, context/output budgets, elapsed time and
+completion status without enabling prompt/output content logging.
+
+The automatic-agent timeout also involves planner generation. In the preview,
+the compact-DSL planner reached its 512-token output limit after roughly
+299 seconds before any dataset tool ran; the 180-second turn deadline cut
+this phase short. A comparison using an explicit native-output model profile
+completed its first planner generation but exposed a separate dataset schema
+contract failure. Increasing the turn deadline alone does not repair either
+contract. These timings describe this local model/device configuration.
+
+Dataset source unions now contain complete, disjoint object alternatives.
+Previously each `oneOf` branch only declared a required source field. The
+grammar compiler visits alternatives independently and those branches became
+unconstrained JSON, losing the sibling property restrictions. Each branch
+now preserves the tool's other required fields and permits exactly one of
+`dataset`, `resource` and `path`. Host validation remains authoritative.
+Overlapping `oneOf` matches also receive an explicit ambiguity diagnostic,
+instead of an unrelated missing-field error from a failing alternative.
+
+Early driver failures and family-routed conversation results now retain the
+pre-turn events/trace and any partial conversation decode metadata. Previously,
+returning before the main execution loop discarded those records. A zero turn
+`total_decoded_tokens` is not proof that route/family selection performed no
+model work; use the per-generation trace for those internal phases.
+
+Targeted planner argument repairs preserve the bounded host-authorized dataset
+inventory from the original planning context. Distinct invalid tool steps may
+now each receive one repair, bounded by the model plan's step limit and the
+shared turn deadline. A failed repair of the same step remains terminal;
+structural regeneration retains its single retry. This avoids discarding a
+repaired multistep candidate merely because the next step needs its own args.
+
+A subsequent live run read the virtual dataset successfully with
+`dataset.inspect`, then stopped at `dataset.schema` with
+`tool_call_limit_reached`. The host's omitted/zero `max_tool_rounds` resolved
+to 16 in runtime policy but to 1 in native/MCP provider contexts. A shared
+host budget resolver now applies the 16-round default consistently in CLI,
+daemon and stdio MCP assembly; explicit positive limits remain unchanged.
+The regression exercises two real native provider calls through CLI assembly
+for both the default and an explicit one-call budget.
+
+The preview also exposed an independent continuation problem: automatic plan
+selection can reuse a still-active plan containing a failed tool step after
+reflection abort, then report dependency scheduling failure. A fresh session
+avoids reusing that plan; this observation is not a verified continuation fix.
+
+With an explicit 16-call budget in a fresh session, the preview completed
+`dataset.inspect`, `dataset.schema`, `dataset.select` and `dataset.sample`
+against the real Elasticsearch source and delivered an answer to the web UI.
+This proves the acquisition path, not answer quality: the 128-token draft
+budget truncated the response, and the answer confused seven columns with
+seven rows although the preserved sample contained five rows. These remain
+model-facing evidence/synthesis issues. The local preview's next-start draft
+budget is 256; that setting alone is not proof of corrected factual output.

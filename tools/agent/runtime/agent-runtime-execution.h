@@ -1,0 +1,192 @@
+#pragma once
+
+#include "../runtime/agent-runtime-tooling.h"
+#include "../tooling/agent-tool-provider.h"
+#include "agent/contracts/agent-events.h"
+#include "agent/contracts/agent-request.h"
+#include "agent/contracts/agent-result.h"
+#include "agent/agent-inference.h"
+#include "agent/learning/blueprint-selector.h"
+#include "agent/tooling/registry/tool-registry.h"
+#include "../runtime/agent-plan-orchestration.h"
+#include "../runtime/agent-runtime-session.h"
+#include "memory/memory-store.h"
+#include "plan/plan-store.h"
+#include "tools/agent/resource/agent-resource-evidence-session.h"
+
+#include <string>
+#include <vector>
+
+using common_agent_resource_chunk_context = common_agent_generation_resource_chunk;
+
+struct common_agent_runtime_policy {
+    std::string agent_inference_backend = "cli";
+    std::string tool_profile;
+    std::string memory_learn = "off";
+    bool memory_learn_show_candidate = false;
+    bool plan_show_summary = false;
+    bool agent_trace = false;
+    bool enable_reflection = false;
+    size_t max_iterations = 1;
+    size_t max_reflection_rounds = 0;
+    size_t max_tool_rounds = 0;
+    bool allow_policy_gated_tool_proposals = false;
+    common_agent_deliberation_policy deliberation_policy =
+        make_common_agent_deliberation_policy(common_agent_thinking_mode::reflective);
+};
+
+struct common_agent_runtime_policy_build_config {
+    std::string agent_inference_backend = "cli";
+    std::string tool_profile;
+    std::string memory_learn = "off";
+    bool memory_learn_show_candidate = false;
+    bool plan_show_summary = false;
+    bool agent_trace = false;
+    size_t max_tool_rounds = 0;
+    std::map<std::string, std::vector<std::string>> tool_capabilities;
+    std::map<std::string, common_tool_profile> tool_profiles;
+};
+
+common_agent_runtime_policy make_agent_runtime_policy(
+    common_agent_runtime_policy_build_config config);
+
+// Driver inputs are runtime-owned contracts, stores, and prebuilt scope/tool state.
+struct common_agent_runtime_driver_inputs {
+    common_memory_store & memory_store;
+    common_plan_store & plan_store;
+    common_agent_inference_options inference_options;
+    common_agent_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    std::string & current_plan_id;
+    const common_agent_scope & scope;
+    const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
+    std::optional<common_memory_policy_pack> policy_pack;
+    const std::vector<common_memory_hit> & memories;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    bool memory_enabled = false;
+    const std::string & fallback_reason;
+    const common_agent_runtime_tooling & tooling;
+    std::vector<common_agent_input_resource> input_resources;
+    std::optional<common_agent_resource_read_binding> resource_read_binding;
+    std::function<bool()> research_should_stop;
+    std::function<common_agent_research_stop_reason()> research_stop_reason;
+    std::optional<common_memory_candidate> explicit_memory_candidate;
+    bool explicit_memory_confirmed = false;
+    // Explicit caller requirement; family preflight may strengthen but never
+    // weaken it when producing the runtime request.
+    bool require_tool_execution = false;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
+    common_agent_runtime_execution_control execution_control;
+    // Optional host-prepared activation for callers that construct the
+    // generic driver input path directly instead of using session-host.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    // Host-owned concrete tool arguments propagated into every request built
+    // by the agent driver. These are merged before planner validation and
+    // execution; they are not model-inferred arguments.
+    std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
+    // Optional host-owned capture request used by the causal FlyDelta smoke.
+    // The runtime only carries the request; capture remains disabled unless a
+    // caller explicitly supplies it.
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
+    // Host-owned persistent draft binding and resumable research content.
+    std::optional<common_agent_research_draft_ref> research_draft;
+    std::optional<common_agent_research_workspace> research_workspace_seed;
+    std::function<bool(const common_agent_research_workspace &, std::string &)> research_progress_sink;
+};
+
+struct common_agent_runtime_driver_execution {
+    common_memory_store & memory_store;
+    common_plan_store & plan_store;
+    common_agent_inference & inference;
+    common_agent_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    std::string & current_plan_id;
+    common_agent_scope scope;
+    const std::vector<common_blueprint_candidate> & installed_blueprint_candidates;
+    std::optional<common_memory_policy_pack> policy_pack;
+    const std::vector<common_memory_hit> & memories;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    bool memory_enabled = false;
+    const common_agent_runtime_tooling & tooling;
+    // Model-facing tools after host-owned family selection. The resolved
+    // tool_view remains authoritative for execution and policy enforcement.
+    std::vector<common_chat_tool> model_tools;
+    // An empty selected catalog is meaningful for a phased method whose
+    // current slice needs no operation; do not restore every authorized tool.
+    bool model_tools_selected = false;
+    common_agent_result family_chat_result;
+    bool family_chat_routed = false;
+    std::vector<common_agent_input_resource> input_resources;
+    std::optional<common_agent_resource_read_binding> resource_read_binding;
+    std::optional<common_agent_working_state> compact_working_state;
+    std::function<bool()> research_should_stop;
+    std::function<common_agent_research_stop_reason()> research_stop_reason;
+    std::optional<common_memory_candidate> explicit_memory_candidate;
+    bool explicit_memory_confirmed = false;
+    std::vector<common_agent_event> pre_turn_events;
+    std::vector<common_runtime_trace_entry> pre_turn_trace;
+    common_agent_route_candidate selected_route;
+    bool route_selected = false;
+    common_agent_execution_envelope execution_envelope;
+    bool execution_envelope_ready = false;
+    std::vector<common_memory_hit> route_procedure_memories;
+    common_agent_runtime_execution_control execution_control;
+    std::vector<agent_resource_evidence_session> resource_evidence_sessions;
+    // Keep the authoritative input view so the lane can restore it for the
+    // synthesis slice after the last bounded chunk has been processed.
+    std::vector<common_agent_input_resource> resource_chunk_original_inputs;
+    bool resource_chunk_observations_prepared = false;
+    bool resource_chunk_needs_plan = false;
+    bool resource_chunk_single_pass = false;
+    // Only one resource chunk chain is active at a time.  The original
+    // resource remains authoritative in the store; this is the transient
+    // session-lane cursor for the bounded input view.
+    size_t active_resource_chunk_plan = static_cast<size_t>(-1);
+    size_t active_resource_chunk_input = static_cast<size_t>(-1);
+    size_t active_resource_chunk_index = 0;
+    std::optional<common_agent_resource_chunk_context> active_resource_chunk_context;
+    // A successful family preflight makes ordinary answer-only fallback
+    // invalid until at least one selected tool has completed.
+    bool require_tool_execution = false;
+    common_agent_tool_output_format tool_output_format = common_agent_tool_output_format::compact_dsl;
+    // Bounded host-side resource.list result. Current-turn attachments remain
+    // in input_resources and are always rendered as rN handles.
+    std::vector<common_agent_input_resource> available_resources;
+    // Immutable host-prepared activation propagated to every generation
+    // request created for this runtime turn. Selection and activation remain
+    // host responsibilities; the driver only carries the snapshot.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    // Host-owned concrete tool arguments propagated into every request built
+    // by the agent driver.
+    std::vector<common_agent_tool_argument_binding> tool_argument_bindings;
+    // Dataset descriptors produced by verified workflow observations during
+    // this host session. They augment, but do not replace, the host inventory.
+    std::vector<common_agent_dataset_descriptor> continuation_datasets;
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
+    common_agent_cognitive_state cognitive_state;
+    bool workflow_preference_applied = false;
+    std::string project_graph_context;
+    std::optional<common_agent_research_draft_ref> research_draft;
+    std::optional<common_agent_research_workspace> research_workspace_seed;
+    std::function<bool(const common_agent_research_workspace &, std::string &)> research_progress_sink;
+};
+
+common_agent_runtime_driver_execution make_agent_runtime_driver_execution(
+    common_agent_runtime_driver_inputs & inputs,
+    common_agent_inference & inference);
+
+common_agent_request make_agent_runtime_driver_request(
+    const common_agent_runtime_driver_execution & execution);
+
+bool run_agent_runtime_driver_session(
+    common_agent_runtime_driver_inputs & inputs,
+    common_agent_runtime_session & session,
+    common_agent_result & result,
+    std::string & error);
+
+bool run_agent_runtime_driver(
+    common_agent_runtime_driver_execution & execution,
+    common_agent_result & result,
+    std::string & error);

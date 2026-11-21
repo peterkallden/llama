@@ -1,0 +1,335 @@
+#include "semi-oracle-store-cozo.h"
+#include "agent/adaptation/semi-oracle-tool.h"
+#include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
+#include "agent/adaptation/training-candidate.h"
+
+#include <filesystem>
+#include <string>
+#include <chrono>
+#include <cstdio>
+#include <thread>
+#include <cstdlib>
+#ifndef _WIN32
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+#include <nlohmann/json.hpp>
+
+#define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #x); return 1; } } while (false)
+
+int main(int argc, char ** argv) {
+    if (argc == 3 && std::string(argv[1]) == "--crash-after-append") {
+        agent_semi_oracle_cozo_store child_store;
+        std::string child_error, source_payload;
+        bool source_found = false;
+        if (!child_store.open(argv[2], child_error) ||
+                !child_store.get_evaluation_payload("evaluation://race", source_payload, source_found, child_error) ||
+                !source_found) std::_Exit(71);
+        const auto source = nlohmann::json::parse(source_payload, nullptr, false);
+        if (!source.is_object()) std::_Exit(72);
+        common_semi_oracle_result committed;
+        committed.ruleset_id = source.at("ruleset_id").get<std::string>();
+        committed.ruleset_revision = source.at("ruleset_revision").get<uint64_t>();
+        committed.verdict = source.at("verdict") == "SATISFIED" ? common_semi_oracle_verdict::satisfied :
+            source.at("verdict") == "VIOLATED" ? common_semi_oracle_verdict::violated : common_semi_oracle_verdict::unknown;
+        committed.level = common_semi_oracle_level::bounded;
+        committed.evaluator_ref = source.at("evaluator_ref").get<std::string>();
+        committed.evaluator_revision = source.at("evaluator_revision").get<std::string>();
+        committed.proof_json = source.at("proof_json").get<std::string>();
+        committed.counterexample_json = source.at("counterexample_json").get<std::string>();
+        committed.expansions = source.at("expansions").get<size_t>();
+        committed.depth_reached = source.at("depth_reached").get<size_t>();
+        committed.search_guidance_json = source.at("search_guidance_json").get<std::string>();
+        committed.search_branch_quality_json = source.at("search_branch_quality_json").get<std::string>();
+        committed.reason = "committed before abrupt process exit";
+        if (!child_store.append_evaluation("evaluation://crash-commit", committed, child_error)) std::_Exit(73);
+        // Deliberately bypass store close/destructors after the DB transaction.
+        std::_Exit(0);
+    }
+    const auto nonce=std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto dir=std::filesystem::temp_directory_path()/("llama-agent-semi-oracle-cozo-test-"+std::to_string(nonce));
+    std::error_code ec;std::filesystem::create_directories(dir,ec);
+    CHECK(!ec);
+    const auto db=(dir/"semi-oracle.db").string();std::string error;
+    agent_semi_oracle_cozo_store store;CHECK(store.open(db,error));
+    common_semi_oracle_ruleset r;
+    CHECK(common_semi_oracle_parse_ruleset_dsl("name: TTT\ndescription: test\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n","ruleset://test/1","session-1",r,error, common_semi_oracle_rule_authority::declared));
+    CHECK(store.put_revision(r,error));
+    common_semi_oracle_ruleset loaded;bool found=false;
+    CHECK(store.get_revision(r.id,1,loaded,found,error)&&found&&loaded.name=="TTT");
+    auto changed=r;changed.name="mutated";
+    CHECK(!store.put_revision(changed,error));
+    CHECK(store.bind_session("session-1",r.id,1,error));
+    std::string id;uint64_t revision=0;
+    CHECK(store.get_session_binding("session-1",id,revision,found,error)&&found&&id==r.id&&revision==1);
+    common_semi_oracle_tool_service play_service(store,"host","session-play");
+    common_semi_oracle_ruleset active_game;
+    CHECK(play_service.define_ruleset(
+        "name: Session game\ndescription: persisted board test\ndomain: placement_game\nrows: 3\ncolumns: 3\nwin_length: 3\nplayers: X, O\n",
+        common_semi_oracle_rule_authority::declared, active_game, error));
+    common_semi_oracle_result turn_result;
+    std::string before, after;
+    const bool first_action_ok = play_service.verify_active_placement_action(
+        "open! game.place_mark\nplayer: X\nrow: 0\ncolumn: 0\n",
+        turn_result, before, after, error);
+    if (!first_action_ok) std::fprintf(stderr, "first placement action failed: %s\n", error.c_str());
+    CHECK(first_action_ok);
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied &&
+        before.find("\"turn\":\"X\"") != std::string::npos &&
+        after.find("\"turn\":\"O\"") != std::string::npos);
+    CHECK(play_service.verify_active_placement_action(
+        "open! game.place_mark\nplayer: O\nrow: 0\ncolumn: 0\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::violated && after.empty());
+    common_semi_oracle_tool_service algebra_service(store,"host","session-algebra");
+    common_semi_oracle_ruleset active_algebra;
+    CHECK(algebra_service.define_ruleset(
+        "name: Session algebra\ndescription: persisted equation test\ndomain: linear_algebra\nvariable: x\n",
+        common_semi_oracle_rule_authority::declared, active_algebra, error));
+    CHECK(algebra_service.initialize_active_state(
+        R"json({"lhs":"2(x+3)","rhs":"10"})json", false, error));
+    CHECK(algebra_service.verify_active_action(
+        "open! algebra.rewrite_equation\nlhs: 2x+6\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied &&
+        after.find("2x+6") != std::string::npos);
+    common_semi_oracle_tool_service service(store,"host","session-1");
+    std::vector<common_semi_oracle_placement_action_value> ranked;
+    CHECK(service.rank_placements(
+        R"json({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})json",
+        {10000,9},ranked,error));
+    CHECK(!ranked.empty()&&!ranked.front().persisted_evaluation_ref.empty());
+    const auto preferred = std::max_element(ranked.begin(), ranked.end(), [](const auto & left, const auto & right) {
+        return static_cast<int>(left.value) < static_cast<int>(right.value);
+    });
+    const auto rejected = std::min_element(ranked.begin(), ranked.end(), [](const auto & left, const auto & right) {
+        return static_cast<int>(left.value) < static_cast<int>(right.value);
+    });
+    CHECK(preferred != ranked.end() && rejected != ranked.end() &&
+        static_cast<int>(preferred->value) > static_cast<int>(rejected->value));
+    common_flydelta_teaching_relation preference;
+    const bool relation_built = service.make_preference_relation(*rejected, *preferred,
+        "relation://cozo/preference", "run://model/suboptimal", "run://solver/preferred",
+        "run://control/matched", preferred->persisted_evaluation_ref + "/contrast",
+        preference, error);
+    CHECK(relation_built);
+    CHECK(preference.host_approved && preference.baseline_origin == common_flydelta_teaching_origin::observed &&
+        preference.conditioned_origin == common_flydelta_teaching_origin::host_derived &&
+        preference.control_origin == common_flydelta_teaching_origin::host_counterfactual);
+    auto forged = *rejected;
+    forged.proof_json = "{}";
+    CHECK(!service.make_preference_relation(forged, *preferred,
+        "relation://cozo/forged", "run://model/suboptimal", "run://solver/preferred",
+        "run://control/matched", preferred->persisted_evaluation_ref + "/contrast",
+        preference, error));
+    common_training_candidate candidate;
+    CHECK(service.make_sft_candidate(ranked.front(), "Play the strongest move.",
+        "stub:redaction", "fixture-with-no-user-data", false, candidate, error));
+    CHECK(candidate.status==common_training_candidate_status::eligible);
+    const bool dpo_candidate_built = service.make_dpo_candidate(*preferred, *rejected,
+        "Play X on this board; choose the move with the best proven outcome.",
+        "stub:redaction", "fixture-with-no-user-data", true, candidate, error);
+    CHECK(dpo_candidate_built && !candidate.rejected_target.empty() &&
+        candidate.contrast_ref.find("minimax-v1:") == 0 &&
+        candidate.transaction_ids.size() == 2);
+    auto unpersisted=ranked.front();
+    unpersisted.persisted_evaluation_ref="semi-oracle://evaluation/not-present";
+    CHECK(!service.make_sft_candidate(unpersisted, "Play the strongest move.",
+        "stub:redaction", "fixture-with-no-user-data", true, candidate, error));
+    std::string stored_payload;
+    CHECK(store.get_evaluation_payload(ranked.front().persisted_evaluation_ref,stored_payload,found,error)&&found);
+    CHECK(stored_payload.find("memoized_minimax_v1")!=std::string::npos);
+    common_semi_oracle_interaction interaction;
+    interaction.id = "semi-oracle://interaction/test-1";
+    interaction.session_id = "session-1";
+    interaction.ruleset_id = r.id;
+    interaction.ruleset_revision = r.revision;
+    interaction.action_contract_fingerprint = r.action_contract_fingerprint;
+    interaction.domain = "placement_game";
+    interaction.contrast_kind = "strategic_preference";
+    interaction.evidence_ref = ranked.front().persisted_evaluation_ref;
+    interaction.verifier_ref = "semi-oracle://evaluator/placement_game";
+    interaction.verifier_revision = "minimax-v1";
+    interaction.task_fingerprint = ranked.front().state_fingerprint;
+    interaction.state_json = R"json({"cells":["X","X",null,"O","O",null,null,null,null],"turn":"X"})json";
+    interaction.control_state_json = interaction.state_json;
+    interaction.baseline_action_dsl = "open! game.place_mark\nplayer: X\nrow: 2\ncolumn: 0";
+    interaction.preferred_action_dsl = "open! game.place_mark\nplayer: X\nrow: 0\ncolumn: 2";
+    interaction.control_action_dsl = "open! game.place_mark\nplayer: X\nrow: 2\ncolumn: 1";
+    interaction.baseline_result_json = R"json({"verdict":"SATISFIED"})json";
+    interaction.preferred_result_json = R"json({"verdict":"SATISFIED"})json";
+    interaction.contrast_ref = "minimax:test";
+    if (!store.put_interaction(interaction, error)) {
+        std::fprintf(stderr, "interaction persistence failed: %s\n", error.c_str());
+        return __LINE__;
+    }
+    common_semi_oracle_interaction loaded_interaction;
+    CHECK(store.get_interaction(interaction.id, loaded_interaction, found, error) && found);
+    CHECK(loaded_interaction.preferred_action_dsl == interaction.preferred_action_dsl);
+    auto mutated_interaction = interaction;
+    mutated_interaction.control_action_dsl += "\n# changed";
+    CHECK(!store.put_interaction(mutated_interaction, error));
+    CHECK(store.promote_to_host(r.id,1,error));
+    auto hosts=store.list_host_rulesets(error);CHECK(hosts.size()==1&&hosts.front()==r.id);
+    CHECK(store.get_revision(r.id,1,loaded,found,error)&&found&&loaded.scope==common_semi_oracle_scope::host&&loaded.semantic_fingerprint==r.semantic_fingerprint);
+    common_semi_oracle_result verdict;verdict.ruleset_id=r.id;verdict.ruleset_revision=1;verdict.verdict=common_semi_oracle_verdict::satisfied;verdict.proof_json="{}";
+    CHECK(store.append_evaluation("eval-1",verdict,error));
+    CHECK(store.append_evaluation("eval-1",verdict,error));
+    auto conflicting_verdict=verdict;conflicting_verdict.reason="conflict";
+    CHECK(!store.append_evaluation("eval-1",conflicting_verdict,error));
+    uint64_t history_watermark=0;bool watermark_supported=false;
+    if (!store.get_search_history_revision(r.id,r.revision,history_watermark,
+            watermark_supported,error)) {
+        std::fprintf(stderr,"history watermark error: %s\n",error.c_str()); return 1;
+    }
+    CHECK(watermark_supported&&history_watermark==2);
+    common_semi_oracle_result goal_result;
+    CHECK(algebra_service.search_active_algebra_goal(goal_result, error));
+    CHECK(!goal_result.search_guidance_json.empty());
+    std::vector<common_semi_oracle_search_history_record> search_history;
+    CHECK(store.list_search_history(active_algebra.id, active_algebra.revision, 128, search_history, error));
+    CHECK(search_history.size() == 1 && search_history[0].guidance_json == goal_result.search_guidance_json);
+    store.close();
+    CHECK(store.open(db,error));
+    CHECK(store.list_search_history(active_algebra.id, active_algebra.revision, 128, search_history, error));
+    CHECK(search_history.size() == 1 && search_history[0].guidance_json == goal_result.search_guidance_json);
+    CHECK(store.list_search_history(active_algebra.id, active_algebra.revision + 1, 128, search_history, error));
+    CHECK(search_history.empty());
+    CHECK(store.get_interaction(interaction.id, loaded_interaction, found, error) && found);
+    std::string persisted_state;
+    CHECK(store.get_session_state("session-play", active_game.id,
+        active_game.revision, persisted_state, found, error) && found);
+    CHECK(persisted_state.find("\"turn\":\"O\"") != std::string::npos);
+    common_semi_oracle_tool_service resumed(store,"host","session-play");
+    CHECK(resumed.verify_active_placement_action(
+        "open! game.place_mark\nplayer: O\nrow: 1\ncolumn: 1\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied);
+    common_semi_oracle_tool_service resumed_algebra(store,"host","session-algebra");
+    CHECK(resumed_algebra.verify_active_action(
+        "open! algebra.rewrite_equation\nlhs: 2x\nrhs: 4\n",
+        turn_result, before, after, error));
+    CHECK(turn_result.verdict == common_semi_oracle_verdict::satisfied &&
+        after.find("\"rhs\":\"4\"") != std::string::npos);
+    store.close();
+    CHECK(store.open(db,error));
+    common_semi_oracle_tool_service maze(store,"host","session-maze");
+    common_semi_oracle_ruleset maze_rules;
+    CHECK(maze.define_ruleset("name: Maze\ndescription: persisted grid\ndomain: target_hunt\nmovement: orthogonal\nmax_rows: 32\nmax_columns: 32",common_semi_oracle_rule_authority::declared,maze_rules,error));
+    std::string maze_state;
+    CHECK(maze.define_problem("grid: .../.#./...\nstart: 0,0\ntarget: 2,2",maze_state,error));
+    CHECK(maze.verify_active_action("direction: east",turn_result,before,after,error));
+    CHECK(turn_result.verdict==common_semi_oracle_verdict::satisfied);
+    CHECK(maze.search_active_goal(goal_result,error));
+    CHECK(goal_result.verdict==common_semi_oracle_verdict::satisfied);
+    store.close();CHECK(store.open(db,error));
+    CHECK(store.get_session_state("session-maze",maze_rules.id,maze_rules.revision,persisted_state,found,error)&&found&&persisted_state==after);
+    CHECK(store.list_search_history(maze_rules.id,maze_rules.revision,128,search_history,error)&&search_history.size()==1);
+    CHECK(store.get_search_history_revision(maze_rules.id,maze_rules.revision,
+        history_watermark,watermark_supported,error)&&watermark_supported&&history_watermark==2);
+    std::string maze_evaluation;
+    CHECK(store.get_evaluation_payload(search_history.front().evaluation_id,maze_evaluation,found,error)&&found);
+    CHECK(maze_evaluation.find("target_hunt_astar_v3")!=std::string::npos);
+    const auto maze_payload=nlohmann::json::parse(maze_evaluation);
+    const auto guidance_payload=nlohmann::json::parse(maze_payload.at("search_guidance_json").get<std::string>());
+    CHECK(guidance_payload.contains("branch_quality"));
+    CHECK(guidance_payload.at("branch_quality").at("family")=="target_hunt_branch_quality_v1");
+    CHECK(guidance_payload.at("branch_quality").at("scope_fingerprint").is_string());
+    CHECK(!guidance_payload.at("branch_quality").at("observations").empty());
+    CHECK(maze.define_problem("grid: ...../..#../.....\nstart: 0,0\ntarget: 2,4",maze_state,error));
+    CHECK(maze.search_active_goal(goal_result,error));
+    const auto second_trace=nlohmann::json::parse(goal_result.search_guidance_json);
+    CHECK(second_trace.at("diagnostics").at("branch_quality_labels_used")==true);
+    bool saw_branch_prediction=false;
+    for (const auto & decision : second_trace.at("diagnostics").at("decisions"))
+        for (const auto & prediction : decision.at("predictions"))
+            saw_branch_prediction = saw_branch_prediction ||
+                prediction.value("prediction_family",std::string{})=="target_hunt_branch_quality_v1";
+    CHECK(saw_branch_prediction);
+    CHECK(store.get_revision(maze_rules.id,maze_rules.revision,loaded,found,error)&&found&&loaded.domain==common_semi_oracle_domain::target_hunt);
+    common_semi_oracle_tool_service resumed_maze(store,"host","session-maze");
+    CHECK(resumed_maze.search_active_goal(goal_result,error));
+    CHECK(goal_result.verdict==common_semi_oracle_verdict::satisfied);
+    common_semi_oracle_history_projection_cache_entry cached_entry;
+    cached_entry.key = "reopen-regression";
+    cached_entry.bytes = 1;
+    store.put_history_projection_cache(std::move(cached_entry));
+    std::shared_ptr<const common_semi_oracle_history_projection_cache_entry> cached_value;
+    CHECK(store.get_history_projection_cache("reopen-regression", cached_value));
+    store.close();
+    CHECK(store.open(db,error));
+    CHECK(!store.get_history_projection_cache("reopen-regression", cached_value));
+    std::vector<common_semi_oracle_search_history_record> snapshot_rows;
+    uint64_t snapshot_watermark = 0;
+    CHECK(store.read_search_history_snapshot(maze_rules.id, maze_rules.revision, 128,
+        snapshot_rows, snapshot_watermark, watermark_supported, error) && watermark_supported);
+    CHECK(store.get_search_history_revision(maze_rules.id, maze_rules.revision,
+        history_watermark, watermark_supported, error) && snapshot_watermark == history_watermark);
+    CHECK(!snapshot_rows.empty());
+    // Losing the transient projection between read/build and publication must
+    // rebuild the same content and decisions from the persistent snapshot.
+    common_semi_oracle_query resumed_query;
+    resumed_query.ruleset_id = maze_rules.id;
+    resumed_query.ruleset_revision = maze_rules.revision;
+    resumed_query.level = common_semi_oracle_level::bounded;
+    resumed_query.goal = "reach:target";
+    resumed_query.budget = {2048, 1024};
+    CHECK(store.get_session_state("session-maze", maze_rules.id, maze_rules.revision,
+        resumed_query.state_json, found, error) && found);
+    common_semi_oracle_result pre_reopen, post_reopen;
+    CHECK(common_semi_oracle_evaluate_with_history(store, {"experimental", 7, 128},
+        "host", "session-maze", maze_rules, resumed_query, pre_reopen, error));
+    store.close(); CHECK(store.open(db, error));
+    CHECK(common_semi_oracle_evaluate_with_history(store, {"experimental", 7, 128},
+        "host", "session-maze", maze_rules, resumed_query, post_reopen, error));
+    CHECK(pre_reopen.proof_json == post_reopen.proof_json && pre_reopen.expansions == post_reopen.expansions);
+    CHECK(nlohmann::json::parse(pre_reopen.search_guidance_json)["diagnostics"]["history_fingerprint"] ==
+        nlohmann::json::parse(post_reopen.search_guidance_json)["diagnostics"]["history_fingerprint"]);
+    CHECK(nlohmann::json::parse(post_reopen.search_guidance_json)["diagnostics"]["branch_quality_labels_used"] == true);
+    store.set_history_projection_cache_budget(0);
+    common_semi_oracle_history_projection_cache_entry disabled_cache;
+    disabled_cache.key = "disabled"; disabled_cache.bytes = 1;
+    store.put_history_projection_cache(std::move(disabled_cache));
+    CHECK(!store.get_history_projection_cache("disabled", cached_value));
+    // Two independent stores race on one immutable identity. Exactly one
+    // payload commits, with exactly one counter increment in that transaction.
+    agent_semi_oracle_cozo_store peer;
+    CHECK(peer.open(db, error));
+    auto competing_result = goal_result;
+    competing_result.reason += " competing payload";
+    bool first_written = false, second_written = false;
+    std::string first_error, second_error;
+    std::thread first_writer([&] { first_written = store.append_evaluation(
+        "evaluation://race", goal_result, first_error); });
+    std::thread second_writer([&] { second_written = peer.append_evaluation(
+        "evaluation://race", competing_result, second_error); });
+    first_writer.join(); second_writer.join();
+    CHECK(first_written != second_written);
+    CHECK(store.get_search_history_revision(maze_rules.id, maze_rules.revision,
+        history_watermark, watermark_supported, error) && history_watermark == snapshot_watermark + 1);
+    CHECK(store.append_evaluation("evaluation://race", first_written ? goal_result : competing_result, error));
+    CHECK(store.get_search_history_revision(maze_rules.id, maze_rules.revision,
+        history_watermark, watermark_supported, error) && history_watermark == snapshot_watermark + 1);
+    peer.close();
+    store.close();
+#ifndef _WIN32
+    const auto executable = std::filesystem::absolute(argv[0]).string();
+    const auto child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        execl(executable.c_str(), executable.c_str(), "--crash-after-append", db.c_str(), static_cast<char *>(nullptr));
+        _exit(127);
+    }
+    int child_status = 0;
+    CHECK(waitpid(child, &child_status, 0) == child && WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+    CHECK(store.open(db, error));
+    CHECK(store.get_search_history_revision(maze_rules.id, maze_rules.revision,
+        history_watermark, watermark_supported, error) && history_watermark == snapshot_watermark + 2);
+    std::string committed_payload;
+    CHECK(store.get_evaluation_payload("evaluation://crash-commit", committed_payload, found, error) && found);
+    CHECK(nlohmann::json::parse(committed_payload)["search_branch_quality_json"] == goal_result.search_branch_quality_json);
+    store.close();
+#endif
+    std::filesystem::remove_all(dir,ec);
+    return 0;
+}

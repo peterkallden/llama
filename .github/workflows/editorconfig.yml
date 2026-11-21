@@ -5,9 +5,11 @@ on:
   push:
     branches:
       - master
+      - feature/llama-agent
   pull_request:
     branches:
       - master
+      - feature/llama-agent
 
 cache-mode: none
 permissions:

@@ -855,6 +855,9 @@ struct llm_graph_params {
     ggml_backend_t backend_cpu;
 
     const llama_adapter_cvec     * cvec;
+    const llama_adapter_cvec_batch_ref * cvec_batch = nullptr;
+    const llama_residual_patch_ref * residual_patch = nullptr;
+    llama_layer_reduction_ref * layer_reductions = nullptr;
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
     const llama_cross            * cross;
@@ -866,6 +869,7 @@ struct llm_graph_params {
     ggml_tensor * h_nextn_src   = nullptr; // ctx_state_src's h_nextn device buffer (read)
 
     std::map<llama_seq_id, llama_sampler *> samplers;
+    const std::map<llama_seq_id, llama_token> * teacher_score_targets = nullptr;
 
     static bool samplers_equal(
           const std::map<llama_seq_id, llama_sampler *> & lhs,
@@ -928,6 +932,9 @@ struct llm_graph_params {
         if (n_outputs != other.n_outputs) {
             return false;
         }
+        if (static_cast<bool>(teacher_score_targets) != static_cast<bool>(other.teacher_score_targets)) {
+            return false;
+        }
 
         if (!samplers_equal(samplers, other.samplers)) {
             return false;
@@ -964,6 +971,9 @@ struct llm_graph_params {
             model == other.model &&
             gtype == other.gtype &&
             cvec  == other.cvec  &&
+            cvec_batch == other.cvec_batch &&
+            residual_patch == other.residual_patch &&
+            layer_reductions == other.layer_reductions &&
             loras == other.loras &&
             cross == other.cross;
     }
@@ -986,6 +996,7 @@ public:
     ggml_tensor * get_embd()        const { return t_embd; }
     ggml_tensor * get_embd_pooled() const { return t_embd_pooled; }
     ggml_tensor * get_h_nextn()     const { return t_h_nextn; }
+    const std::vector<ggml_tensor *> & get_teacher_logprobs() const { return t_teacher_logprobs; }
 
     ggml_tensor * get_layer_inp(int il) const { return t_layer_inp[il]; }
 
@@ -1030,10 +1041,21 @@ public:
 
     std::vector<ggml_tensor *> t_layer_inp;
 
+    struct layer_reduction_output {
+        llama_layer_reduction_entry * entry = nullptr;
+        ggml_tensor * dot_shift_delta = nullptr;
+        ggml_tensor * shift_squared = nullptr;
+        ggml_tensor * delta_squared = nullptr;
+        ggml_tensor * residual_squared = nullptr;
+    };
+    std::vector<layer_reduction_output> layer_reduction_outputs;
+
     std::vector<ggml_tensor *> t_sampled;
     std::vector<ggml_tensor *> t_sampled_probs;
     std::vector<ggml_tensor *> t_sampled_logits;
     std::vector<ggml_tensor *> t_candidates;
+    std::vector<ggml_tensor *> t_teacher_logprobs;
+    std::vector<llama_seq_id> teacher_score_seq_ids;
 
     std::vector<ggml_tensor *> t_sampling_all;
 
@@ -1129,6 +1151,8 @@ struct llm_graph_context {
     ggml_backend_t backend_cpu; // TODO: needed by build_attn_mha, figure out a way to remove?
 
     const llama_adapter_cvec     * cvec;
+    const llama_adapter_cvec_batch_ref * cvec_batch;
+    const llama_residual_patch_ref * residual_patch;
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
     const llama_cross            * cross;
@@ -1172,6 +1196,7 @@ struct llm_graph_context {
     ggml_tensor * build_cvec(
              ggml_tensor * cur,
                      int   il) const;
+    ggml_tensor * build_residual_patch(ggml_tensor * cur, int il) const;
 
     // apply the activation-side transform of a Hadamard-folded weight, if any
     ggml_tensor * build_hadamard_input(

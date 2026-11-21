@@ -1,0 +1,1259 @@
+#include "../cli/agent-cli-inference.h"
+#include "../runtime/agent-server-generation.h"
+
+#include "agent/agent-prepared-generation.h"
+#include "agent/adaptation/flydelta/flydelta-activation.h"
+#include "agent/adaptation/flydelta/flydelta-capture.h"
+#include "agent/adaptation/flydelta/flydelta-model-adapter.h"
+#include "agent/agent-residual-patch.h"
+#include "server-context.h"
+#include "server-task.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <unordered_set>
+#include <cstdlib>
+#include <nlohmann/json.hpp>
+#include "hash/hash.h"
+#include <thread>
+#include <iterator>
+#include <utility>
+
+namespace {
+
+bool generation_should_stop(const common_agent_generation_request & request) {
+    return request.options.should_stop && request.options.should_stop();
+}
+
+struct schema_stream_state {
+    std::string content;
+    std::string first_valid_json;
+    int decoded_tokens = 0;
+    int first_valid_decoded_tokens = 0;
+    server_task_result_ptr final_response;
+    common_agent_generation_stop_reason final_stop_reason = common_agent_generation_stop_reason::error;
+};
+
+bool resident_trace_enabled() {
+    const char * value = std::getenv("LLAMA_AGENT_RESIDENT_TRACE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+bool resident_trace_content_enabled() {
+    const char * value = std::getenv("LLAMA_AGENT_RESIDENT_TRACE_CONTENT");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+void resident_trace(const char * event, const common_agent_generation_request & request, const char * detail = "") {
+    if (!resident_trace_enabled()) {
+        return;
+    }
+    std::string trace_id = request.trace_id.value_or("").substr(0, 160);
+    for (char & ch : trace_id) if (static_cast<unsigned char>(ch) <= 0x20 || ch == 0x7f) ch = '_';
+    std::fprintf(stderr, "agent resident trace: event=%s purpose=%s schema=%s n_predict=%d request_id=%s tools=%zu messages=%zu %s\n",
+        event,
+        common_agent_generation_purpose_name(request.purpose),
+        request.json_schema.empty() ? "no" : "yes",
+        request.options.n_predict,
+        trace_id.c_str(), request.tools.size(), request.messages.size(),
+        (std::string("capture=") +
+            ((request.flydelta_capture && request.flydelta_capture->enabled) ? "yes" : "no") +
+            " residual_patch=" + (request.residual_patch ? "yes" : "no") +
+            " " + detail).c_str());
+    std::fflush(stderr);
+}
+
+void resident_trace_content(
+        const char * event,
+        const common_agent_generation_request & request,
+        const std::string & content) {
+    if (!resident_trace_content_enabled() && !request.options.generation_trace) {
+        return;
+    }
+    if (request.options.generation_trace) {
+        std::fprintf(stderr,
+            "agent generation trace output: event=%s purpose=%s bytes=%zu begin\n%s\nagent generation trace output: end\n",
+            event,
+            common_agent_generation_purpose_name(request.purpose),
+            content.size(), content.c_str());
+        std::fflush(stderr);
+        return;
+    }
+    std::string preview = content.substr(0, 2048);
+    for (char & ch : preview) {
+        if (static_cast<unsigned char>(ch) < 0x20 || ch == 0x7f) {
+            ch = ' ';
+        }
+    }
+    std::fprintf(stderr,
+        "agent resident trace content: event=%s purpose=%s bytes=%zu preview=%s\n",
+        event,
+        common_agent_generation_purpose_name(request.purpose),
+        content.size(),
+        preview.c_str());
+    std::fflush(stderr);
+}
+
+// --generation-trace is an explicit diagnostic opt-in.  Log both the logical
+// messages and the final template-expanded prompt: prompt byte counts alone
+// are insufficient when diagnosing model/template regressions.
+void generation_trace_prompt(
+        const common_agent_generation_request & request,
+        const common_agent_prepared_generation & prepared) {
+    if (!request.options.generation_trace) {
+        return;
+    }
+    std::fprintf(stderr, "agent generation trace prompt: purpose=%s messages=%zu begin\n",
+        common_agent_generation_purpose_name(request.purpose), request.messages.size());
+    for (size_t index = 0; index < request.messages.size(); ++index) {
+        const auto & message = request.messages[index];
+        std::fprintf(stderr, "[message %zu role=%s]\n%s\n", index, message.role.c_str(), message.content.c_str());
+    }
+    std::fprintf(stderr, "[rendered prompt]\n%s\nagent generation trace prompt: end\n", prepared.prompt.c_str());
+    nlohmann::ordered_json messages = nlohmann::ordered_json::array();
+    for (const auto & message : request.messages)
+        messages.push_back({{"role", message.role}, {"content", message.content}});
+    const auto record = nlohmann::ordered_json{
+        {"trace_id", request.trace_id.value_or("")}, {"messages", messages},
+        {"purpose", common_agent_generation_purpose_name(request.purpose)},
+        {"n_predict", request.options.n_predict}, {"rendered_prompt", prepared.prompt},
+        {"rendered_prompt_fingerprint", "sha256:" + hash_sha256_hex(prepared.prompt.data(), prepared.prompt.size())}};
+    try {
+        std::fprintf(stderr, "agent_generation_prompt %s\n", record.dump().c_str());
+    } catch (const nlohmann::json::exception &) {
+        // Invalid UTF-8 must not make diagnostic tracing fail inference.
+        std::fprintf(stderr, "agent_generation_prompt_error invalid_utf8\n");
+    }
+    std::fflush(stderr);
+}
+
+common_agent_generation_stop_reason map_server_stop_reason_string(const std::string & stop) {
+    if (stop == "eos") {
+        return common_agent_generation_stop_reason::eos;
+    }
+    if (stop == "limit" || stop == "word") {
+        return common_agent_generation_stop_reason::limit;
+    }
+    if (stop == "none") {
+        return common_agent_generation_stop_reason::none;
+    }
+    return common_agent_generation_stop_reason::error;
+}
+
+bool extract_completion_json(
+        server_task_result * response,
+        std::string & content,
+        int & decoded_tokens,
+        common_agent_generation_stop_reason & stop_reason) {
+    if (response == nullptr) {
+        return false;
+    }
+    const auto payload = response->to_json();
+    if (!payload.is_object() || !payload.contains("content") || !payload["content"].is_string()) {
+        return false;
+    }
+    content = payload["content"].get<std::string>();
+    decoded_tokens = payload.value("tokens_predicted", decoded_tokens);
+    stop_reason = map_server_stop_reason_string(payload.value("stop_type", std::string{"none"}));
+    return true;
+}
+
+void apply_server_success(
+        common_agent_generation_result & result,
+        std::string content,
+        int decoded_tokens,
+        common_agent_generation_stop_reason stop_reason) {
+    result.content = std::move(content);
+    result.decoded_tokens = decoded_tokens;
+    result.status = common_agent_generation_status::completed;
+    result.stop_reason = stop_reason;
+    result.error_message.clear();
+}
+
+void apply_server_error(
+        server_task_result * response,
+        common_agent_generation_result & result,
+        common_agent_generation_status status = common_agent_generation_status::errored,
+        common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::error,
+        std::string fallback_error = {}) {
+    result.status = status;
+    result.stop_reason = stop_reason;
+    if (response != nullptr && response->is_error()) {
+        const auto * error = static_cast<const server_task_result_error *>(response);
+        result.error_message = error->err_msg;
+    } else {
+        result.error_message = std::move(fallback_error);
+    }
+}
+
+void apply_server_capture(
+        const server_task_result_cmpl_final & response,
+        const common_agent_generation_request & request,
+        common_agent_generation_result & result) {
+    if (!request.flydelta_capture || !request.flydelta_capture->enabled ||
+            !response.capture.attempted) {
+        return;
+    }
+    auto capture = std::make_shared<common_flydelta_hidden_state_capture>();
+    capture->model_profile_fingerprint = response.capture.model_profile_fingerprint;
+    capture->capture_layout_revision = response.capture.capture_layout_revision;
+    capture->layer_indices = response.capture.layer_indices;
+    capture->position = static_cast<common_flydelta_capture_position>(response.capture.position);
+    capture->token_index = response.capture.token_index;
+    capture->token_id = response.capture.token_id;
+    capture->prompt_token_count = response.capture.prompt_token_count;
+    capture->n_embd = response.capture.n_embd;
+    capture->values = response.capture.values;
+    capture->captured = response.capture.captured;
+    capture->failure_reason = response.capture.failure_reason;
+    result.flydelta_capture = std::move(capture);
+}
+
+void apply_server_layer_reduction(
+        const server_task_result_cmpl_final & response,
+        const common_agent_generation_request & request,
+        common_agent_generation_result & result) {
+    if (!request.flydelta_device_diagnostics ||
+            !request.flydelta_device_diagnostics->enabled) {
+        return;
+    }
+    auto reduction = std::make_shared<common_flydelta_device_diagnostics_result>();
+    reduction->available = response.layer_reduction.available;
+    reduction->layer = response.layer_reduction.layer;
+    reduction->dot_shift_delta = response.layer_reduction.dot_shift_delta;
+    reduction->shift_squared = response.layer_reduction.shift_squared;
+    reduction->delta_squared = response.layer_reduction.delta_squared;
+    reduction->residual_squared = response.layer_reduction.residual_squared;
+    reduction->failure_reason = response.layer_reduction.failure_reason;
+    result.flydelta_device_diagnostics = std::move(reduction);
+}
+
+void apply_server_residual_patch_observation(
+        const server_task_result_cmpl_final & response,
+        const common_agent_generation_request & request,
+        common_agent_generation_result & result) {
+    if (!request.residual_patch || !response.residual_patch_observation.attempted) {
+        return;
+    }
+    auto observation = std::make_shared<common_agent_residual_patch_observation>();
+    observation->attempted = response.residual_patch_observation.attempted;
+    observation->applied = response.residual_patch_observation.applied;
+    observation->layer = response.residual_patch_observation.layer;
+    observation->absolute_position = response.residual_patch_observation.absolute_position;
+    observation->sequence_id = response.residual_patch_observation.sequence_id;
+    observation->site = common_agent_residual_patch_site::layer_input_residual;
+    observation->failure_reason = response.residual_patch_observation.failure_reason;
+    result.residual_patch_observation = std::move(observation);
+}
+
+bool record_schema_partial(
+        const common_agent_generation_request & request,
+        server_task_result * response,
+        schema_stream_state & state,
+        common_agent_generation_result & result) {
+    std::string delta;
+    common_agent_generation_stop_reason ignored_stop_reason = common_agent_generation_stop_reason::none;
+    int partial_decoded_tokens = state.decoded_tokens;
+    if (!extract_completion_json(response, delta, partial_decoded_tokens, ignored_stop_reason)) {
+        return false;
+    }
+    state.content += delta;
+    state.decoded_tokens = partial_decoded_tokens;
+    const auto parsed = nlohmann::ordered_json::parse(state.content, nullptr, false);
+    if (!parsed.is_discarded() && state.first_valid_json.empty()) {
+        state.first_valid_json = state.content;
+        state.first_valid_decoded_tokens = state.decoded_tokens;
+        resident_trace_content("schema-first-valid", request, state.first_valid_json);
+        resident_trace("schema-first-valid", request);
+        apply_server_success(result, std::move(state.first_valid_json), state.first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
+        return true;
+    }
+    return false;
+}
+
+bool apply_schema_final_response(
+        const common_agent_generation_request & request,
+        schema_stream_state & state,
+        common_agent_generation_result & result) {
+    if (state.final_response == nullptr) {
+        return false;
+    }
+    if (!extract_completion_json(state.final_response.get(), state.content, state.decoded_tokens, state.final_stop_reason)) {
+        apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error,
+            "server returned a non-completion final result");
+        resident_trace("schema-invalid-final-type", request);
+        return true;
+    }
+
+    const auto parsed = nlohmann::ordered_json::parse(state.content, nullptr, false);
+    if (!parsed.is_discarded()) {
+        resident_trace_content("schema-final-valid", request, state.content);
+        resident_trace("schema-final-valid", request);
+        apply_server_success(result, state.content, state.decoded_tokens, common_agent_generation_stop_reason::json_schema);
+        return true;
+    }
+
+    return false;
+}
+
+bool apply_reasoning_schema_fallback(
+        const common_agent_generation_request & request,
+        schema_stream_state & state,
+        common_agent_generation_result & result) {
+    if (request.purpose != common_agent_generation_purpose::reasoning) {
+        return false;
+    }
+    if (state.content.empty()) {
+        state.content = R"({"summary":"Reasoning step reached the generation limit without structured output.","format":"unstructured"})";
+    }
+    apply_server_success(result, std::move(state.content), state.decoded_tokens, state.final_stop_reason);
+    resident_trace("schema-reasoning-unstructured", request);
+    return true;
+}
+
+class server_context_agent_inference final : public common_agent_inference {
+public:
+    server_context_agent_inference(
+            server_context & server,
+            const common_params & params_base,
+            const std::vector<llama_logit_bias> & logit_bias_eog,
+            const common_chat_templates * templates,
+            bool supports_image,
+            bool supports_audio,
+            const llama_vocab * vocab,
+            size_t context_tokens)
+        : server(server), params_base(params_base), logit_bias_eog(logit_bias_eog), templates(templates),
+          supports_image(supports_image), supports_audio(supports_audio), vocab(vocab), context_tokens(context_tokens) {}
+
+    bool generate(
+            const common_agent_generation_request & request,
+            common_agent_generation_result & result) override {
+        const auto started = std::chrono::steady_clock::now();
+        resident_trace("generation-enter", request,
+            ("tools=" + std::to_string(request.tools.size()) + " messages=" + std::to_string(request.messages.size())).c_str());
+        const bool ok = generate_one(request, result);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+        resident_trace("generation-exit", request,
+            ("elapsed_ms=" + std::to_string(elapsed) + " decoded_tokens=" + std::to_string(result.decoded_tokens) +
+             " status=" + common_agent_generation_status_name(result.status) + " stop=" + common_agent_generation_stop_reason_name(result.stop_reason)).c_str());
+        return ok;
+    }
+
+    size_t context_capacity_tokens() const override { return context_tokens; }
+    std::optional<size_t> count_context_text_tokens(const std::string & text) const override {
+        if (!vocab) return std::nullopt;
+        return common_tokenize(vocab, text, false, true).size();
+    }
+
+private:
+    bool validate_context(const common_agent_generation_request & request,
+            const common_agent_prepared_generation & prepared, std::string & error) const {
+        if (!vocab) { error = "server generation has no tokenizer for context validation"; return false; }
+        const size_t prompt_tokens = common_chat_tokenize_prompt(vocab, prepared.prompt_parts).size();
+        if (resident_trace_enabled()) for (const auto & section : request.prompt_sections) {
+            if (section.message_index >= request.messages.size()) continue;
+            const auto & content = request.messages[section.message_index].content;
+            if (section.byte_offset > content.size() ||
+                    section.byte_length > content.size() - section.byte_offset) continue;
+            const auto text = content.substr(section.byte_offset, section.byte_length);
+            // Standalone section counts exclude template overhead and may not
+            // add up to the exact rendered-prompt admission count below.
+            const size_t tokens = text.empty() ? 0 : common_tokenize(vocab, text, false, true).size();
+            resident_trace("context-section", request,
+                ("section=" + section.name + " bytes=" + std::to_string(section.byte_length) +
+                 " standalone_tokens=" + std::to_string(tokens)).c_str());
+        }
+        resident_trace("context-budget", request,
+            ("tools=" + std::to_string(request.tools.size()) + " prompt_tokens=" + std::to_string(prompt_tokens) +
+             " reserved_output=" + std::to_string(request.options.n_predict) + " context_tokens=" + std::to_string(context_tokens)).c_str());
+        return common_agent_generation_context_fits(prompt_tokens, context_tokens, request.options.n_predict, error);
+    }
+
+    bool prepare_completion_task(
+            const common_agent_generation_request & request,
+            server_response_reader & reader,
+            server_task & task,
+            common_chat_params & chat_params,
+            std::string & error) {
+        error.clear();
+        std::string flydelta_error;
+        if (!server_context_agent_generation_supports_flydelta(request, flydelta_error)) {
+            error = flydelta_error;
+            return false;
+        }
+
+        common_agent_prepared_generation prepared;
+        if (!common_agent_prepare_chat_generation(
+                templates, request, prepared, &chat_params)) {
+            error = "failed to prepare server generation";
+            return false;
+        }
+        generation_trace_prompt(request, prepared);
+        if (!validate_context(request, prepared, error)) return false;
+
+        task = server_task(SERVER_TASK_TYPE_COMPLETION);
+        task.id = reader.get_new_id();
+        task.cli = true;
+        task.cli_prompt = prepared.prompt;
+        task.cli_prompt_parts = prepared.prompt_parts;
+        for (const auto & resource : request.input_resources) {
+            const auto mime_type = common_normalize_resource_media_type(resource.resource.mime_type);
+            const bool is_image = mime_type.rfind("image/", 0) == 0;
+            const bool is_audio = mime_type.rfind("audio/", 0) == 0;
+            if (!is_image && !is_audio) {
+                continue;
+            }
+            const bool native_supported = is_image ? supports_image : supports_audio;
+            if (!native_supported) {
+                if (is_image && resource.read_text_fallback) {
+                    std::string text;
+                    std::string fallback_error;
+                    const size_t max_text_bytes = resource.resource.size_bytes > 0
+                        ? resource.resource.size_bytes
+                        : 16 * 1024 * 1024;
+                    if (resource.read_text_fallback(max_text_bytes, text, fallback_error)) {
+                        task.cli_prompt += "\n[Extracted image text]\n" + text;
+                        task.cli_prompt_parts.append("\n[Extracted image text]\n" + text, true);
+                        continue;
+                    }
+                    if (resource.required) {
+                        error = "image text fallback failed for " + resource.resource.uri;
+                        if (!fallback_error.empty()) {
+                            error += ": " + fallback_error;
+                        }
+                        return false;
+                    }
+                    continue;
+                }
+                if (resource.required) {
+                    error = (is_image ? "required image" : "required audio") +
+                        std::string(" resource is unsupported by the loaded model: ") +
+                        resource.resource.uri;
+                    return false;
+                }
+                continue;
+            }
+            if (!resource.read_bytes) {
+                if (resource.required) {
+                    error = "required media resource has no host resolver: " + resource.resource.uri;
+                    return false;
+                }
+                continue;
+            }
+            std::string bytes;
+            std::string read_error;
+            const size_t max_bytes = resource.resource.size_bytes > 0
+                ? resource.resource.size_bytes
+                : 64 * 1024 * 1024;
+            if (!resource.read_bytes(max_bytes, bytes, read_error)) {
+                error = "failed to read image resource " + resource.resource.uri;
+                if (!read_error.empty()) {
+                    error += ": " + read_error;
+                }
+                return false;
+            }
+            task.cli_prompt += "\n" + std::string(get_media_marker());
+            task.cli_prompt_parts.append("\n" + std::string(get_media_marker()), false);
+            task.cli_files.emplace_back(bytes.begin(), bytes.end());
+        }
+        task.params = make_server_task_params_from_prepared_generation(
+            params_base, request, prepared, logit_bias_eog);
+        if (resident_trace_enabled()) {
+            std::fprintf(stderr,
+                "agent resident trace: event=prepared purpose=%s stream=%s prompt_bytes=%zu\n",
+                common_agent_generation_purpose_name(request.purpose),
+                prepared.stream ? "yes" : "no",
+                prepared.prompt.size());
+            std::fflush(stderr);
+        }
+        return true;
+    }
+
+    bool generate_one(
+            const common_agent_generation_request & request,
+            common_agent_generation_result & result) {
+        result = {};
+        if (generation_should_stop(request)) {
+            apply_server_error(nullptr, result, common_agent_generation_status::cancelled,
+                common_agent_generation_stop_reason::cancelled, "generation cancelled by host");
+            return false;
+        }
+
+        try {
+            resident_trace("start", request);
+            std::string flydelta_error;
+            if (!server_context_agent_generation_supports_flydelta(request, flydelta_error)) {
+                result.error_message = flydelta_error;
+                resident_trace("flydelta-unsupported", request, flydelta_error.c_str());
+                return false;
+            }
+            common_agent_prepared_generation prepared;
+            common_chat_params chat_params;
+            if (!common_agent_prepare_chat_generation(templates, request, prepared, &chat_params)) {
+                result.error_message = "failed to prepare server generation";
+                return false;
+            }
+            generation_trace_prompt(request, prepared);
+            if (!validate_context(request, prepared, result.error_message)) {
+                result.status = common_agent_generation_status::errored;
+                result.stop_reason = common_agent_generation_stop_reason::error;
+                resident_trace("context-rejected", request);
+                return false;
+            }
+            result.chat_params = chat_params;
+            if (resident_trace_enabled()) {
+                std::fprintf(stderr, "agent resident trace: event=prepared purpose=%s stream=%s prompt_bytes=%zu\n",
+                    common_agent_generation_purpose_name(request.purpose),
+                    prepared.stream ? "yes" : "no",
+                    prepared.prompt.size());
+                std::fflush(stderr);
+            }
+
+            server_response_reader reader = server.get_response_reader();
+            server_task task(SERVER_TASK_TYPE_COMPLETION);
+            task.id = reader.get_new_id();
+            task.cli = true;
+            task.cli_prompt = prepared.prompt;
+            task.cli_prompt_parts = prepared.prompt_parts;
+            for (const auto & resource : request.input_resources) {
+                const auto mime_type = common_normalize_resource_media_type(resource.resource.mime_type);
+                const bool is_image = mime_type.rfind("image/", 0) == 0;
+                const bool is_audio = mime_type.rfind("audio/", 0) == 0;
+                if (!is_image && !is_audio) {
+                    continue;
+                }
+                const bool native_supported = is_image
+                    ? supports_image
+                    : supports_audio;
+                if (!native_supported) {
+                    if (is_image && resource.read_text_fallback) {
+                        std::string text;
+                        std::string fallback_error;
+                        const size_t max_text_bytes = resource.resource.size_bytes > 0
+                            ? resource.resource.size_bytes
+                            : 16 * 1024 * 1024;
+                        if (resource.read_text_fallback(max_text_bytes, text, fallback_error)) {
+                            task.cli_prompt += "\n[Extracted image text]\n" + text;
+                            task.cli_prompt_parts.append("\n[Extracted image text]\n" + text, true);
+                            continue;
+                        }
+                        if (resource.required) {
+                            result.error_message = "image text fallback failed for " + resource.resource.uri;
+                            if (!fallback_error.empty()) {
+                                result.error_message += ": " + fallback_error;
+                            }
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (resource.required) {
+                        result.error_message = (is_image ? "required image" : "required audio") +
+                            std::string(" resource is unsupported by the loaded model: ") + resource.resource.uri;
+                        return false;
+                    }
+                    continue;
+                }
+                if (!resource.read_bytes) {
+                    if (resource.required) {
+                        result.error_message = "required media resource has no host resolver: " + resource.resource.uri;
+                        return false;
+                    }
+                    continue;
+                }
+                std::string bytes;
+                std::string read_error;
+                const size_t max_bytes = resource.resource.size_bytes > 0
+                    ? resource.resource.size_bytes
+                    : 64 * 1024 * 1024;
+                if (!resource.read_bytes(max_bytes, bytes, read_error)) {
+                    result.error_message = "failed to read image resource " + resource.resource.uri;
+                    if (!read_error.empty()) {
+                        result.error_message += ": " + read_error;
+                    }
+                    return false;
+                }
+                task.cli_prompt += "\n" + std::string(get_media_marker());
+                task.cli_prompt_parts.append("\n" + std::string(get_media_marker()), false);
+                task.cli_files.emplace_back(bytes.begin(), bytes.end());
+            }
+            task.params = make_server_task_params_from_prepared_generation(
+                params_base,
+                request,
+                prepared,
+                logit_bias_eog);
+            reader.post_task(std::move(task));
+
+            // The task parameters are authoritative here.  Diagnostic
+            // capture/patch requests deliberately disable streaming in
+            // make_server_task_params_from_prepared_generation(), even
+            // though the prepared JSON contract itself is stream-capable.
+            if (task.params.stream) {
+                schema_stream_state state;
+
+                while (auto response = reader.next([&request] { return generation_should_stop(request); })) {
+                    if (response->is_error()) {
+                        resident_trace("error", request);
+                        apply_server_error(response.get(), result);
+                        return false;
+                    }
+                    if (!response->is_stop()) {
+                        if (!record_schema_partial(request, response.get(), state, result)) {
+                            continue;
+                        }
+                        reader.stop();
+                        return true;
+                    }
+                    if (response->is_stop()) {
+                        state.final_response = std::move(response);
+                        resident_trace("stop", request);
+                        break;
+                    }
+                }
+
+                if (generation_should_stop(request)) {
+                    apply_server_error(nullptr, result, common_agent_generation_status::cancelled,
+                        common_agent_generation_stop_reason::cancelled, "generation cancelled by host");
+                    return false;
+                }
+                if (apply_schema_final_response(request, state, result)) {
+                    return common_agent_generation_succeeded(result);
+                }
+                if (!state.first_valid_json.empty()) {
+                    resident_trace("schema-first-valid-return", request);
+                    apply_server_success(result, std::move(state.first_valid_json), state.first_valid_decoded_tokens, common_agent_generation_stop_reason::json_schema);
+                    return true;
+                }
+                if (apply_reasoning_schema_fallback(request, state, result)) {
+                    return true;
+                }
+
+                if (state.final_response != nullptr &&
+                        state.final_stop_reason != common_agent_generation_stop_reason::error &&
+                        state.final_stop_reason != common_agent_generation_stop_reason::cancelled) {
+                    // The server completed a normal decode but the model did
+                    // not finish the requested JSON.  Preserve the partial
+                    // payload as completed output so the owning planner or
+                    // reflection path can perform its bounded repair.  This
+                    // must match the CLI adapter: invalid schema is a caller
+                    // validation result, not a server failure.
+                    apply_server_success(
+                        result,
+                        std::move(state.content),
+                        state.decoded_tokens,
+                        state.final_stop_reason);
+                    resident_trace_content("schema-incomplete", request, result.content);
+                    resident_trace("schema-incomplete", request);
+                    return true;
+                }
+
+                result.content = std::move(state.content);
+                result.decoded_tokens = state.decoded_tokens;
+                apply_server_error(
+                    state.final_response.get(),
+                    result,
+                    common_agent_generation_status::errored,
+                    state.final_response == nullptr ? common_agent_generation_stop_reason::error : state.final_stop_reason,
+                    "generation ended before producing valid JSON for the requested schema");
+                resident_trace("schema-invalid", request);
+                return false;
+            }
+
+            auto responses = reader.wait_for_all([&request] { return generation_should_stop(request); });
+            if (responses.is_terminated || responses.error || responses.results.empty()) {
+                if (responses.error) {
+                    apply_server_error(responses.error.get(), result);
+                } else {
+                    apply_server_error(
+                        nullptr,
+                        result,
+                        responses.is_terminated ? common_agent_generation_status::cancelled : common_agent_generation_status::errored,
+                        responses.is_terminated ? common_agent_generation_stop_reason::cancelled : common_agent_generation_stop_reason::error,
+                        responses.is_terminated ? "server task was terminated" : "server task produced no completion result");
+                }
+                resident_trace("nonstream-error", request);
+                return false;
+            }
+
+            auto * response = responses.results.front().get();
+            std::string content;
+            int decoded_tokens = 0;
+            common_agent_generation_stop_reason stop_reason = common_agent_generation_stop_reason::none;
+            if (!response->is_stop() || !extract_completion_json(response, content, decoded_tokens, stop_reason)) {
+                apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error,
+                    "server returned a non-completion result");
+                return false;
+            }
+
+            apply_server_success(result, std::move(content), decoded_tokens, stop_reason);
+            if (const auto * final_response = dynamic_cast<const server_task_result_cmpl_final *>(response)) {
+                apply_server_capture(*final_response, request, result);
+                apply_server_layer_reduction(*final_response, request, result);
+                apply_server_residual_patch_observation(*final_response, request, result);
+                result.flydelta_device_batch = final_response->flydelta_device_batch;
+                result.flydelta_runtime.cvec_binding_us = final_response->flydelta_cvec_binding_us;
+                result.flydelta_runtime.cvec_bound_bytes = final_response->flydelta_cvec_bound_bytes;
+                result.flydelta_runtime.factorized_basis_bound_bytes =
+                    final_response->flydelta_cvec_basis_bound_bytes;
+                result.flydelta_runtime.factorized_basis_host_copy_bytes =
+                    final_response->flydelta_cvec_basis_host_copy_bytes;
+                result.flydelta_runtime.factorized_coefficients_bound_bytes =
+                    final_response->flydelta_cvec_coefficients_bound_bytes;
+                result.flydelta_runtime.factorized_overlay_resident_bytes =
+                    final_response->flydelta_cvec_overlay_resident_bytes;
+                result.flydelta_runtime.factorized_composition_us =
+                    final_response->flydelta_cvec_composition_us;
+                result.flydelta_runtime.factorized_basis_upload_count =
+                    final_response->flydelta_cvec_basis_upload_count;
+                result.flydelta_runtime.factorized_basis_cache_hit =
+                    final_response->flydelta_cvec_basis_cache_hit;
+                result.flydelta_runtime.factorized_overlay_cache_hit =
+                    final_response->flydelta_cvec_overlay_cache_hit;
+                result.flydelta_runtime.physical_batch_size =
+                    final_response->flydelta_cvec_physical_batch_size;
+                result.flydelta_runtime.factorized_binding =
+                    final_response->flydelta_cvec_factorized_binding;
+                result.flydelta_runtime.fallback_reason =
+                    final_response->flydelta_cvec_fallback_reason;
+                result.flydelta_runtime.requested = request.flydelta_activation &&
+                    (request.flydelta_activation->overlay.enabled ||
+                     request.flydelta_activation->factorized_overlay.enabled);
+                if (final_response->generation_params.cvec) {
+                    const auto & cvec = *final_response->generation_params.cvec;
+                    result.flydelta_runtime.applied = final_response->flydelta_overlay_applied;
+                    result.flydelta_runtime.sparse_device_binding =
+                        final_response->flydelta_device_batch &&
+                        (!cvec.sparse_layer_indices.empty() ||
+                         static_cast<bool>(cvec.factorized_basis));
+                    result.flydelta_runtime.device_batch = final_response->flydelta_device_batch;
+                    result.flydelta_runtime.cache_prompt =
+                        final_response->generation_params.cache_prompt;
+                    result.flydelta_runtime.n_cache_reuse =
+                        final_response->generation_params.n_cache_reuse;
+                    result.flydelta_runtime.n_embd = cvec.n_embd;
+                    result.flydelta_runtime.il_start = cvec.il_start;
+                    result.flydelta_runtime.il_end = cvec.il_end;
+                    result.flydelta_runtime.data_bytes = cvec.data.size() * sizeof(float);
+                    result.flydelta_runtime.artifact_id = cvec.identity;
+                    result.flydelta_runtime.content_hash = cvec.content_hash;
+                }
+            }
+            resident_trace_content("nonstream-success", request, result.content);
+            resident_trace("nonstream-success", request);
+            return true;
+        } catch (const std::exception & err) {
+            apply_server_error(nullptr, result, common_agent_generation_status::errored, common_agent_generation_stop_reason::error, err.what());
+            std::fprintf(stderr, "server_context agent inference failed: %s\n", err.what());
+            return false;
+        }
+    }
+
+    bool generate_batch(
+            const std::vector<common_agent_generation_request> & requests,
+            std::vector<common_agent_generation_result> & results) override {
+        results.clear();
+        results.resize(requests.size());
+        if (requests.empty()) {
+            return true;
+        }
+
+        // FlyDelta arm waves are non-streaming. Build every server_task first
+        // and hand the complete vector to server_response_reader::post_tasks().
+        // server_queue inserts that vector under one queue lock, so the
+        // resident server can observe the whole wave before update_slots()
+        // selects and decodes it. This is stronger than a worker-thread gate,
+        // which only controlled when producers waited after posting and could
+        // still let the first task be consumed alone.
+        server_response_reader reader = server.get_response_reader();
+        std::vector<server_task> tasks;
+        tasks.reserve(requests.size());
+        std::vector<common_chat_params> chat_params(requests.size());
+        for (size_t index = 0; index < requests.size(); ++index) {
+            server_task task;
+            std::string error;
+            if (!prepare_completion_task(
+                    requests[index], reader, task, chat_params[index], error)) {
+                results[index].error_message = error;
+                return false;
+            }
+            if (task.params.stream) {
+                // The vector response reader cannot preserve the streaming
+                // schema state required by the single-request path. The
+                // production FlyDelta arm contract is non-streaming; fail
+                // explicitly rather than silently reverting to timing-based
+                // posting.
+                results[index].error_message =
+                    "resident arm batch requires non-streaming generation";
+                return false;
+            }
+            tasks.push_back(std::move(task));
+        }
+
+        reader.post_tasks(std::move(tasks));
+        auto responses = reader.wait_for_all([&requests] {
+            return std::any_of(requests.begin(), requests.end(), generation_should_stop);
+        });
+        if (responses.is_terminated || responses.error ||
+                responses.results.size() != requests.size()) {
+            for (auto & result : results) {
+                apply_server_error(
+                    responses.error.get(),
+                    result,
+                    responses.is_terminated
+                        ? common_agent_generation_status::cancelled
+                        : common_agent_generation_status::errored,
+                    responses.is_terminated
+                        ? common_agent_generation_stop_reason::cancelled
+                        : common_agent_generation_stop_reason::error,
+                    responses.is_terminated
+                        ? "server arm batch was terminated"
+                        : "server arm batch returned incomplete results");
+            }
+            return false;
+        }
+
+        for (size_t index = 0; index < requests.size(); ++index) {
+            results[index].chat_params = chat_params[index];
+            auto * response = responses.results[index].get();
+            std::string content;
+            int decoded_tokens = 0;
+            common_agent_generation_stop_reason stop_reason =
+                common_agent_generation_stop_reason::none;
+            if (response == nullptr || !response->is_stop() ||
+                    !extract_completion_json(response, content, decoded_tokens, stop_reason)) {
+                apply_server_error(
+                    response,
+                    results[index],
+                    common_agent_generation_status::errored,
+                    common_agent_generation_stop_reason::error,
+                    "server arm batch returned a non-completion result");
+                return false;
+            }
+            apply_server_success(
+                results[index], std::move(content), decoded_tokens, stop_reason);
+            if (const auto * final_response =
+                    dynamic_cast<const server_task_result_cmpl_final *>(response)) {
+                apply_server_capture(*final_response, requests[index], results[index]);
+                apply_server_layer_reduction(*final_response, requests[index], results[index]);
+                apply_server_residual_patch_observation(
+                    *final_response, requests[index], results[index]);
+                results[index].flydelta_device_batch = final_response->flydelta_device_batch;
+                results[index].flydelta_runtime.cvec_binding_us = final_response->flydelta_cvec_binding_us;
+                results[index].flydelta_runtime.cvec_bound_bytes = final_response->flydelta_cvec_bound_bytes;
+                results[index].flydelta_runtime.factorized_basis_bound_bytes =
+                    final_response->flydelta_cvec_basis_bound_bytes;
+                results[index].flydelta_runtime.factorized_basis_host_copy_bytes =
+                    final_response->flydelta_cvec_basis_host_copy_bytes;
+                results[index].flydelta_runtime.factorized_coefficients_bound_bytes =
+                    final_response->flydelta_cvec_coefficients_bound_bytes;
+                results[index].flydelta_runtime.factorized_overlay_resident_bytes =
+                    final_response->flydelta_cvec_overlay_resident_bytes;
+                results[index].flydelta_runtime.factorized_composition_us =
+                    final_response->flydelta_cvec_composition_us;
+                results[index].flydelta_runtime.factorized_basis_upload_count =
+                    final_response->flydelta_cvec_basis_upload_count;
+                results[index].flydelta_runtime.factorized_basis_cache_hit =
+                    final_response->flydelta_cvec_basis_cache_hit;
+                results[index].flydelta_runtime.factorized_overlay_cache_hit =
+                    final_response->flydelta_cvec_overlay_cache_hit;
+                results[index].flydelta_runtime.physical_batch_size =
+                    final_response->flydelta_cvec_physical_batch_size;
+                results[index].flydelta_runtime.factorized_binding =
+                    final_response->flydelta_cvec_factorized_binding;
+                results[index].flydelta_runtime.fallback_reason =
+                    final_response->flydelta_cvec_fallback_reason;
+                results[index].flydelta_runtime.requested =
+                    requests[index].flydelta_activation &&
+                    (requests[index].flydelta_activation->overlay.enabled ||
+                     requests[index].flydelta_activation->factorized_overlay.enabled);
+                if (final_response->generation_params.cvec) {
+                    const auto & cvec = *final_response->generation_params.cvec;
+                    results[index].flydelta_runtime.applied = final_response->flydelta_overlay_applied;
+                    results[index].flydelta_runtime.sparse_device_binding =
+                        final_response->flydelta_device_batch &&
+                        (!cvec.sparse_layer_indices.empty() ||
+                         static_cast<bool>(cvec.factorized_basis));
+                    results[index].flydelta_runtime.device_batch =
+                        final_response->flydelta_device_batch;
+                    results[index].flydelta_runtime.cache_prompt =
+                        final_response->generation_params.cache_prompt;
+                    results[index].flydelta_runtime.n_cache_reuse =
+                        final_response->generation_params.n_cache_reuse;
+                    results[index].flydelta_runtime.n_embd = cvec.n_embd;
+                    results[index].flydelta_runtime.il_start = cvec.il_start;
+                    results[index].flydelta_runtime.il_end = cvec.il_end;
+                    results[index].flydelta_runtime.data_bytes =
+                        cvec.data.size() * sizeof(float);
+                    results[index].flydelta_runtime.artifact_id = cvec.identity;
+                    results[index].flydelta_runtime.content_hash = cvec.content_hash;
+                }
+            }
+            resident_trace_content(
+                "nonstream-success", requests[index], results[index].content);
+            std::string capture_detail = "capture_attempted=" +
+                std::string(results[index].flydelta_capture ? "yes" : "no") +
+                " capture_captured=" +
+                std::string(results[index].flydelta_capture &&
+                    results[index].flydelta_capture->captured ? "yes" : "no");
+            resident_trace("nonstream-success", requests[index], capture_detail.c_str());
+        }
+        return true;
+    }
+
+    bool score_teacher_forced_choice(
+            const common_agent_teacher_forced_choice_request & request,
+            common_agent_teacher_forced_choice_result & result) override {
+        result = {};
+        result.sequence_id = request.sequence_id;
+
+        try {
+            std::string flydelta_error;
+            if (!server_context_agent_generation_supports_flydelta(request.context, flydelta_error)) {
+                result.error_message = flydelta_error;
+                return false;
+            }
+
+            const std::string & positive = request.positive_continuation.empty()
+                ? request.positive_choice : request.positive_continuation;
+            const std::string & negative = request.negative_continuation.empty()
+                ? request.negative_choice : request.negative_continuation;
+            if (!common_agent_teacher_forced_contrast_is_valid(
+                    request.choice_prefix, positive, negative, result.error_message)) {
+                return false;
+            }
+            if (!request.context.input_resources.empty()) {
+                result.error_message = "server teacher-forced scoring does not support multimodal resources yet";
+                return false;
+            }
+
+            common_agent_prepared_generation prepared;
+            common_chat_params chat_params;
+            if (!common_agent_prepare_chat_generation(
+                    templates, request.context, prepared, &chat_params)) {
+                result.error_message = "failed to prepare server teacher-forced scoring prompt";
+                return false;
+            }
+
+            const std::string prefix = prepared.prompt + request.choice_prefix;
+            auto make_score_task = [&](server_response_reader & reader, const std::string & continuation) {
+                server_task task(SERVER_TASK_TYPE_TEACHER_FORCED_SCORE);
+                task.id = reader.get_new_id();
+                task.cli = true;
+                task.cli_prompt = prefix;
+                task.cli_prompt_parts = prepared.prompt_parts;
+                task.cli_prompt_parts.append(request.choice_prefix, false);
+                task.teacher_forced_target = continuation;
+                task.params = make_server_task_params_from_prepared_generation(
+                    params_base, request.context, prepared, logit_bias_eog);
+                // Scoring is a non-streaming, non-sampling operation.  In
+                // particular, disable prompt-cache reuse so positive and
+                // negative choices are fresh isolated evaluations.
+                task.params.stream = false;
+                task.params.cache_prompt = false;
+                task.params.n_predict = 0;
+                return task;
+            };
+
+            auto score_one = [&](const std::string & continuation,
+                    server_task_result_teacher_score & score) {
+                // Use a fresh response reader for each side. The server host
+                // normally runs with one slot; sequential tasks keep the
+                // positive and negative prompt/KV lifetimes unambiguous.
+                server_response_reader reader = server.get_response_reader();
+                server_task task = make_score_task(reader, continuation);
+                reader.post_task(std::move(task));
+                auto responses = reader.wait_for_all([&request] { return generation_should_stop(request.context); });
+                if (responses.is_terminated || responses.error || responses.results.size() != 1) {
+                    if (responses.error && responses.error->is_error()) {
+                        const auto * error = static_cast<const server_task_result_error *>(responses.error.get());
+                        result.error_message = error->err_msg;
+                    } else {
+                        result.error_message = responses.is_terminated
+                            ? "server teacher-forced scoring was terminated"
+                            : "server teacher-forced scoring returned an incomplete result";
+                    }
+                    return false;
+                }
+                const auto & response = responses.results.front();
+                if (response->is_error()) {
+                    const auto * error = static_cast<const server_task_result_error *>(response.get());
+                    result.error_message = error->err_msg;
+                    return false;
+                }
+                const auto * score_result = dynamic_cast<const server_task_result_teacher_score *>(response.get());
+                if (score_result == nullptr) {
+                    result.error_message = "server returned a non-scoring result for teacher-forced task";
+                    return false;
+                }
+                score = *score_result;
+                return true;
+            };
+
+            server_task_result_teacher_score positive_result;
+            server_task_result_teacher_score negative_result;
+            if (!score_one(positive, positive_result) || !score_one(negative, negative_result)) {
+                return false;
+            }
+            result.available = positive_result.token_count > 0 && negative_result.token_count > 0;
+            result.positive_total_logprob = static_cast<float>(positive_result.total_logprob);
+            result.negative_total_logprob = static_cast<float>(negative_result.total_logprob);
+            result.positive_token_count = positive_result.token_count;
+            result.negative_token_count = negative_result.token_count;
+            result.flydelta_device_batch = positive_result.flydelta_device_batch &&
+                negative_result.flydelta_device_batch;
+            result.teacher_scoring_representation =
+                positive_result.teacher_scoring_representation ==
+                    negative_result.teacher_scoring_representation
+                ? positive_result.teacher_scoring_representation : "mixed";
+            result.teacher_scoring_device = positive_result.teacher_scoring_device &&
+                negative_result.teacher_scoring_device;
+            result.teacher_scoring_returned_bytes =
+                positive_result.teacher_scoring_returned_bytes +
+                negative_result.teacher_scoring_returned_bytes;
+            return true;
+        } catch (const std::exception & err) {
+            result = {};
+            result.error_message = err.what();
+            std::fprintf(stderr, "server teacher-forced scoring failed: %s\n", err.what());
+            return false;
+        }
+    }
+
+    bool score_teacher_forced_choice_batch(
+            const common_agent_teacher_forced_choice_batch_request & request,
+            common_agent_teacher_forced_choice_batch_result & result) override {
+        result = {};
+        struct scoring_telemetry_guard {
+            common_agent_teacher_forced_choice_batch_result & result;
+            std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+            ~scoring_telemetry_guard() {
+                result.scoring_wall_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - started).count();
+                result.returned_score_bytes = 0;
+                result.physical_task_count = result.choices.size() * 2;
+                bool all_device = !result.choices.empty();
+                std::string representation;
+                for (const auto & choice : result.choices) {
+                    result.returned_score_bytes += choice.teacher_scoring_returned_bytes;
+                    all_device = all_device && choice.teacher_scoring_device;
+                    if (representation.empty()) representation = choice.teacher_scoring_representation;
+                    else if (representation != choice.teacher_scoring_representation) representation = "mixed";
+                }
+                result.device_scoring = all_device;
+                result.scoring_representation = representation.empty() ? "unavailable" : representation;
+            }
+        } telemetry{result};
+        if (request.choices.empty() || request.choices.size() > 256) {
+            result.error_message = "server teacher-forced scoring batch has an invalid size";
+            return false;
+        }
+
+        // One logical choice expands to a positive and a negative teacher-score
+        // task. Bound a transport wave by those physical server tasks, rather
+        // than by choices, so a two-slot server receives one complete decision
+        // pair instead of an over-capacity four-task wave. The recursive call
+        // only partitions transport; each result keeps its original sequence
+        // identity and overlay/KV isolation.
+        const size_t max_parallel = static_cast<size_t>(std::max(1, params_base.n_parallel));
+        const size_t max_choices_per_wave = std::max<size_t>(1, max_parallel / 2);
+        if (request.choices.size() > max_choices_per_wave) {
+            std::unordered_set<std::string> all_sequence_ids;
+            for (size_t index = 0; index < request.choices.size(); ++index) {
+                if (!all_sequence_ids.insert(common_agent_teacher_forced_choice_sequence_id(
+                        request.choices[index], index)).second) {
+                    result.error_message =
+                        "server teacher-forced scoring batch has duplicate sequence identity";
+                    return false;
+                }
+            }
+            result.choices.reserve(request.choices.size());
+            for (size_t start = 0; start < request.choices.size(); start += max_choices_per_wave) {
+                const size_t end = std::min(request.choices.size(), start + max_choices_per_wave);
+                common_agent_teacher_forced_choice_batch_request wave;
+                wave.choices.assign(request.choices.begin() + start, request.choices.begin() + end);
+                common_agent_teacher_forced_choice_batch_result wave_result;
+                if (!score_teacher_forced_choice_batch(wave, wave_result)) {
+                    result.error_message = wave_result.error_message.empty()
+                        ? "server teacher-forced scoring wave failed"
+                        : wave_result.error_message;
+                    result.choices.clear();
+                    return false;
+                }
+                result.choices.insert(result.choices.end(),
+                    std::make_move_iterator(wave_result.choices.begin()),
+                    std::make_move_iterator(wave_result.choices.end()));
+            }
+            return true;
+        }
+
+        // Submit the complete batch through one server response reader. The
+        // server may still execute entries serially when their cvecs differ
+        // (the current context-wide cvec contract requires that), but this
+        // keeps task construction, response collection and cancellation at a
+        // single backend boundary. It is therefore a real backend batch
+        // implementation without pretending that per-sequence overlays are
+        // already supported by the server graph.
+        struct pending_choice {
+            size_t result_index = 0;
+        };
+        std::vector<server_task> tasks;
+        tasks.reserve(request.choices.size() * 2);
+        std::vector<pending_choice> pending;
+        pending.reserve(request.choices.size());
+        std::unordered_set<std::string> sequence_ids;
+
+        for (size_t choice_index = 0; choice_index < request.choices.size(); ++choice_index) {
+            const auto & choice_request = request.choices[choice_index];
+            if (!sequence_ids.insert(common_agent_teacher_forced_choice_sequence_id(
+                    choice_request, choice_index)).second) {
+                result.error_message =
+                    "server teacher-forced scoring batch has duplicate sequence identity";
+                return false;
+            }
+            const std::string & positive = choice_request.positive_continuation.empty()
+                ? choice_request.positive_choice : choice_request.positive_continuation;
+            const std::string & negative = choice_request.negative_continuation.empty()
+                ? choice_request.negative_choice : choice_request.negative_continuation;
+            if (!common_agent_teacher_forced_contrast_is_valid(
+                    choice_request.choice_prefix, positive, negative, result.error_message)) {
+                return false;
+            }
+            if (!choice_request.context.input_resources.empty()) {
+                result.error_message =
+                    "server teacher-forced scoring does not support multimodal resources yet";
+                return false;
+            }
+
+            common_agent_prepared_generation prepared;
+            common_chat_params chat_params;
+            if (!common_agent_prepare_chat_generation(
+                    templates, choice_request.context, prepared, &chat_params)) {
+                result.error_message =
+                    "failed to prepare server teacher-forced scoring prompt";
+                return false;
+            }
+
+            const std::string prefix = prepared.prompt + choice_request.choice_prefix;
+            auto make_score_task = [&](const std::string & continuation) {
+                server_task task(SERVER_TASK_TYPE_TEACHER_FORCED_SCORE);
+                task.id = 0; // assigned by server_response_reader::post_tasks
+                task.cli = true;
+                task.cli_prompt = prefix;
+                task.cli_prompt_parts = prepared.prompt_parts;
+                task.cli_prompt_parts.append(choice_request.choice_prefix, false);
+                task.teacher_forced_target = continuation;
+                task.params = make_server_task_params_from_prepared_generation(
+                    params_base, choice_request.context, prepared, logit_bias_eog);
+                // Every task is a fresh isolated comparison. In particular,
+                // do not let one arm reuse prompt/KV state produced by a
+                // different cvec or continuation.
+                task.params.stream = false;
+                task.params.cache_prompt = false;
+                task.params.n_predict = 0;
+                return task;
+            };
+
+            pending.push_back({tasks.size()});
+            tasks.push_back(make_score_task(positive));
+            tasks.push_back(make_score_task(negative));
+        }
+
+        server_response_reader reader = server.get_response_reader();
+        for (auto & task : tasks) {
+            task.id = reader.get_new_id();
+        }
+        reader.post_tasks(std::move(tasks));
+        const auto responses = reader.wait_for_all([&request] {
+            return std::any_of(request.choices.begin(), request.choices.end(), [](const auto & choice) {
+                return generation_should_stop(choice.context);
+            });
+        });
+        if (responses.is_terminated || responses.error) {
+            if (responses.error && responses.error->is_error()) {
+                const auto * error =
+                    static_cast<const server_task_result_error *>(responses.error.get());
+                result.error_message = error->err_msg;
+            } else {
+                result.error_message = responses.is_terminated
+                    ? "server teacher-forced scoring batch was terminated"
+                    : "server teacher-forced scoring batch returned an error";
+            }
+            return false;
+        }
+
+        result.choices.reserve(request.choices.size());
+        for (size_t choice_index = 0; choice_index < pending.size(); ++choice_index) {
+            const size_t positive_index = pending[choice_index].result_index;
+            const size_t negative_index = positive_index + 1;
+            if (negative_index >= responses.results.size() ||
+                    responses.results[positive_index] == nullptr ||
+                    responses.results[negative_index] == nullptr) {
+                result.error_message =
+                    "server teacher-forced scoring batch returned incomplete results";
+                result.choices.clear();
+                return false;
+            }
+
+            const auto * positive_result = dynamic_cast<const server_task_result_teacher_score *>(
+                responses.results[positive_index].get());
+            const auto * negative_result = dynamic_cast<const server_task_result_teacher_score *>(
+                responses.results[negative_index].get());
+            if (positive_result == nullptr || negative_result == nullptr) {
+                result.error_message =
+                    "server returned a non-scoring result for teacher-forced batch task";
+                result.choices.clear();
+                return false;
+            }
+
+            common_agent_teacher_forced_choice_result choice_result;
+            choice_result.sequence_id = common_agent_teacher_forced_choice_sequence_id(
+                request.choices[choice_index], choice_index);
+            choice_result.available = positive_result->token_count > 0 &&
+                negative_result->token_count > 0;
+            choice_result.positive_total_logprob =
+                static_cast<float>(positive_result->total_logprob);
+            choice_result.negative_total_logprob =
+                static_cast<float>(negative_result->total_logprob);
+            choice_result.positive_token_count = positive_result->token_count;
+            choice_result.negative_token_count = negative_result->token_count;
+            choice_result.flydelta_device_batch = positive_result->flydelta_device_batch &&
+                negative_result->flydelta_device_batch;
+            choice_result.teacher_scoring_representation =
+                positive_result->teacher_scoring_representation ==
+                    negative_result->teacher_scoring_representation
+                ? positive_result->teacher_scoring_representation : "mixed";
+            choice_result.teacher_scoring_device = positive_result->teacher_scoring_device &&
+                negative_result->teacher_scoring_device;
+            choice_result.teacher_scoring_returned_bytes =
+                positive_result->teacher_scoring_returned_bytes +
+                negative_result->teacher_scoring_returned_bytes;
+            result.choices.push_back(std::move(choice_result));
+        }
+        return true;
+    }
+
+private:
+    server_context & server;
+    common_params params_base;
+    std::vector<llama_logit_bias> logit_bias_eog;
+    const common_chat_templates * templates;
+    bool supports_image = false;
+    bool supports_audio = false;
+    const llama_vocab * vocab;
+    size_t context_tokens;
+};
+
+} // namespace
+
+std::unique_ptr<common_agent_inference> make_server_context_agent_inference(
+    server_context & server,
+    const common_params & params_base,
+    const std::vector<llama_logit_bias> & logit_bias_eog,
+    const common_chat_templates * templates,
+    bool supports_image,
+    bool supports_audio,
+    const llama_vocab * vocab,
+    size_t context_tokens) {
+    return std::make_unique<server_context_agent_inference>(
+        server, params_base, logit_bias_eog, templates, supports_image, supports_audio, vocab, context_tokens);
+}

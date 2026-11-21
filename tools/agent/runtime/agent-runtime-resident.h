@@ -1,0 +1,122 @@
+#pragma once
+
+#include "../runtime/agent-runtime-host-contracts.h"
+#include "../runtime/agent-runtime-tooling.h"
+#include "../runtime/agent-runtime-turn.h"
+#include "agent-model-residency.h"
+
+#include <string>
+#include <vector>
+
+class common_agent_runtime_resident_host {
+public:
+    bool run_turn(
+        common_agent_runtime_host_inputs & inputs,
+        common_agent_result & result,
+        std::string & error);
+
+    void reset();
+
+    const common_agent_runtime_session & session() const { return runtime_session; }
+    common_agent_runtime_session & session() { return runtime_session; }
+
+private:
+    common_agent_runtime_session runtime_session;
+};
+
+common_agent_runtime_turn_request make_agent_runtime_resident_base_turn_request(
+    const common_agent_runtime_resident_request_config & config);
+
+common_agent_runtime_turn_request make_agent_runtime_resident_turn_request(
+    const common_agent_runtime_turn_request & base_turn_request,
+    const std::string & prompt,
+    const std::string & turn_id,
+    int n_predict_override = 0);
+
+struct common_agent_runtime_resident_runtime_config {
+    common_memory_store & memory_store;
+    common_plan_store * plan_store = nullptr;
+    common_agent_runtime_turn_request base_turn_request;
+    std::string current_plan_id;
+    std::vector<common_blueprint_candidate> installed_blueprint_candidates;
+    common_agent_runtime_tooling tooling;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::string model_profile_id;
+};
+
+common_agent_runtime_resident_runtime_config make_agent_runtime_resident_runtime_config(
+    common_memory_store & memory_store,
+    common_plan_store * plan_store,
+    common_agent_runtime_turn_request base_turn_request,
+    std::string current_plan_id = {},
+    std::vector<common_blueprint_candidate> installed_blueprint_candidates = {},
+    common_agent_runtime_tooling tooling = {},
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency = nullptr,
+    std::string model_profile_id = {});
+
+void set_agent_runtime_turn_research_context(common_agent_runtime_turn_request & request,
+        std::optional<common_agent_research_draft_ref> draft,
+        std::optional<common_agent_research_workspace> seed,
+        std::function<bool(const common_agent_research_workspace &, std::string &)> progress_sink);
+
+class common_agent_runtime_resident_runtime {
+public:
+    explicit common_agent_runtime_resident_runtime(common_agent_runtime_resident_runtime_config config);
+
+    void set_tooling(common_agent_runtime_tooling tooling);
+    void set_execution_control(common_agent_runtime_execution_control execution_control);
+    void set_graph_query(std::string query);
+    void set_policy_pack(std::optional<common_memory_policy_pack> policy_pack);
+    // Replace only the immutable request-scoped activation for the next turn.
+    // The resident model, server context and orchestration state are reused.
+    void set_flydelta_activation(
+            std::shared_ptr<const common_flydelta_activation_result> activation);
+    void set_turn_inputs(std::vector<common_agent_input_resource> input_resources,
+            bool require_tool_execution,
+            std::optional<common_agent_resource_read_binding> resource_read_binding = std::nullopt,
+            std::optional<common_investigation_context_binding> investigation_context = std::nullopt);
+    void set_research_context(
+            std::optional<common_agent_research_draft_ref> draft,
+            std::optional<common_agent_research_workspace> seed,
+            std::function<bool(const common_agent_research_workspace &, std::string &)> progress_sink);
+    void set_current_plan_id(std::string plan_id) { resident_current_plan_id = std::move(plan_id); }
+
+    // Load the configured inference model without executing a user turn.
+    bool prepare_model(std::string & error);
+
+    bool run_chat_prompt(
+        const std::string & prompt,
+        const std::string & turn_id,
+        int n_predict,
+        common_agent_result & result,
+        std::string & error);
+
+    bool run_agent_prompt(
+        const std::string & prompt,
+        const std::string & turn_id,
+        int n_predict,
+        common_agent_result & result,
+        std::string & error,
+        const std::string * original_user_prompt = nullptr);
+
+    void reset();
+
+    const std::string & current_plan_id() const { return resident_current_plan_id; }
+    std::string & current_plan_id() { return resident_current_plan_id; }
+    const common_agent_runtime_resident_host & runtime_host() const { return host; }
+    common_agent_runtime_resident_host & runtime_host() { return host; }
+    common_agent_inference * inference();
+    common_agent_tool_output_format configured_tool_output_format() const;
+
+private:
+    common_memory_store & memory_store;
+    common_plan_store * plan_store = nullptr;
+    common_agent_runtime_turn_request base_turn_request;
+    std::string resident_current_plan_id;
+    std::vector<common_blueprint_candidate> installed_blueprint_candidates;
+    common_agent_runtime_tooling tooling;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::string model_profile_id;
+    common_agent_runtime_model_resident_handle resident_model_handle;
+    common_agent_runtime_resident_host host;
+};

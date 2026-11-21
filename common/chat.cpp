@@ -679,12 +679,12 @@ std::vector<common_chat_tool> common_chat_tools_parse_oaicompat(const json & too
                     throw std::invalid_argument("Expected 'defer_loading' to be a boolean, got " + defer.dump());
                 }
 
-                result.push_back({
-                    /* .name = */ function.at("name"),
-                    /* .description = */ function.value("description", ""),
-                    /* .parameters = */ function.value("parameters", json::object()).dump(),
-                    /* .defer_loading = */ defer.get<bool>(),
-                });
+                common_chat_tool parsed;
+                parsed.name = function.at("name").get<std::string>();
+                parsed.description = function.value("description", "");
+                parsed.parameters = function.value("parameters", json::object()).dump();
+                parsed.defer_loading = defer.get<bool>();
+                result.push_back(std::move(parsed));
             }
         }
     } catch (const std::exception & e) {
@@ -2005,4 +2005,15 @@ common_json common_chat_templates_get_caps(const common_chat_templates * chat_te
     result["reasoning_effort_levels"] = caps.reasoning_effort_levels;
     result["reasoning_effort_rejected"] = caps.reasoning_effort_rejected;
     return result;
+}
+
+std::vector<llama_token> common_chat_tokenize_prompt(const llama_vocab * vocab, const common_chat_prompt & prompt) {
+    std::vector<llama_token> tokens;
+    bool first = true;
+    for (const auto & part : prompt.parts) {
+        auto piece = common_tokenize(vocab, part.text, first, !part.is_input);
+        tokens.insert(tokens.end(), piece.begin(), piece.end());
+        first = false;
+    }
+    return tokens;
 }

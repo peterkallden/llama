@@ -1,0 +1,518 @@
+#include "tools/agent/runtime/agent-planning-selection.h"
+#include "agent-workflow-transition.h"
+#include "agent/tooling/contracts/schema-contract.h"
+#include "agent/artifact/artifact-contract.h"
+#include "plan/plan-workflow-state.h"
+#include "hash/hash.h"
+
+#include <algorithm>
+#include <limits>
+#include <nlohmann/json.hpp>
+#include <queue>
+#include <set>
+#include <unordered_map>
+
+using json = nlohmann::ordered_json;
+
+namespace {
+
+bool terminal(const common_plan_workflow_definition & definition, const std::string & state) {
+    return std::find(definition.terminal_states.begin(), definition.terminal_states.end(), state) !=
+        definition.terminal_states.end();
+}
+
+size_t completed_choice_uses(const common_plan_state & plan,
+        const std::string & transition_id, const std::string & choice_id) {
+    const auto marker = transition_id + "=" + choice_id + ",";
+    const size_t first = plan.route_binding ? plan.route_binding->workflow_step_start_index : 0;
+    size_t uses = 0;
+    for (size_t i = first; i < plan.steps.size(); ++i) {
+        const auto & step = plan.steps[i];
+        if (step.status != common_plan_step_status::completed || !step.semantic_alias) continue;
+        const auto & alias = *step.semantic_alias;
+        if (alias.rfind("workflow-transition:", 0) == 0 && alias.find(marker) != std::string::npos)
+            ++uses;
+    }
+    return uses;
+}
+
+bool is_required_parameter_alternatives(const json & schema) {
+    if (!schema.is_object() || schema.size() != 1 || !schema.contains("anyOf") ||
+            !schema["anyOf"].is_array() || schema["anyOf"].empty()) return false;
+    for (const auto & alternative : schema["anyOf"]) {
+        if (!alternative.is_object() || alternative.size() != 1 || !alternative.contains("required") ||
+                !alternative["required"].is_array() || alternative["required"].empty()) return false;
+        for (const auto & field : alternative["required"]) if (!field.is_string()) return false;
+    }
+    return true;
+}
+
+void relax_host_required_parameter_constraints(json & schema) {
+    if (!schema.is_object()) return;
+    schema.erase("required");
+    // OpenAPI required_any_parameters are compiled as allOf -> anyOf ->
+    // required-only branches. They constrain the completed call, not the
+    // workflow's static seed, which the model is expected to complete.
+    if (!schema.contains("allOf") || !schema["allOf"].is_array()) return;
+    auto & constraints = schema["allOf"];
+    constraints.erase(std::remove_if(constraints.begin(), constraints.end(), [](const json & constraint) {
+        return is_required_parameter_alternatives(constraint);
+    }), constraints.end());
+    if (constraints.empty()) schema.erase("allOf");
+}
+
+bool replace_previous(json & value, const std::string & step_id, const std::string & choice) {
+    if (value.is_array()) {
+        for (auto & item : value) if (!replace_previous(item, step_id, choice)) return false;
+        return true;
+    }
+    if (value.is_string() && !choice.empty()) {
+        auto text = value.get<std::string>();
+        size_t offset = 0;
+        while ((offset = text.find("$choice", offset)) != std::string::npos) {
+            text.replace(offset, std::string("$choice").size(), choice);
+            offset += choice.size();
+        }
+        value = std::move(text);
+        return true;
+    }
+    if (!value.is_object()) return true;
+    if (value.value("$from_step", std::string{}) == "$previous") value["$from_step"] = step_id;
+    if (value.is_object() && value.value("$choice", false)) {
+        value = choice;
+        return true;
+    }
+    for (auto & item : value.items()) if (!replace_previous(item.value(), step_id, choice)) return false;
+    return true;
+}
+
+bool candidate_ids(const common_plan_observation & observation,
+        const std::string & pointer, const std::string & id_pointer,
+        std::set<std::string> & ids, std::string & error) {
+    ids.clear();
+    const auto value = json::parse(observation.summary, nullptr, false);
+    if (!value.is_object() && !value.is_array()) { error = "workflow choice observation is not JSON"; return false; }
+    if (!pointer.empty()) {
+        const json::json_pointer location(pointer);
+        if (!value.contains(location)) { error = "workflow choice candidate pointer is absent"; return false; }
+        const auto & selected = value.at(location);
+        if (!selected.is_array()) { error = "workflow choice candidates are not an array"; return false; }
+        std::string columns_pointer = pointer;
+        const auto last_separator = columns_pointer.rfind('/');
+        columns_pointer = last_separator == std::string::npos || last_separator == 0
+            ? std::string{} : columns_pointer.substr(0, last_separator);
+        if (!columns_pointer.empty()) columns_pointer += "/columns";
+        const json::json_pointer columns_location(columns_pointer);
+        const json * columns = !columns_pointer.empty() && value.contains(columns_location)
+            ? &value.at(columns_location) : nullptr;
+        const size_t id_column = [&]() {
+            if (columns == nullptr || !columns->is_array() || id_pointer.size() < 2 ||
+                    id_pointer.front() != '/' || id_pointer.find('/', 1) != std::string::npos) {
+                return std::numeric_limits<size_t>::max();
+            }
+            const std::string field = id_pointer.substr(1);
+            for (size_t index = 0; index < columns->size(); ++index) {
+                if ((*columns)[index].is_string() && (*columns)[index].get<std::string>() == field) return index;
+            }
+            return std::numeric_limits<size_t>::max();
+        }();
+        for (const auto & candidate : selected) {
+            const json * identity = nullptr;
+            if (candidate.is_object()) {
+                try { identity = &candidate.at(json::json_pointer(id_pointer)); }
+                catch (const std::exception &) {}
+            } else if (candidate.is_array() && id_column < candidate.size()) {
+                identity = &candidate[id_column];
+            }
+            if (identity && identity->is_string() && !identity->get<std::string>().empty()) {
+                ids.insert(identity->get<std::string>());
+            }
+        }
+    }
+    if (ids.empty()) { error = "workflow choice has no candidate ids"; return false; }
+    return true;
+}
+
+
+const common_plan_observation * binding_observation(
+        const common_plan_state & plan,
+        const common_plan_observation & current,
+        const std::string & source_transition_id) {
+    if (source_transition_id.empty() || source_transition_id == "$previous") {
+        return common_plan_workflow_observation_is_usable(current) ? &current : nullptr;
+    }
+    // A model-choice transition has no tool step of its own. Its verified
+    // candidate is persisted as a workflow_choice observation after the
+    // immediately following tool succeeds, so later graph transitions must
+    // resolve explicit bindings from that host-validated observation.
+    return common_plan_workflow_observation(plan, source_transition_id);
+}
+
+bool resolve_argument_bindings(json & arguments,
+        const common_plan_state & plan,
+        const common_plan_workflow_transition & transition,
+        const common_plan_observation & observation,
+        std::string & error) {
+    if (transition.argument_bindings.empty()) return true;
+    const auto value = json::parse(observation.summary, nullptr, false);
+    if (!value.is_object() && !value.is_array()) {
+        error = "workflow argument binding observation is not structured JSON";
+        return false;
+    }
+    for (const auto & binding : transition.argument_bindings) {
+        const auto * source_observation = binding_observation(
+            plan, observation, binding.source_transition_id);
+        if (source_observation == nullptr) {
+            if (binding.required) {
+                error = "required workflow source transition has no verified observation: " +
+                    binding.source_transition_id;
+                return false;
+            }
+            continue;
+        }
+        const auto source_value_json = json::parse(source_observation->summary, nullptr, false);
+        if (!source_value_json.is_object() && !source_value_json.is_array()) {
+            if (binding.required) { error = "workflow binding source observation is not JSON"; return false; }
+            continue;
+        }
+        const json::json_pointer source(binding.source_json_pointer);
+        const json::json_pointer target(binding.target_json_pointer);
+        if (!source_value_json.contains(source)) {
+            if (binding.required) {
+                error = "required workflow argument source is absent: " + binding.source_json_pointer;
+                return false;
+            }
+            continue;
+        }
+        const auto & source_value = source_value_json.at(source);
+        if (source_value.is_null() || (source_value.is_string() && source_value.get<std::string>().empty())) {
+            if (binding.required) {
+                error = "required workflow argument source must not be null or an empty string";
+                return false;
+            }
+            continue;
+        }
+        arguments[target] = source_value;
+    }
+    return true;
+}
+
+common_plan_step make_tool_step(const common_plan_state & plan,
+        const common_plan_workflow_transition & transition,
+        const std::string & completed_step_id,
+        const std::string & choice,
+        const common_plan_observation & observation,
+        const common_agent_workflow_argument_selector & select_arguments,
+        std::string & error) {
+    const auto arguments = json::parse(transition.arguments_template_json, nullptr, false);
+    if (!arguments.is_object()) { error = "workflow transition arguments are not an object"; return {}; }
+    auto resolved = arguments;
+    if (!replace_previous(resolved, completed_step_id, choice)) { error = "workflow transition arguments are invalid"; return {}; }
+    if (!resolve_argument_bindings(resolved, plan, transition, observation, error)) return {};
+    if (transition.model_supplies_arguments && !select_arguments) {
+        error = "workflow transition requires an argument selector"; return {};
+    }
+    if (select_arguments) {
+        std::string generated;
+        if (!select_arguments(plan, observation, transition, resolved.dump(), generated, error)) return {};
+        const auto validated = json::parse(generated, nullptr, false);
+        if (!validated.is_object()) { error = "workflow argument selector did not return an object"; return {}; }
+        for (const auto & binding : resolved.items()) {
+            if (!validated.contains(binding.key()) || validated.at(binding.key()) != binding.value()) {
+                error = "workflow argument selector changed a host-bound argument"; return {};
+            }
+        }
+        resolved = validated;
+    }
+    common_plan_step step;
+    const auto identity=completed_step_id+"\n"+transition.id+"\n"+choice;
+    step.id = plan.id + ":workflow:" + transition.id + ":"+
+        hash_sha256_hex(identity.data(),identity.size()).substr(0,12);
+    step.title = transition.tool_name;
+    step.objective = "Execute host-approved workflow transition " + transition.id + ".";
+    step.intended_contribution = step.objective;
+    step.status = common_plan_step_status::pending;
+    step.optional = transition.optional;
+    step.mode = common_plan_step_mode::tool;
+    step.selected_tool = transition.tool_name;
+    step.tool_call = common_plan_tool_call{transition.tool_name, resolved.dump()};
+    step.semantic_alias = "workflow-transition:" + transition.id;
+    common_agent_workflow_apply_blueprint_phase(plan, transition, step);
+    return step;
+}
+
+} // namespace
+
+const common_plan_workflow_transition * common_agent_workflow_next_transition(
+        const common_plan_workflow_definition & definition,
+        const std::string & state,
+        const std::vector<std::string> * allowed_tools, bool review) {
+    if (state.empty()) return nullptr;
+    if (terminal(definition, state)) {
+        if (review) for (const auto & transition : definition.transitions)
+            if (transition.from_state == state && transition.review_only) return &transition;
+        return nullptr;
+    }
+    // Dijkstra is A* with a zero admissible heuristic.  It keeps V1 graph
+    // selection deterministic while the domain supplies no richer heuristic.
+    struct node { float cost; std::string state; std::string first; };
+    const auto compare = [](const node & a, const node & b) {
+        return a.cost == b.cost ? a.first > b.first : a.cost > b.cost;
+    };
+    std::priority_queue<node, std::vector<node>, decltype(compare)> queue(compare);
+    std::unordered_map<std::string, float> best;
+    queue.push({0.0f, state, {}}); best[state] = 0.0f;
+    while (!queue.empty()) {
+        const auto current = queue.top(); queue.pop();
+        if (current.cost > best[current.state] + 1e-6f) continue;
+        if (terminal(definition, current.state) && !current.first.empty()) {
+            return &*std::find_if(definition.transitions.begin(), definition.transitions.end(),
+                [&](const auto & transition) { return transition.id == current.first; });
+        }
+        for (const auto & transition : definition.transitions) {
+            if (transition.from_state != current.state || transition.review_only) continue;
+            if (allowed_tools && transition.kind == common_plan_workflow_transition_kind::tool &&
+                    std::find(allowed_tools->begin(), allowed_tools->end(), transition.tool_name) == allowed_tools->end()) continue;
+            const auto next_cost = current.cost + transition.cost;
+            const auto enqueue = [&](const std::string & target) {
+                const auto prior = best.find(target);
+                if (prior != best.end() && next_cost >= prior->second - 1e-6f) return;
+                best[target] = next_cost;
+                queue.push({next_cost, target,
+                    current.first.empty() ? transition.id : current.first});
+            };
+            // Fixed choices can branch to states other than the transition's
+            // fallback destination; each is part of the declared graph.
+            if (transition.kind == common_plan_workflow_transition_kind::model_choice &&
+                    !transition.choices.empty()) {
+                for (const auto & choice : transition.choices) enqueue(choice.to_state);
+            } else enqueue(transition.to_state);
+        }
+    }
+    return nullptr;
+}
+
+bool common_agent_workflow_static_tool_arguments(
+        const common_plan_workflow_transition & transition,
+        const common_chat_tool & tool,
+        std::string & normalized_arguments_json,
+        std::string & error) {
+    normalized_arguments_json.clear();
+    error.clear();
+    if (transition.kind != common_plan_workflow_transition_kind::tool ||
+            transition.tool_name != tool.name || !transition.argument_bindings.empty()) {
+        return false;
+    }
+    const auto arguments = json::parse(transition.arguments_template_json, nullptr, false);
+    if (!arguments.is_object()) {
+        error = "workflow transition arguments are not an object";
+        return false;
+    }
+    std::string validation_error;
+    if (common_schema_normalize_and_validate_object(
+            arguments.dump(), tool.parameters, normalized_arguments_json, validation_error)) {
+        return !transition.model_supplies_arguments;
+    }
+
+    // A partial static template can still be completed by the model, but its
+    // provided values must independently satisfy the tool's schema. Remove
+    // only `required` for this check so malformed fixed values cannot be
+    // silently replaced by model-generated arguments.
+    auto partial_schema = json::parse(tool.parameters, nullptr, false);
+    if (partial_schema.is_object()) {
+        relax_host_required_parameter_constraints(partial_schema);
+        std::string partial_normalized;
+        std::string partial_error;
+        if (!common_schema_normalize_and_validate_object(
+                arguments.dump(), partial_schema.dump(), partial_normalized, partial_error)) {
+            error = "workflow transition static arguments violate " + tool.name + " schema: " + partial_error;
+            return false;
+        }
+        normalized_arguments_json = std::move(partial_normalized);
+        return false;
+    }
+    error = "workflow transition static arguments violate " + tool.name + " schema: " + validation_error;
+    normalized_arguments_json.clear();
+    return false;
+}
+
+common_agent_workflow_continuation_provider make_agent_workflow_graph_continuation(
+        common_agent_route_candidate route,
+        common_agent_workflow_choice_selector select_choice,
+        common_agent_workflow_argument_selector select_arguments) {
+    return [route = std::move(route), select_choice = std::move(select_choice),
+            select_arguments = std::move(select_arguments)](
+            const common_plan_state & plan, const std::string & completed_step_id,
+            const common_plan_observation & input_observation,
+            common_agent_workflow_continuation & steps, std::string & error) {
+        steps.clear(); error.clear();
+        if (!route.workflow_definition || route.workflow_definition->transitions.empty() ||
+                !plan.workflow_definition || !plan.route_binding ||
+                plan.route_binding->route_id != route.id) return true;
+        const auto & definition = *route.workflow_definition;
+        auto observation = input_observation;
+        std::set<std::string> rejected_choices;
+        // Reconsider a proven no-op once, using the same authorized graph.
+        for (size_t selection_attempt = 0; selection_attempt < 2; ++selection_attempt) {
+            std::string state = common_plan_workflow_completed_state(plan, definition);
+            const bool review = observation.source == common_agent_workflow_review_source;
+            if (review && plan.status == common_plan_status::completed) {
+                error = "accepted completed workflow requires an explicit new task"; return false;
+            }
+            const auto * next = common_agent_workflow_next_transition(definition, state, &route.resolved_tools, review);
+            if (next == nullptr) {
+                if (terminal(definition, state)) return true;
+                error = "workflow state has no authorized path to completion";
+                return false;
+            }
+            if ((next->kind == common_plan_workflow_transition_kind::model_choice ||
+                    next->model_supplies_arguments || !next->argument_bindings.empty()) && !common_plan_workflow_observation_is_usable(observation)) {
+                error = "workflow continuation requires a successful structured host observation";
+                return false;
+            }
+            std::string choice;
+            std::string aliases;
+            if (next->kind == common_plan_workflow_transition_kind::model_choice) {
+                if (!select_choice) { error = "workflow graph needs a model choice selector"; return false; }
+                std::set<std::string> ids;
+                auto available = *next;
+                if (!next->choices.empty()) {
+                    available.choices.erase(std::remove_if(available.choices.begin(), available.choices.end(),
+                        [&](const auto & option) {
+                            return rejected_choices.count(option.id) ||
+                                (option.max_uses && completed_choice_uses(plan, next->id, option.id) >= option.max_uses);
+                        }), available.choices.end());
+                    for (const auto & option : available.choices) {
+                        const bool available = common_plan_workflow_choice_available(observation, option);
+                        if (available) ids.insert(option.id);
+                    }
+                    if (ids.empty()) { error = "workflow has no available fixed choices for this observation"; return false; }
+                } else if (!candidate_ids(observation, next->candidate_json_pointer,
+                        next->candidate_id_json_pointer, ids, error)) {
+                    return false;
+                }
+                if (!select_choice(observation, available, choice, error)) return false;
+                if (!ids.count(choice)) { error = "workflow choice selected an id outside the host observation"; return false; }
+                if (!next->choices.empty()) {
+                    const auto selected = std::find_if(next->choices.begin(), next->choices.end(),
+                        [&](const auto & option) { return option.id == choice; });
+                    if (selected == next->choices.end()) { error = "workflow fixed choice was not declared"; return false; }
+                    state = selected->to_state;
+                    aliases = next->id + "=" + choice + ",";
+                } else {
+                    state = next->to_state;
+                    // Persist the selected host-validated candidate in the step
+                    // alias as well as the workflow_choice observation. State
+                    // replay needs the choice token to advance candidate-backed
+                    // model_choice transitions after resume.
+                    aliases = next->id + "=" + choice + ",";
+                }
+                const auto choice_transition_id = next->id;
+                next = common_agent_workflow_next_transition(definition, state, &route.resolved_tools);
+                if (next == nullptr) {
+                    if (terminal(definition, state)) {
+                        steps.terminal_choice = common_agent_workflow_terminal_choice{
+                            choice_transition_id, choice, completed_step_id, observation.id};
+                        return true;
+                    }
+                    error = "workflow state has no authorized path to completion";
+                    return false;
+                }
+            }
+            if (next->kind == common_plan_workflow_transition_kind::artifact_compose) {
+                common_agent_artifact_profile profile;
+                if (!common_agent_artifact_profile_from_json(next->artifact_profile_json, profile, error)) {
+                    if (error.empty()) error = "artifact profile was not host-materialized";
+                    return false;
+                }
+                const auto section = std::find_if(profile.sections.begin(), profile.sections.end(), [&](const auto & candidate) {
+                    return candidate.id == next->artifact_section_id;
+                });
+                if (section == profile.sections.end()) { error = "artifact transition references an unknown profile section"; return false; }
+                common_plan_step step;
+                const auto source_hash=hash_sha256_hex(completed_step_id.data(),completed_step_id.size()).substr(0,12);
+                step.id = plan.id + ":artifact:" + next->id + ":" + section->id + ":" + source_hash;
+                step.title = section->title;
+                step.objective = section->purpose;
+                step.intended_contribution = section->purpose;
+                step.status = common_plan_step_status::pending;
+                step.mode = common_plan_step_mode::artifact_compose;
+                step.depends_on.push_back(completed_step_id);
+                step.required_evidence = section->required_observation_sources;
+                step.semantic_alias = "workflow-transition:" + next->id;
+                step.artifact_binding = common_plan_artifact_binding{next->id,profile.id,profile.revision,section->id,"snapshot:"+plan.id};
+                steps.push_back(std::move(step));
+                error.clear();
+                return true;
+            }
+            if (next->kind != common_plan_workflow_transition_kind::tool ||
+                    std::find(route.resolved_tools.begin(), route.resolved_tools.end(), next->tool_name) == route.resolved_tools.end()) {
+                error = "workflow graph proposed a tool outside the selected route";
+                return false;
+            }
+            auto step = make_tool_step(plan, *next, completed_step_id, choice, observation, select_arguments, error);
+            if (!error.empty()) {
+                if (selection_attempt == 0 && !choice.empty() && error.rfind("workflow.no_progress:", 0) == 0) {
+                    rejected_choices.insert(choice);
+                    auto payload = json::parse(observation.summary, nullptr, false);
+                    if (payload.is_object()) {
+                        payload["host_recovery"] = {{"rejected_choice", choice}, {"reason", error},
+                            {"instruction", "Use the current verified state and choose another declared action; preserve pending analysis and reporting."}};
+                        observation.summary = payload.dump();
+                    }
+                    error.clear();
+                    continue;
+                }
+                error = "workflow transition " + next->id + " (" + next->tool_name + "): " + error;
+                return false;
+            }
+            step.depends_on.push_back(completed_step_id);
+            step.semantic_alias = "workflow-transition:" + aliases + next->id;
+            steps.push_back(std::move(step));
+            return true;
+        }
+        error = "workflow made no progress after bounded action reconsideration; saved work remains resumable";
+        return false;
+    };
+}
+
+void common_agent_workflow_apply_blueprint_phase(const common_plan_state & plan,
+        const common_plan_workflow_transition & transition, common_plan_step & step) {
+    if (!plan.selected_workflow) return;
+    const auto outline = std::find_if(plan.observations.begin(), plan.observations.end(),
+        [](const auto & item) { return item.source == "blueprint_outline"; });
+    if (outline == plan.observations.end()) return;
+    const auto phases = json::parse(outline->summary, nullptr, false);
+    if (!phases.is_array()) return;
+    for (const auto & phase : plan.selected_workflow->phase_bindings) {
+        if (std::find(phase.second.begin(), phase.second.end(), transition.id) == phase.second.end()) continue;
+        const auto source = std::find_if(phases.begin(), phases.end(), [&](const auto & value) {
+            return value.is_object() && value.value("id", std::string{}) == plan.id + ":" + phase.first;
+        });
+        if (source == phases.end()) continue;
+        step.title = source->value("title", step.title);
+        step.objective = source->value("objective", step.objective) + "\nDeclared operation: " + transition.tool_name;
+        step.intended_contribution = source->value("intended_contribution", step.objective);
+        return;
+    }
+}
+
+bool common_agent_workflow_path_eligible(const common_agent_request & request,
+        const common_plan_workflow_definition & workflow, const std::string & start,
+        const std::vector<std::string> & allowed_tools, const std::vector<common_chat_tool> & tools,
+        std::string & error) {
+    error.clear();
+    auto state = start;
+    std::set<std::string> visited;
+    while (visited.insert(state).second) {
+        if (std::find(workflow.terminal_states.begin(),workflow.terminal_states.end(),state) != workflow.terminal_states.end()) return true;
+        const auto * next = common_agent_workflow_next_transition(workflow,state,&allowed_tools);
+        if (!next) return false;
+        if (next->kind != common_plan_workflow_transition_kind::tool) return true;
+        const auto tool = std::find_if(tools.begin(),tools.end(),[&](const auto & item) { return item.name == next->tool_name; });
+        if (tool == tools.end() || !common_agent_workflow_tool_eligible(request,*tool,error)) return false;
+        state = next->to_state;
+    }
+    error = "workflow deterministic prefix cycles without a model decision";
+    return false;
+}

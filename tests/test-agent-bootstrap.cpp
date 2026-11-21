@@ -1,0 +1,1307 @@
+#include "agent/agent-bootstrap.h"
+#include "agent/agent-package-json.h"
+#include "agent/learning/blueprint-selector.h"
+#include "memory/memory-in-memory.h"
+#include "plan/plan-blueprint.h"
+#include "plan/plan-in-memory.h"
+
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+#include <algorithm>
+#include <cassert>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+
+class fixed_selector final : public common_blueprint_selector {
+public:
+    int calls = 0;
+    std::vector<common_blueprint_candidate> seen;
+    common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> & candidates, std::string & error) override {
+        ++calls; error.clear();
+        seen = candidates;
+        common_blueprint_selection selection;
+        selection.decision = common_blueprint_selection_decision::instantiate;
+        selection.logical_id = "fixture-change";
+        selection.confidence = 0.9f;
+        return selection;
+    }
+};
+
+class declining_selector final : public common_blueprint_selector {
+public:
+    common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> &, std::string & error) override {
+        error.clear();
+        return {common_blueprint_selection_decision::none, std::nullopt, 0.0f, "model declined"};
+    }
+};
+
+class low_confidence_selector final : public common_blueprint_selector {
+public:
+    common_blueprint_selection select(const common_agent_request &, const std::vector<common_blueprint_candidate> &, std::string & error) override {
+        error.clear();
+        return {common_blueprint_selection_decision::instantiate, "fixture-change", 0.1f, "model selected below threshold"};
+    }
+};
+
+// Selection/compatibility contracts use test-owned methods, not retired
+// development content in the production starter or built-in fallback.
+static common_agent_bootstrap_package selection_fixture_package() {
+    auto package=common_agent_default_bootstrap_package();
+    package.name="selection-fixture";
+    package.procedures.push_back({"fixture-evidence","Retain fixture evidence.","Fixture evidence"});
+    package.procedures.push_back({"fixture-diagnosis","Inspect fixture failures.","Fixture diagnosis"});
+    common_agent_bootstrap_blueprint change;
+    change.id="fixture-change";change.purpose="Exercise scoped method selection.";
+    change.goal="Implement the fixture change";
+    change.success_criteria="The requested change is implemented and verified by relevant tests.";
+    change.constraints={{"scope","Keep the fixture bounded",true},{"evidence","Use inspected evidence",true}};
+    change.assumptions={{"workspace","A fixture workspace is available",0.9f,true,{}}};
+    change.steps={{"inspect","Inspect","Inspect the fixture"},{"verify","Verify","Verify the fixture"}};
+    change.steps[1].depends_on={"inspect"};
+    change.next_action="inspect";
+    auto regression=change;regression.id="fixture-regression";regression.goal="Diagnose the fixture regression";
+    std::swap(package.blueprints[0],package.blueprints[1]); // Preserve the fixture dataset slot.
+    package.blueprints.insert(package.blueprints.begin(),change);package.blueprints.push_back(regression);
+    return package;
+}
+
+int main() {
+    common_memory_in_memory_store memory;
+    common_plan_in_memory_store plans;
+    std::string error;
+    assert(memory.open("", error));
+    assert(plans.open("", error));
+
+    common_agent_bootstrap_config config;
+    config.namespace_id = "local";
+    config.session_id = "session-a";
+    config.project_id = "project-a";
+    config.now = 42;
+    auto embed = [](const std::string & text, std::vector<float> & out, std::string & error) {
+        error.clear();
+        out = {(float) text.size(), 1.0f};
+        return true;
+    };
+
+    common_agent_bootstrap_result first;
+    assert(common_agent_install_bootstrap_package(memory, plans, config, selection_fixture_package(), embed, first, error));
+    assert(first.installed_memory_ids.size() == 4);
+    assert(first.installed_blueprint_ids.size() == 4);
+    const auto procedure = memory.get(first.installed_memory_ids.front(), error);
+    assert(procedure && procedure->kind == common_memory_kind::procedure);
+    assert(procedure->scope == common_memory_scope::project);
+    assert(procedure->metadata.at("origin") == "bootstrap");
+    // Package export must list bootstrap procedures in their package scope,
+    // which is project here rather than the normal session retrieval default.
+    common_memory_query bootstrap_query;
+    bootstrap_query.scope = common_memory_scope::project;
+    bootstrap_query.namespace_id = config.namespace_id;
+    bootstrap_query.project_id = config.project_id;
+    const auto bootstrap_procedures = memory.list(bootstrap_query, error);
+    assert(error.empty() && bootstrap_procedures.size() == first.installed_memory_ids.size());
+    const auto blueprint = plans.get(first.installed_blueprint_ids.front(), error);
+    assert(blueprint && blueprint->kind == common_plan_kind::blueprint);
+    assert(blueprint->source_revision == "selection-fixture@v1");
+    assert(blueprint->purpose == "Exercise scoped method selection.");
+    assert(blueprint->constraints.size() == 2 && blueprint->assumptions.size() == 1);
+    assert(!blueprint->steps.empty() && !blueprint->steps.front().tool_call);
+
+    common_agent_bootstrap_config host_config = config;
+    host_config.session_id = "session-b";
+    host_config.project_id.clear();
+    common_agent_bootstrap_result host_install;
+    assert(common_agent_install_bootstrap_package(memory, plans, host_config, selection_fixture_package(), embed, host_install, error));
+    const auto host_procedure = memory.get(host_install.installed_memory_ids.front(), error);
+    assert(host_procedure && host_procedure->scope == common_memory_scope::global);
+    const auto host_blueprint = plans.get(host_install.installed_blueprint_ids.front(), error);
+    assert(host_blueprint && host_blueprint->scope == common_plan_scope::global);
+    assert(common_plan_template_scope_matches(*host_blueprint, common_plan_scope::turn,
+        "local", "another-session", "", "turn-1"));
+    assert(common_plan_template_scope_matches(*host_blueprint, common_plan_scope::project,
+        "local", "another-session", "another-project", ""));
+    assert(!common_plan_scope_matches(*host_blueprint, common_plan_scope::turn,
+        "local", "another-session", "", "turn-1"));
+
+    common_plan_state instance;
+    assert(common_plan_instantiate_blueprint(*blueprint, "instance-a", config.session_id, instance, error, common_plan_scope::project, 43));
+    assert(instance.kind == common_plan_kind::task);
+    assert(instance.derived_from_plan_id && *instance.derived_from_plan_id == blueprint->id);
+    assert(instance.source_revision == blueprint->source_revision);
+
+    common_plan_state cyclic = *blueprint;
+    cyclic.id = "cyclic-blueprint";
+    cyclic.steps[0].depends_on = {cyclic.steps[1].id};
+    cyclic.steps[1].depends_on = {cyclic.steps[0].id};
+    assert(!common_plan_validate_blueprint(cyclic, {}, error));
+    assert(error.find("cycle") != std::string::npos);
+    assert(!common_plan_instantiate_blueprint(cyclic, "cyclic-instance", config.session_id, instance, error));
+
+    common_plan_state invalid_blueprint = *blueprint;
+    invalid_blueprint.id = "invalid-blueprint";
+    invalid_blueprint.assumptions.front().valid = false;
+    assert(!common_plan_instantiate_blueprint(invalid_blueprint, "invalid-instance", config.session_id, instance, error));
+    assert(error.find("assumption") != std::string::npos);
+
+    common_agent_bootstrap_result second;
+    assert(common_agent_install_bootstrap_package(memory, plans, config, selection_fixture_package(), embed, second, error));
+    assert(second.installed_memory_ids.empty() && second.installed_blueprint_ids.empty());
+    assert(second.existing_memory_ids.size() == 4 && second.existing_blueprint_ids.size() == 4);
+
+    std::string package_json;
+    const auto default_package = common_agent_default_bootstrap_package();
+    assert(default_package.blueprints.size() == 2 && default_package.procedures.size() == 2);
+    assert(default_package.blueprints[0].id == "dataset-inspect-summarize");
+    assert(default_package.blueprints[1].id == "openapi-paged-retrieval");
+    {
+        common_memory_in_memory_store fallback_memory;common_plan_in_memory_store fallback_plans;
+        assert(fallback_memory.open("",error) && fallback_plans.open("",error));
+        common_agent_bootstrap_result fallback;
+        assert(common_agent_install_default_bootstrap(fallback_memory,fallback_plans,config,embed,fallback,error));
+        assert(fallback.installed_memory_ids.size()==2 && fallback.installed_blueprint_ids.size()==2);
+    }
+
+    assert(common_agent_package_to_json(default_package, package_json, error));
+    common_agent_bootstrap_package parsed_package;
+    assert(common_agent_package_parse_json(package_json, parsed_package, error));
+    assert(parsed_package.procedures.size() == default_package.procedures.size());
+    assert(parsed_package.blueprints.size() == default_package.blueprints.size());
+    auto versioned_package = default_package;
+    versioned_package.blueprints.front().source_revision = "repository-work@v3";
+    assert(common_agent_package_to_json(versioned_package, package_json, error));
+    assert(common_agent_package_parse_json(package_json, parsed_package, error));
+    assert(parsed_package.blueprints.front().source_revision == "repository-work@v3");
+    versioned_package.blueprints.front().source_revision.assign(129, 'x');
+    assert(!common_agent_package_to_json(versioned_package, package_json, error));
+    assert(common_agent_package_parse_json(R"({"schema_version":1,"name":"forward-compatible","version":"v1","procedures":[],"blueprints":[],"future_section":{"ignored":true}})", parsed_package, error));
+
+    // The import format is the portable starter-library boundary.  Keep this
+    // fixture deliberately outside the built-in package so operators can
+    // install a versioned code/data library without changing native defaults.
+    const std::string starter_package_json = R"json(
+{
+  "schema_version": 1,
+  "name": "agent-workflows-starter",
+  "version": "v1",
+  "procedures": [
+    {"id":"code-orientation-v1","summary":"code orientation","content":"Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer semantic symbol/reference diagnostics when available; otherwise use bounded repository search and reads.","importance":0.9,"confidence":1.0},
+    {"id":"verification-ladder-v1","summary":"verification ladder","content":"Verify at the narrowest authoritative level first: contract or unit test, then functional smoke, then broader affected tests. Do not claim model-backed verification unless that run completed.","importance":0.9,"confidence":1.0},
+    {"id":"data-understanding-v1","summary":"data understanding","content":"Before analysing an unfamiliar dataset, establish its identity and the fields needed by the question. Inspect schema or sample only as far as necessary; a host-trusted schema may satisfy this requirement.","importance":0.85,"confidence":1.0}
+  ],
+  "blueprints": [
+    {
+      "id":"repository-investigation-v1",
+      "source_revision":"agent-workflows-starter@v1",
+      "selection_description":"Investigate a repository question without modifying the workspace.",
+      "purpose":"Establish repository evidence before proposing a change.",
+      "goal":"Answer a repository investigation from inspected contracts, callers and tests.",
+      "success_criteria":"Relevant implementation, dependencies and evidence are identified without modifying the workspace.",
+      "required_capabilities":["tool.repository"],
+      "next_action":"orient",
+      "constraints":[{"id":"read-only","description":"Do not modify the workspace during investigation.","hard":true}],
+      "assumptions":[{"id":"workspace","statement":"A controlled repository workspace is available.","confidence":0.9}],
+      "steps":[
+        {"id":"orient","title":"Orient","objective":"Identify the relevant repository area and available evidence."},
+        {"id":"trace","title":"Trace contract","objective":"Inspect the contract, implementation, direct callers and relevant tests.","depends_on":["orient"]},
+        {"id":"establish-evidence","title":"Establish evidence","objective":"Distinguish observed behavior from unverified inference.","depends_on":["trace"]},
+        {"id":"answer","title":"Answer","objective":"Answer from the established evidence.","depends_on":["establish-evidence"]}
+      ]
+    },
+    {
+      "id":"dataset-analysis-v1",
+      "source_revision":"agent-workflows-starter@v1",
+      "selection_description":"Analyse a dataset through a host-resolved workflow and verified result.",
+      "purpose":"Answer a bounded analytical question without guessing dataset identity or tool arguments.",
+      "goal":"Analyse a resolved dataset and explain the verified result.",
+      "success_criteria":"Dataset identity, sufficient data understanding, semantic operation and result verification are established before answering.",
+      "required_capabilities":["tool.dataset","workflow.dataset"],
+      "next_action":"resolve-dataset",
+      "constraints":[{"id":"host-tool-contract","description":"Use host-resolved dataset contracts; do not invent tool names or arguments.","hard":true},{"id":"evidence-before-answer","description":"Do not present an unverified tool result as a completed answer.","hard":true}],
+      "assumptions":[{"id":"dataset-access","statement":"The host exposes an applicable dataset operation.","confidence":0.8}],
+      "steps":[
+        {"id":"resolve-dataset","title":"Resolve dataset","objective":"Resolve the dataset through host-owned resource and dataset authority."},
+        {"id":"understand-data","title":"Establish data understanding","objective":"Establish the fields needed by the question, using trusted schema or bounded inspection.","depends_on":["resolve-dataset"]},
+        {"id":"choose-operation","title":"Choose operation","objective":"Choose the smallest semantic operation that answers the question.","depends_on":["understand-data"]},
+        {"id":"execute-analysis","title":"Execute analysis","objective":"Execute the host-validated operation and retain its result as evidence.","depends_on":["choose-operation"]},
+        {"id":"verify-result","title":"Verify result","objective":"Check that the result matches the requested dataset and operation.","depends_on":["execute-analysis"]},
+        {"id":"answer","title":"Answer","objective":"Explain the verified result and its material limitations.","depends_on":["verify-result"]}
+      ]
+    }
+  ]
+}
+)json";
+    common_agent_bootstrap_package starter_package;
+    assert(common_agent_package_parse_json(starter_package_json, starter_package, error));
+    assert(starter_package.name == "agent-workflows-starter" && starter_package.version == "v1");
+    assert(starter_package.procedures.size() == 3 && starter_package.blueprints.size() == 2);
+    assert(starter_package.blueprints[1].selection_description ==
+        "Analyse a dataset through a host-resolved workflow and verified result.");
+    assert(starter_package.blueprints[1].source_revision == "agent-workflows-starter@v1");
+
+    common_memory_in_memory_store starter_memory;
+    common_plan_in_memory_store starter_plans;
+    assert(starter_memory.open("", error));
+    assert(starter_plans.open("", error));
+    common_agent_bootstrap_result starter_import;
+    assert(common_agent_install_bootstrap_package(
+        starter_memory, starter_plans, config, starter_package, embed,
+        starter_import, error));
+    assert(starter_import.installed_memory_ids.size() == 3);
+    assert(starter_import.installed_blueprint_ids.size() == 2);
+    const auto imported_dataset_blueprint = starter_plans.get(
+        "bootstrap:local:project:project-a:blueprint:dataset-analysis-v1", error);
+    assert(imported_dataset_blueprint);
+    assert(imported_dataset_blueprint->source_revision == "agent-workflows-starter@v1");
+    assert(imported_dataset_blueprint->required_capabilities.size() == 2);
+
+    common_agent_bootstrap_result starter_repeat;
+    assert(common_agent_install_bootstrap_package(
+        starter_memory, starter_plans, config, starter_package, embed,
+        starter_repeat, error));
+    assert(starter_repeat.installed_memory_ids.empty() && starter_repeat.installed_blueprint_ids.empty());
+    assert(starter_repeat.existing_memory_ids.size() == 3 && starter_repeat.existing_blueprint_ids.size() == 2);
+
+    auto changed_procedure = starter_package;
+    changed_procedure.procedures.front().content += " Changed definition.";
+    common_agent_bootstrap_result conflicting_import;
+    assert(!common_agent_install_bootstrap_package(starter_memory, starter_plans, config,
+        changed_procedure, embed, conflicting_import, error));
+    assert(error.find("procedure identity conflicts") != std::string::npos);
+    auto changed_blueprint = starter_package;
+    changed_blueprint.blueprints.front().source_revision = "different-revision";
+    assert(!common_agent_install_bootstrap_package(starter_memory, starter_plans, config,
+        changed_blueprint, embed, conflicting_import, error));
+    assert(error.find("blueprint identity conflicts") != std::string::npos);
+
+    // The checked-in package is the operator-facing import artifact. Parse and
+    // install that exact file rather than relying only on the smaller inline
+    // fixture above.
+    for (const auto * duplicate : {
+            R"({"schema_version":2,"schema_version":1})",
+            R"({"schema_version":2,"blueprints":[{"procedure_refs":["required"],"procedure_refs":["replacement"]}]})",
+            R"({"schema_version":2,"metadata":{"nested":{"x":1,"x":2}}})"}) {
+        common_agent_bootstrap_package rejected;
+        assert(!common_agent_package_parse_json(duplicate, rejected, error));
+        assert(error == "package contains a duplicate JSON object key");
+    }
+    std::ifstream starter_file(std::string(LLAMA_AGENT_SOURCE_DIR) +
+        "/docs/examples/agent-bootstrap-workflows-v1.json");
+    assert(starter_file);
+    std::stringstream starter_file_text;
+    starter_file_text << starter_file.rdbuf();
+    common_agent_bootstrap_package checked_in_starter;
+    assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
+    assert(error.empty());
+    assert(checked_in_starter.name == "agent-workflows-starter" &&
+        checked_in_starter.version == "v49");
+    const auto has_workflow = [&](const std::string & ref) {
+        return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+            [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
+    };
+    assert(has_workflow("workflow://graph/investigate") && has_workflow("workflow://graph/maintain"));
+    assert(has_workflow("workflow://research/hypothesis-inquiry"));
+    const auto hypothesis = std::find_if(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) { return workflow.definition.workflow_ref == "workflow://research/hypothesis-inquiry"; });
+    assert(hypothesis != checked_in_starter.workflows.end());
+    assert(hypothesis->definition.transitions.size() == 12);
+    for (const auto & entry : hypothesis->definition.transitions) {
+        if (entry.from_state != hypothesis->definition.start_state) continue;
+        assert(entry.optional_availability && entry.model_supplies_arguments);
+        const auto challenge = std::find_if(hypothesis->definition.transitions.begin(), hypothesis->definition.transitions.end(),
+            [&](const auto & next) { return next.from_state == entry.to_state && next.tool_name == entry.tool_name; });
+        assert(challenge != hypothesis->definition.transitions.end() && challenge->optional_availability &&
+            challenge->model_supplies_arguments && challenge->to_state == "searched");
+    }
+    assert(has_workflow("workflow://eurostat/catalog-discovery"));
+    assert(has_workflow("workflow://eurostat/metadata-resolution"));
+    assert(has_workflow("workflow://eurostat/data-retrieval"));
+    assert(has_workflow("workflow://code/overview"));
+    assert(has_workflow("workflow://code/entry-point-investigation"));
+    const auto eurostat_metadata = std::find_if(
+        checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution";
+        });
+    assert(eurostat_metadata != checked_in_starter.workflows.end());
+    const auto & metadata_definition = eurostat_metadata->definition;
+    const auto find_transition = [&](const std::string & id) {
+        return std::find_if(metadata_definition.transitions.begin(), metadata_definition.transitions.end(),
+            [&](const auto & transition) { return transition.id == id; });
+    };
+    const auto inspect_structure = find_transition("inspect-dataflow-structure");
+    const auto inspect_constraint = find_transition("inspect-content-constraint");
+    assert(inspect_structure != metadata_definition.transitions.end());
+    assert(inspect_constraint != metadata_definition.transitions.end());
+    assert(inspect_structure->tool_name == "dataset.inspect");
+    assert(inspect_constraint->tool_name == "dataset.inspect");
+    assert(inspect_structure->argument_bindings.size() == 1);
+    assert(inspect_constraint->argument_bindings.size() == 1);
+    assert(inspect_structure->argument_bindings.front().source_transition_id == "get-dataflow-structure");
+    assert(inspect_constraint->argument_bindings.front().source_transition_id == "get-content-constraint");
+    assert(metadata_definition.continuation_links.size() == 1);
+    assert(metadata_definition.continuation_links.front().source_transition_id == "inspect-content-constraint");
+    assert(metadata_definition.continuation_links.front().source_terminal_state == "metadata_materialized");
+    const auto has_procedure = [&](const std::string & id) {
+        return std::any_of(checked_in_starter.procedures.begin(), checked_in_starter.procedures.end(),
+            [&](const auto & procedure) { return procedure.id == id; });
+    };
+    assert(has_procedure("eurostat-catalog-discovery-v1"));
+    assert(has_procedure("eurostat-catalog-discovery-v2"));
+    assert(has_procedure("eurostat-sdmx-metadata-resolution-v1"));
+    assert(has_procedure("eurostat-sdmx-metadata-resolution-v2"));
+    assert(has_procedure("json-stat-dataset-interpretation-v1"));
+    assert(has_procedure("development-knowledge-gap-v1"));
+    assert(has_procedure("development-diagnosis-v1"));
+    assert(has_procedure("development-verification-authority-v1"));
+
+    for (const auto * retired : {"repository-investigation-v2","repository-change-v3","repository-change-v4",
+            "regression-repair-v3","regression-repair-v4","development-compile-diagnosis-v1","development-runtime-diagnosis-v1"}) {
+        assert(std::none_of(checked_in_starter.blueprints.begin(),checked_in_starter.blueprints.end(),
+            [&](const auto & b){return b.id==retired;}));
+    }
+    for (const auto * retired : {"workflow://repository/inspection","workflow://repository/change","workflow://development/regression-repair"}) {
+        assert(std::none_of(checked_in_starter.workflows.begin(),checked_in_starter.workflows.end(),
+            [&](const auto & w){return w.definition.workflow_ref==retired;}));
+    }
+    for (const auto * id : {"repository-change-v5","regression-repair-v5","repository-investigation-v3",
+            "development-compile-diagnosis-v2","development-runtime-diagnosis-v2"}) {
+        const auto blueprint=std::find_if(checked_in_starter.blueprints.begin(),checked_in_starter.blueprints.end(),
+            [&](const auto & item){return item.id==id;});
+        assert(blueprint!=checked_in_starter.blueprints.end() && blueprint->phase_review_required &&
+            blueprint->workflow_bindings.empty() && blueprint->supersedes_blueprints.empty() &&
+            blueprint->source_revision=="agent-workflows-starter@v49");
+        if (std::string(id)=="regression-repair-v5") assert(std::any_of(blueprint->steps.begin(),blueprint->steps.end(),
+            [](const auto & step){return step.id=="guard";}));
+    }
+
+    // Exercise the actual installer against an existing immutable blueprint.
+    // These checks must remain active independently of assert configuration.
+    const auto require_code_workflow = [](bool ok, const char * message) {
+        if (!ok) throw std::runtime_error(message);
+    };
+    common_memory_in_memory_store code_memory;
+    common_plan_in_memory_store code_plans;
+    require_code_workflow(code_memory.open("", error) && code_plans.open("", error),
+        "code workflow stores failed to open");
+    auto older_package=selection_fixture_package();
+    older_package.name="compatibility-fixture";
+    older_package.blueprints.resize(1);
+    older_package.blueprints.front().id="historical-method";
+    older_package.blueprints.front().goal="Preserved historical fixture goal";
+    common_agent_bootstrap_result older_result, code_result, code_repeat;
+    require_code_workflow(common_agent_install_bootstrap_package(code_memory, code_plans,
+        config, older_package, embed, older_result, error), "old code package install failed");
+    require_code_workflow(common_agent_install_bootstrap_package(code_memory, code_plans,
+        config, checked_in_starter, embed, code_result, error), "improved code package install failed");
+    const auto old_change = code_plans.get("bootstrap:local:project:project-a:blueprint:historical-method", error);
+    require_code_workflow(old_change && old_change->goal == "Preserved historical fixture goal",
+        "upgrade overwrote an immutable blueprint");
+    for (const auto * id : {"code-overview-v2", "code-entry-point-investigation-v2"}) {
+        const auto plan = code_plans.get(std::string("bootstrap:local:project:project-a:blueprint:") + id, error);
+        require_code_workflow(plan.has_value(), "improved code blueprint was not installed");
+        require_code_workflow(plan->source_revision == "agent-workflows-starter@v35",
+            "improved blueprint source identity is missing");
+        require_code_workflow(plan->next_action.has_value() && !plan->workflow_bindings.empty(),
+            "code phase entry or workflow binding is missing");
+        require_code_workflow(std::find(plan->procedure_refs.begin(), plan->procedure_refs.end(),
+            "code-phase-handoff-v1") != plan->procedure_refs.end(), "shared phase handoff is missing");
+    }
+    require_code_workflow(common_agent_install_bootstrap_package(code_memory, code_plans,
+        config, checked_in_starter, embed, code_repeat, error), "code package retry failed");
+    require_code_workflow(code_repeat.installed_blueprint_ids.empty() && code_repeat.installed_memory_ids.empty(),
+        "reinstall duplicated immutable code content");
+
+
+    std::ifstream investigation_file(std::string(LLAMA_AGENT_SOURCE_DIR) +
+        "/docs/examples/agent-investigation-workflows-v1.json");
+    assert(investigation_file);
+    std::stringstream investigation_file_text;
+    investigation_file_text << investigation_file.rdbuf();
+    common_agent_bootstrap_package investigation_package;
+    assert(common_agent_package_parse_json(investigation_file_text.str(), investigation_package, error));
+    require_code_workflow(investigation_package.version == "v11",
+        "investigation package revision is stale");
+    const std::vector<std::string> investigation_workflows = {
+        "workflow://investigation/identity-analysis",
+        "workflow://investigation/communication-analysis",
+        "workflow://investigation/event-chain",
+        "workflow://investigation/integration-trace",
+        "workflow://investigation/hypothesis-testing",
+        "workflow://investigation/report-composition",
+        "workflow://investigation/actor-relationship",
+        "workflow://investigation/narrative-comparison",
+        "workflow://investigation/document-provenance",
+    };
+    assert(investigation_package.workflows.size() == investigation_workflows.size());
+    assert(investigation_package.blueprints.size() == investigation_workflows.size());
+    for (const auto & workflow_ref : investigation_workflows) {
+        assert(std::any_of(investigation_package.workflows.begin(), investigation_package.workflows.end(),
+            [&](const auto & workflow) { return workflow.definition.workflow_ref == workflow_ref; }));
+    }
+    const auto investigation_report = std::find_if(investigation_package.artifact_profiles.begin(),
+        investigation_package.artifact_profiles.end(), [](const auto & profile) {
+            return profile.id == "investigation_report";
+        });
+    assert(investigation_report != investigation_package.artifact_profiles.end());
+    assert(investigation_report->sections.size() == 5);
+    for (const auto & blueprint : investigation_package.blueprints) {
+        assert(blueprint.workflow_bindings.size() == 1);
+        assert(std::find(investigation_workflows.begin(), investigation_workflows.end(),
+            blueprint.workflow_bindings.front().workflow_ref) != investigation_workflows.end());
+        assert(!blueprint.steps.empty() && !blueprint.procedure_refs.empty());
+    }
+    for (const auto & blueprint : investigation_package.blueprints) {
+        const std::string revision = blueprint.workflow_bindings.front().workflow_ref ==
+            "workflow://investigation/report-composition" ? "v12" : "v11";
+        require_code_workflow(blueprint.source_revision == "agent-investigation-workflows@" + revision &&
+            blueprint.workflow_bindings.front().workflow_revision == revision,
+            "investigation immutable identity does not match revised authority");
+        require_code_workflow(blueprint.next_action == blueprint.steps.front().id,
+            "investigation entry phase is not explicit");
+        for (size_t i = 1; i < blueprint.steps.size(); ++i) {
+            require_code_workflow(blueprint.steps[i].depends_on ==
+                std::vector<std::string>{blueprint.steps[i - 1].id},
+                "investigation phase can precede its evidence producer");
+        }
+        require_code_workflow(std::find(blueprint.procedure_refs.begin(), blueprint.procedure_refs.end(),
+            "investigation-phase-handoff-v5") != blueprint.procedure_refs.end(),
+            "investigation source preparation handoff is missing");
+    }
+    common_memory_in_memory_store investigation_memory;
+    common_plan_in_memory_store investigation_plans;
+    assert(investigation_memory.open("", error) && investigation_plans.open("", error));
+    common_agent_bootstrap_result investigation_installed;
+    assert(common_agent_install_bootstrap_package(investigation_memory, investigation_plans,
+        config, investigation_package,
+        [](const std::string &, std::vector<float> & embedding, std::string & e) {
+            embedding = {1.0f, 0.0f}; e.clear(); return true;
+        }, investigation_installed, error));
+    assert(investigation_installed.installed_workflow_ids.size() == investigation_workflows.size());
+    assert(investigation_installed.installed_blueprint_ids.size() == investigation_workflows.size());
+    std::string checked_in_roundtrip_json;
+    assert(common_agent_package_to_json(checked_in_starter,
+        checked_in_roundtrip_json, error, false));
+    auto downgraded = nlohmann::ordered_json::parse(checked_in_roundtrip_json);
+    assert(downgraded["schema_version"] == 2);
+    downgraded["schema_version"] = 1;
+    common_agent_bootstrap_package unsupported_grounding;
+    assert(!common_agent_package_parse_json(downgraded.dump(), unsupported_grounding, error));
+    common_agent_bootstrap_package checked_in_roundtrip;
+    assert(common_agent_package_parse_json(checked_in_roundtrip_json,
+        checked_in_roundtrip, error));
+    const auto roundtrip_full_text_workflow = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref ==
+                "workflow://openalex/full-text-evidence";
+        });
+    assert(roundtrip_full_text_workflow != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_full_text_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::chunked);
+    assert(roundtrip_full_text_workflow->definition.workflow_revision == "v7");
+    const auto roundtrip_eurostat_metadata = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution";
+        });
+    assert(roundtrip_eurostat_metadata != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_eurostat_metadata->definition.workflow_revision == "v9");
+    assert(roundtrip_eurostat_metadata->definition.transitions.size() == metadata_definition.transitions.size());
+    assert(roundtrip_full_text_workflow->definition.transitions[1].choices.size() == 3);
+    assert(roundtrip_full_text_workflow->definition.transitions[2].argument_bindings.size() == 1);
+    assert(roundtrip_full_text_workflow->definition.transitions[2].failure_terminal_state == "full_text_unavailable");
+    assert((roundtrip_full_text_workflow->definition.transitions[2].handled_http_statuses == std::vector<int>{401, 403, 404, 410}));
+    assert(roundtrip_full_text_workflow->definition.continuation_links.size() == 1);
+    const auto & retry_full_text = roundtrip_full_text_workflow->definition.continuation_links.front();
+    assert(!retry_full_text.optional && retry_full_text.source_transition_id.empty() &&
+        retry_full_text.source_terminal_state == "full_text_unavailable" &&
+        retry_full_text.target_workflow_revision == "v7" && retry_full_text.max_uses == 1 && retry_full_text.argument_bindings.size() == 1 &&
+        retry_full_text.argument_bindings.front().source_json_pointer ==
+            "/handoff/value/result/host_item_candidates");
+    const auto roundtrip_eurostat_catalog = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
+        });
+    assert(roundtrip_eurostat_catalog != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_eurostat_catalog->definition.workflow_revision == "v7");
+    assert(roundtrip_eurostat_catalog->definition.transitions.size() == 3);
+    assert(roundtrip_eurostat_catalog->definition.transitions[1].argument_bindings.size() == 1);
+    assert(roundtrip_eurostat_catalog->definition.transitions[2].tool_name == "dataset.schema");
+    assert(roundtrip_eurostat_catalog->definition.transitions[2].argument_bindings.size() == 1);
+    assert(roundtrip_eurostat_catalog->definition.continuation_links.front().target_workflow_revision == "v9");
+    const auto roundtrip_eurostat_data = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/data-retrieval";
+        });
+    assert(roundtrip_eurostat_data != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_eurostat_data->definition.workflow_revision == "v8");
+    assert(roundtrip_eurostat_data->definition.preferred_thinking_mode == "deliberate");
+    assert(roundtrip_eurostat_data->definition.require_declared_claims);
+    assert(roundtrip_eurostat_data->definition.verification_checks.size() == 6);
+    assert(roundtrip_eurostat_data->definition.transitions.size() == 2);
+    assert(roundtrip_eurostat_data->definition.transitions[0].id == "request-observations");
+    assert(roundtrip_eurostat_data->definition.transitions[0].model_supplies_arguments);
+    assert(roundtrip_eurostat_data->definition.transitions[1].argument_bindings.front().source_transition_id ==
+        "request-observations");
+    assert(roundtrip_eurostat_data->definition.continuation_workflow_targets.empty());
+    assert(roundtrip_eurostat_data->definition.continuation_links.size() == 3);
+    assert(std::all_of(roundtrip_eurostat_data->definition.continuation_links.begin(),
+        roundtrip_eurostat_data->definition.continuation_links.end(), [](const auto & link) {
+            return link.source_transition_id == "materialize-json-stat" &&
+                link.source_terminal_state == "json_stat_dataset_ready" &&
+                !link.target_workflow_revision.empty();
+        }));
+    const auto roundtrip_search_workflow = std::find_if(
+        checked_in_roundtrip.workflows.begin(), checked_in_roundtrip.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://openalex/work-search";
+        });
+    assert(roundtrip_search_workflow != checked_in_roundtrip.workflows.end());
+    assert(roundtrip_search_workflow->definition.transitions.front().max_pages == 0);
+    auto over_budget_package_json = nlohmann::ordered_json::parse(starter_file_text.str());
+    auto & workflows_json = over_budget_package_json["workflows"];
+    auto search_json = std::find_if(workflows_json.begin(), workflows_json.end(), [](const auto & workflow) {
+        return workflow.value("workflow_ref", std::string{}) == "workflow://openalex/work-search";
+    });
+    assert(search_json != workflows_json.end() && !(*search_json)["transitions"].empty());
+    (*search_json)["transitions"][0]["max_pages"] = 6;
+    common_agent_bootstrap_package over_budget_package;
+    assert(!common_agent_package_parse_json(
+        over_budget_package_json.dump(), over_budget_package, error));
+    // Reject out-of-range integers before narrowing; 2^32 + 5 must not
+    // wrap to an apparently valid five-page limit.
+    (*search_json)["transitions"][0]["max_pages"] = uint64_t(4294967301ULL);
+    assert(!common_agent_package_parse_json(
+        over_budget_package_json.dump(), over_budget_package, error));
+    assert(checked_in_starter.procedures.size() == 36 &&
+        checked_in_starter.blueprints.size() == 27);
+    assert(checked_in_starter.workflows.size() == 20);
+    const auto code_overview_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+        checked_in_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "code-overview-v2";
+        });
+    assert(code_overview_blueprint != checked_in_starter.blueprints.end() &&
+        code_overview_blueprint->workflow_bindings.size() == 1 &&
+        code_overview_blueprint->workflow_bindings.front().workflow_ref == "workflow://code/overview");
+    assert(code_overview_blueprint->procedure_refs == std::vector<std::string>({
+        "code-orientation-v1", "development-source-evidence-v1", "verification-ladder-v1",
+        "code-analysis-evidence-v1", "code-phase-handoff-v1"}));
+    const auto code_entry_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+        checked_in_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "code-entry-point-investigation-v2";
+        });
+    assert(code_entry_blueprint != checked_in_starter.blueprints.end() &&
+        code_entry_blueprint->workflow_bindings.size() == 1 &&
+        code_entry_blueprint->workflow_bindings.front().workflow_ref == "workflow://code/entry-point-investigation");
+    const auto dataset_analysis_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://dataset/analysis";
+        });
+    assert(dataset_analysis_workflow != checked_in_starter.workflows.end());
+    assert(dataset_analysis_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"dataset.resolve", "dataset.inspect", "data.query",
+            "data.filter", "data.aggregate", "data.transform", "statistics.describe",
+            "statistics.outliers", "statistics.value_counts"}));
+    assert(dataset_analysis_workflow->definition.workflow_revision == "v4");
+    assert(dataset_analysis_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::single_range);
+    assert(checked_in_starter.workflows[0].definition.optional_capabilities ==
+        std::vector<std::string>({"artifact.export"}));
+    const auto checked_in_openalex_full_text_workflow = std::find_if(
+        checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref ==
+                "workflow://openalex/full-text-evidence";
+        });
+    assert(checked_in_openalex_full_text_workflow != checked_in_starter.workflows.end());
+    assert(checked_in_openalex_full_text_workflow->definition.preferred_thinking_mode == "research");
+    assert(std::find(checked_in_openalex_full_text_workflow->definition.optional_capabilities.begin(),
+        checked_in_openalex_full_text_workflow->definition.optional_capabilities.end(), "web.search") !=
+        checked_in_openalex_full_text_workflow->definition.optional_capabilities.end());
+    assert(checked_in_openalex_full_text_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"openapi.read", "web.fetch", "resource.inspect", "resource.read"}));
+    assert(checked_in_openalex_full_text_workflow->definition.required_context ==
+        std::vector<std::string>({"context.openapi.available", "context.network.allowed"}));
+    assert(checked_in_openalex_full_text_workflow->definition.start_state == "identifier_pending");
+    assert(checked_in_openalex_full_text_workflow->definition.transitions.size() == 5);
+    const auto depth_choice = std::find_if(
+        checked_in_openalex_full_text_workflow->definition.transitions.begin(),
+        checked_in_openalex_full_text_workflow->definition.transitions.end(),
+        [](const auto & transition) { return transition.id == "choose-evidence-depth"; });
+    assert(depth_choice != checked_in_openalex_full_text_workflow->definition.transitions.end());
+    assert(depth_choice->choices.size() == 3 &&
+        depth_choice->choices[0].id == "answer_from_abstract" &&
+        depth_choice->choices[1].id == "fetch_full_text" &&
+        depth_choice->choices[1].required_observation_json_pointers ==
+            std::vector<std::string>({"/result/full_text_url"}));
+    assert(depth_choice->choices[2].id == "try_another_candidate" &&
+        depth_choice->choices[2].to_state == "full_text_unavailable");
+    const auto fetch_transition = std::find_if(
+        checked_in_openalex_full_text_workflow->definition.transitions.begin(),
+        checked_in_openalex_full_text_workflow->definition.transitions.end(),
+        [](const auto & transition) { return transition.id == "fetch-full-text"; });
+    assert(fetch_transition != checked_in_openalex_full_text_workflow->definition.transitions.end());
+    assert(fetch_transition->argument_bindings.size() == 1 &&
+        fetch_transition->argument_bindings.front().source_transition_id == "get-work" &&
+        fetch_transition->argument_bindings.front().target_json_pointer == "/url" &&
+        fetch_transition->argument_bindings.front().source_json_pointer ==
+            "/result/full_text_url");
+    const auto checked_in_openalex_entity_workflow = std::find_if(
+        checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) {
+            return workflow.definition.workflow_ref ==
+                "workflow://openalex/entity-filtered-work-search";
+        });
+    assert(checked_in_openalex_entity_workflow != checked_in_starter.workflows.end());
+    assert(checked_in_openalex_entity_workflow->definition.start_state == "entity_pending");
+    assert(checked_in_openalex_entity_workflow->definition.terminal_states ==
+        std::vector<std::string>({"works_retrieved"}));
+    assert(std::any_of(checked_in_openalex_entity_workflow->definition.transitions.begin(),
+        checked_in_openalex_entity_workflow->definition.transitions.end(), [](const auto & transition) {
+            return transition.id == "choose-author" &&
+                transition.kind == common_plan_workflow_transition_kind::model_choice &&
+                transition.candidate_json_pointer == "/results";
+        }));
+    auto invalid_verification_tool_package = checked_in_starter;
+    const auto analysis_workflow = std::find_if(invalid_verification_tool_package.workflows.begin(),
+        invalid_verification_tool_package.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://dataset/analysis";
+        });
+    assert(analysis_workflow != invalid_verification_tool_package.workflows.end());
+    assert(!analysis_workflow->definition.verification_checks.empty());
+    analysis_workflow->definition.verification_checks.front().tool_name = "unregistered.operation";
+    assert(!common_agent_package_to_json(invalid_verification_tool_package, package_json, error));
+    assert(error.find("unavailable tool transition") != std::string::npos);
+    auto invalid_result_package = checked_in_starter;
+    const auto result_workflow = std::find_if(invalid_result_package.workflows.begin(), invalid_result_package.workflows.end(),
+        [](const auto & workflow) { return workflow.definition.workflow_ref == "workflow://dataset/analysis"; });
+    if (result_workflow == invalid_result_package.workflows.end() ||
+            result_workflow->definition.result_contracts.at("statistics.describe") != "statistics.describe.v1")
+        throw std::runtime_error("dataset workflow lost its declared result profile");
+    result_workflow->definition.result_contracts["statistics.describe"] = "unsupported.v1";
+    if (common_agent_package_to_json(invalid_result_package, package_json, error))
+        throw std::runtime_error("unsupported result profile was accepted");
+    auto invalid_graph_package = checked_in_starter;
+    auto & invalid_definition = invalid_graph_package.workflows.back().definition;
+    invalid_definition.start_state = "loop-a";
+    invalid_definition.terminal_states = {"finished"};
+    invalid_definition.transitions = {
+        {"loop", "loop-a", "loop-b", common_plan_workflow_transition_kind::tool,
+            "openalex.listWorks", "{}", {}, 1.0f},
+        {"loop-back", "loop-b", "loop-a", common_plan_workflow_transition_kind::tool,
+            "openalex.listWorks", "{}", {}, 1.0f},
+    };
+    assert(!common_agent_package_to_json(invalid_graph_package, package_json, error));
+    assert(error.find("terminal path") != std::string::npos);
+    for (const auto & workflow : checked_in_starter.workflows) {
+        if (workflow.definition.family == "dataset" ||
+                workflow.definition.family == "resource" ||
+                workflow.definition.family == "web") {
+            assert(std::find(workflow.definition.optional_capabilities.begin(),
+                workflow.definition.optional_capabilities.end(), "artifact.export") !=
+                workflow.definition.optional_capabilities.end());
+        }
+    }
+    const auto resource_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://resource/document-analysis";
+        });
+    assert(resource_workflow != checked_in_starter.workflows.end());
+    assert(resource_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"resource.read"}));
+    assert(resource_workflow->definition.optional_capabilities ==
+        std::vector<std::string>({"resource.inspect", "document.inspect", "dataset.inspect", "artifact.export"}));
+    assert(resource_workflow->definition.workflow_revision == "v7");
+    assert(resource_workflow->definition.continuation_workflow_targets ==
+        std::vector<std::string>{});
+    assert(resource_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::chunked);
+    const auto eurostat_catalog_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
+        });
+    assert(eurostat_catalog_workflow != checked_in_starter.workflows.end());
+    assert(eurostat_catalog_workflow->definition.workflow_revision == "v7");
+    assert(eurostat_catalog_workflow->definition.continuation_links.size() == 1);
+    assert(eurostat_catalog_workflow->definition.continuation_links.front().source_transition_id == "inspect-toc-schema");
+    assert(eurostat_catalog_workflow->definition.continuation_links.front().source_terminal_state == "catalog_schema_ready");
+    assert(eurostat_catalog_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"web.fetch", "dataset.inspect", "dataset.schema", "dataset.sample"}));
+    assert(eurostat_catalog_workflow->definition.continuation_links.front().target_workflow_ref ==
+        "workflow://eurostat/metadata-resolution");
+    assert(eurostat_catalog_workflow->definition.continuation_links.front().argument_bindings.front().source_json_pointer ==
+        "/result/dataset");
+    const auto eurostat_metadata_workflow = std::find_if(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
+        [](const auto & workflow) { return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution"; });
+    assert(eurostat_metadata_workflow != checked_in_starter.workflows.end());
+    assert(eurostat_metadata_workflow->definition.workflow_revision == "v9");
+    assert(eurostat_metadata_workflow->definition.transitions.size() == 6);
+    assert(eurostat_metadata_workflow->definition.transitions[0].id == "search-catalogue");
+    assert(eurostat_metadata_workflow->definition.transitions[0].model_supplies_arguments);
+    assert(eurostat_metadata_workflow->definition.transitions[0].tool_name == "data.query");
+    assert(!eurostat_metadata_workflow->definition.transitions[0].model_instruction.empty());
+    assert(!eurostat_metadata_workflow->definition.transitions[1].model_instruction.empty());
+    const auto eurostat_catalog_query_arguments = nlohmann::ordered_json::parse(
+        eurostat_metadata_workflow->definition.transitions[0].arguments_template_json);
+    assert(eurostat_catalog_query_arguments.value("max_result_rows", 0) == 64);
+    assert(!eurostat_catalog_query_arguments.contains("max_scan_rows"));
+    assert(eurostat_metadata_workflow->definition.transitions[1].candidate_json_pointer == "/result/rows");
+    assert(eurostat_metadata_workflow->definition.transitions[1].candidate_id_json_pointer == "/code");
+    assert(eurostat_metadata_workflow->definition.transitions[2].id == "get-dataflow-structure");
+    assert(eurostat_metadata_workflow->definition.transitions[2].to_state == "dataflow_structure_resource");
+    assert(eurostat_metadata_workflow->definition.transitions[3].id == "inspect-dataflow-structure");
+    assert(eurostat_metadata_workflow->definition.transitions[3].tool_name == "dataset.inspect");
+    assert(eurostat_metadata_workflow->definition.transitions[4].id == "get-content-constraint");
+    assert(eurostat_metadata_workflow->definition.transitions[4].tool_name == "eurostat_sdmx.getStructure");
+    const auto eurostat_constraint_arguments = nlohmann::ordered_json::parse(
+        eurostat_metadata_workflow->definition.transitions[4].arguments_template_json);
+    assert(eurostat_constraint_arguments.value("artifactType", std::string{}) == "contentconstraint");
+    assert(eurostat_constraint_arguments.value("version", std::string{}) == "1.0");
+    assert(eurostat_metadata_workflow->definition.continuation_links.front().source_transition_id == "inspect-content-constraint");
+    assert(eurostat_metadata_workflow->definition.continuation_links.front().argument_bindings.front().source_transition_id == "choose-dataflow");
+    const auto eurostat_data_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/data-retrieval";
+        });
+    assert(eurostat_data_workflow != checked_in_starter.workflows.end());
+    assert(eurostat_data_workflow->definition.continuation_workflow_targets.empty());
+    assert(eurostat_data_workflow->definition.continuation_links.size() == 3);
+    assert(std::all_of(eurostat_data_workflow->definition.continuation_links.begin(),
+        eurostat_data_workflow->definition.continuation_links.end(), [](const auto & link) {
+            return link.source_transition_id == "materialize-json-stat" &&
+                link.source_terminal_state == "json_stat_dataset_ready";
+        }));
+    const auto eurostat_structure_transition = std::find_if(
+        eurostat_metadata_workflow->definition.transitions.begin(), eurostat_metadata_workflow->definition.transitions.end(),
+        [](const auto & transition) { return transition.id == "get-dataflow-structure"; });
+    assert(eurostat_structure_transition != eurostat_metadata_workflow->definition.transitions.end());
+    const auto eurostat_structure_arguments = nlohmann::ordered_json::parse(
+        eurostat_structure_transition->arguments_template_json);
+    assert(eurostat_structure_arguments.value("version", std::string{}) == "1.0");
+    assert(eurostat_structure_arguments.value("references", std::string{}) == "children");
+    assert(eurostat_structure_arguments.value("detail", std::string{}) == "full");
+    assert(!eurostat_structure_arguments.contains("lang"));
+    const auto web_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://web/research";
+        });
+    assert(web_workflow != checked_in_starter.workflows.end());
+    assert(web_workflow->definition.workflow_revision == "v5");
+    assert(web_workflow->definition.preferred_thinking_mode == "research");
+    assert(web_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::chunked);
+    assert(web_workflow->definition.optional_capabilities ==
+        std::vector<std::string>({"resource.read", "dataset.inspect", "artifact.export"}));
+    assert(web_workflow->definition.continuation_workflow_targets ==
+        std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
+    const auto openapi_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://openapi/resource-onboarding";
+        });
+    assert(openapi_workflow != checked_in_starter.workflows.end());
+    assert(openapi_workflow->definition.family == "openapi");
+    assert(openapi_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"web.fetch", "openapi.connect"}));
+    assert(openapi_workflow->definition.optional_capabilities ==
+        std::vector<std::string>({"web.search", "openapi.read", "artifact.export"}));
+    const auto openapi_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+        checked_in_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "openapi-resource-onboarding-v1";
+        });
+    assert(openapi_blueprint != checked_in_starter.blueprints.end());
+    assert(openapi_blueprint->source_revision == "agent-workflows-starter@v4");
+    assert(openapi_blueprint->procedure_refs ==
+        std::vector<std::string>({"openapi-resource-onboarding-v1", "analysis-evidence-v1"}));
+    const auto openalex_search_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://openalex/work-search";
+        });
+    assert(openalex_search_workflow != checked_in_starter.workflows.end());
+    assert(openalex_search_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"openapi.read"}));
+    assert(openalex_search_workflow->definition.optional_capabilities ==
+        std::vector<std::string>({"resource.read", "artifact.export"}));
+    assert(openalex_search_workflow->definition.required_context ==
+        std::vector<std::string>({"context.openapi.available"}));
+    assert(openalex_search_workflow->definition.workflow_revision == "v7");
+    assert(openalex_search_workflow->definition.continuation_links.size() == 1);
+    const auto & deep_link = openalex_search_workflow->definition.continuation_links.front();
+    assert(deep_link.optional && deep_link.target_workflow_ref == "workflow://openalex/full-text-evidence");
+    assert(deep_link.argument_bindings.size() == 1 &&
+        deep_link.argument_bindings.front().source_json_pointer == "/result/host_item_candidates" &&
+        deep_link.argument_bindings.front().candidate_id_json_pointer == "/id" &&
+        deep_link.argument_bindings.front().target_json_pointer == "/id");
+    assert(openalex_search_workflow->definition.resource_read_policy ==
+        common_plan_workflow_resource_read_policy::chunked);
+    assert(openalex_search_workflow->definition.transitions.size() == 1 &&
+        openalex_search_workflow->definition.transitions.front().max_pages == 0);
+    assert(openalex_search_workflow->definition.continuation_workflow_targets ==
+        std::vector<std::string>({"workflow://dataset/analysis", "workflow://dataset/quality", "workflow://dataset/join"}));
+    const auto openalex_search_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+        checked_in_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "openalex-work-search-v4";
+        });
+    assert(openalex_search_blueprint != checked_in_starter.blueprints.end());
+    assert(openalex_search_blueprint->workflow_policy == common_plan_workflow_policy::required);
+    assert(openalex_search_blueprint->procedure_refs ==
+        std::vector<std::string>({"scholarly-search-evidence-v1", "analysis-evidence-v1"}));
+    const auto openalex_full_text_blueprint = std::find_if(
+        checked_in_starter.blueprints.begin(), checked_in_starter.blueprints.end(),
+        [](const auto & blueprint) { return blueprint.id == "openalex-full-text-evidence-v2"; });
+    assert(openalex_full_text_blueprint != checked_in_starter.blueprints.end());
+    assert(openalex_full_text_blueprint->workflow_policy == common_plan_workflow_policy::required);
+    assert(openalex_full_text_blueprint->procedure_refs ==
+        std::vector<std::string>({"bibliographic-record-validation-v1",
+            "openalex-full-text-evidence-v1", "analysis-evidence-v1"}));
+    const auto openalex_entity_workflow = std::find_if(checked_in_starter.workflows.begin(),
+        checked_in_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref ==
+                "workflow://openalex/entity-filtered-work-search";
+        });
+    assert(openalex_entity_workflow != checked_in_starter.workflows.end());
+    assert(openalex_entity_workflow->definition.workflow_revision == "v2");
+    assert(openalex_entity_workflow->definition.required_capabilities ==
+        std::vector<std::string>({"openapi.read"}));
+    assert(openalex_entity_workflow->definition.required_context ==
+        std::vector<std::string>({"context.openapi.available"}));
+    const auto openalex_entity_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+        checked_in_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "openalex-entity-filtered-work-search-v2";
+        });
+    assert(openalex_entity_blueprint != checked_in_starter.blueprints.end());
+    assert(openalex_entity_blueprint->workflow_policy ==
+        common_plan_workflow_policy::required);
+    assert(openalex_entity_blueprint->procedure_refs ==
+        std::vector<std::string>({"openalex-entity-resolution-v1",
+            "openalex-filtered-work-retrieval-v1", "analysis-evidence-v1"}));
+    assert(checked_in_starter.workflows[0].definition.required_context ==
+        std::vector<std::string>({"context.dataset.available"}));
+    const auto checked_in_dataset_blueprint = std::find_if(checked_in_starter.blueprints.begin(),
+        checked_in_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "dataset-analysis-v2";
+        });
+    assert(checked_in_dataset_blueprint != checked_in_starter.blueprints.end());
+    assert(checked_in_dataset_blueprint->workflow_bindings.size() == 3);
+    assert(checked_in_dataset_blueprint->source_revision ==
+        "agent-workflows-starter@v37");
+
+    common_memory_in_memory_store checked_in_memory;
+    common_plan_in_memory_store checked_in_plans;
+    assert(checked_in_memory.open("", error));
+    assert(checked_in_plans.open("", error));
+    common_agent_bootstrap_result checked_in_import;
+    assert(common_agent_install_bootstrap_package(
+        checked_in_memory, checked_in_plans, config, checked_in_starter, embed,
+        checked_in_import, error));
+    assert(checked_in_import.installed_memory_ids.size() == checked_in_starter.procedures.size());
+    assert(checked_in_import.rejected_items.empty());
+    assert(checked_in_import.installed_blueprint_ids.size() == checked_in_starter.blueprints.size());
+    assert(std::find(checked_in_import.installed_blueprint_ids.begin(),
+        checked_in_import.installed_blueprint_ids.end(),
+        "bootstrap:local:project:project-a:blueprint:code-overview-v2") !=
+            checked_in_import.installed_blueprint_ids.end());
+    assert(std::find(checked_in_import.installed_blueprint_ids.begin(),
+        checked_in_import.installed_blueprint_ids.end(),
+        "bootstrap:local:project:project-a:blueprint:code-entry-point-investigation-v2") !=
+            checked_in_import.installed_blueprint_ids.end());
+    assert(checked_in_import.installed_workflow_ids.size() == checked_in_starter.workflows.size());
+    assert(std::find(checked_in_import.installed_workflow_ids.begin(),
+        checked_in_import.installed_workflow_ids.end(),
+        "bootstrap:local:project:project-a:workflow:code-overview-path-v1") !=
+            checked_in_import.installed_workflow_ids.end());
+    assert(std::find(checked_in_import.installed_workflow_ids.begin(),
+        checked_in_import.installed_workflow_ids.end(),
+        "bootstrap:local:project:project-a:workflow:code-entry-point-investigation-path-v1") !=
+            checked_in_import.installed_workflow_ids.end());
+    const auto checked_in_openapi_blueprint = checked_in_plans.get(
+        "bootstrap:local:project:project-a:blueprint:openapi-resource-onboarding-v1", error);
+    assert(checked_in_openapi_blueprint &&
+        checked_in_openapi_blueprint->workflow_policy == common_plan_workflow_policy::preferred &&
+        checked_in_openapi_blueprint->workflow_bindings.size() == 1 &&
+        checked_in_openapi_blueprint->workflow_bindings.front().workflow_ref ==
+            "workflow://openapi/resource-onboarding");
+    const auto checked_in_dataset = checked_in_plans.get(
+        "bootstrap:local:project:project-a:blueprint:dataset-analysis-v2", error);
+    assert(checked_in_dataset &&
+        checked_in_dataset->source_revision == "agent-workflows-starter@v37");
+    assert(checked_in_dataset->selection_description ==
+        "Analyse a dataset through a host-resolved workflow and verified result.");
+    assert(checked_in_dataset->workflow_bindings.size() == 3);
+    const auto checked_in_workflow = checked_in_plans.get(
+        "bootstrap:local:project:project-a:workflow:dataset-analysis-path-v4", error);
+    assert(checked_in_workflow && checked_in_workflow->kind == common_plan_kind::workflow &&
+        checked_in_workflow->workflow_definition &&
+        checked_in_workflow->workflow_definition->workflow_revision == "v4" &&
+        checked_in_workflow->workflow_definition->required_capabilities ==
+            checked_in_starter.workflows[0].definition.required_capabilities &&
+        checked_in_workflow->workflow_definition->optional_capabilities ==
+            checked_in_starter.workflows[0].definition.optional_capabilities &&
+        checked_in_workflow->workflow_definition->required_context ==
+            checked_in_starter.workflows[0].definition.required_context);
+    std::string checked_in_round_trip;
+    assert(common_agent_package_to_json(checked_in_starter, checked_in_round_trip, error));
+    common_agent_bootstrap_package reparsed_starter;
+    assert(common_agent_package_parse_json(checked_in_round_trip, reparsed_starter, error));
+    const auto reparsed_dataset_blueprint = std::find_if(reparsed_starter.blueprints.begin(),
+        reparsed_starter.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "dataset-analysis-v2";
+        });
+    assert(reparsed_dataset_blueprint != reparsed_starter.blueprints.end() &&
+        reparsed_dataset_blueprint->selection_description ==
+            checked_in_dataset_blueprint->selection_description);
+    const auto reparsed_eurostat_link_source = std::find_if(
+        reparsed_starter.workflows.begin(), reparsed_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/catalog-discovery";
+        });
+    assert(reparsed_eurostat_link_source != reparsed_starter.workflows.end() &&
+        reparsed_eurostat_link_source->definition.continuation_links.size() == 1 &&
+        reparsed_eurostat_link_source->definition.continuation_links.front().source_transition_id == "inspect-toc-schema" &&
+        reparsed_eurostat_link_source->definition.continuation_links.front().source_terminal_state == "catalog_schema_ready");
+    const auto reparsed_eurostat_metadata = std::find_if(
+        reparsed_starter.workflows.begin(), reparsed_starter.workflows.end(), [](const auto & workflow) {
+            return workflow.definition.workflow_ref == "workflow://eurostat/metadata-resolution";
+        });
+    assert(reparsed_eurostat_metadata != reparsed_starter.workflows.end() &&
+        reparsed_eurostat_metadata->definition.transitions.front().model_instruction ==
+            eurostat_metadata_workflow->definition.transitions.front().model_instruction);
+    assert(reparsed_starter.workflows.size() == 20 &&
+        reparsed_dataset_blueprint->workflow_bindings.size() == 3 &&
+        reparsed_starter.workflows[0].definition.required_capabilities ==
+            checked_in_starter.workflows[0].definition.required_capabilities &&
+        reparsed_starter.workflows[5].definition.optional_capabilities ==
+            checked_in_starter.workflows[5].definition.optional_capabilities &&
+        reparsed_starter.workflows[0].definition.required_context ==
+            checked_in_starter.workflows[0].definition.required_context);
+
+    auto partial_package = checked_in_starter;
+    const auto partial_dataset_blueprint = std::find_if(partial_package.blueprints.begin(),
+        partial_package.blueprints.end(), [](const auto & blueprint) {
+            return blueprint.id == "dataset-analysis-v2";
+        });
+    assert(partial_dataset_blueprint != partial_package.blueprints.end());
+    partial_dataset_blueprint->workflow_bindings.push_back({"workflow://missing", "v1"});
+    common_memory_in_memory_store partial_memory;
+    common_plan_in_memory_store partial_plans;
+    assert(partial_memory.open("", error));
+    assert(partial_plans.open("", error));
+    common_agent_bootstrap_result partial_import;
+    assert(common_agent_install_bootstrap_package(
+        partial_memory, partial_plans, config, partial_package, embed,
+        partial_import, error));
+    assert(partial_import.installed_blueprint_ids.size() + 1 ==
+        checked_in_import.installed_blueprint_ids.size() &&
+        partial_import.rejected_items.size() == 1 &&
+        partial_import.rejected_items.front().id == "dataset-analysis-v2");
+
+    fixed_selector selector;
+    common_blueprint_selection_config selection_config;
+    selection_config.task_plan_id = "selected-instance";
+    selection_config.session_id = config.session_id;
+    selection_config.scope = common_plan_scope::project;
+    selection_config.now = 44;
+    common_blueprint_selection_result selection_result;
+    common_agent_request selection_request;
+    selection_request.namespace_id = config.namespace_id;
+    selection_request.session_id = config.session_id;
+    selection_request.project_id = config.project_id;
+    auto task_selection_request = selection_request;
+    task_selection_request.prompt = "Report the measured shielding effect for the requested article.";
+    assert(common_agent_select_and_instantiate_blueprint(plans, task_selection_request, selector,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work",
+          "Safely modify the repository.", "Implement the requested change.", "The change is verified.",
+          {{"scope", "Keep the change bounded.", true}},
+          {{"workspace", "A controlled workspace is available.", 0.9f, true, {}}},
+          {"inspect affected code", "run focused tests"}}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated && selector.calls == 1);
+    assert(selector.seen.size() == 1 && selector.seen.front().purpose == "Safely modify the repository.");
+    assert(selector.seen.front().constraints.size() == 1 && selector.seen.front().assumptions.size() == 1);
+    assert(selector.seen.front().contributions.size() == 2);
+    const auto selected_instance = plans.get(selection_config.task_plan_id, error);
+    assert(selected_instance && selected_instance->goal == task_selection_request.prompt);
+    assert(selected_instance->purpose == task_selection_request.prompt);
+    assert(selected_instance->success_criteria.find("Answer the caller's specific request directly.") != std::string::npos);
+    assert(selected_instance->success_criteria.find("blueprint method:") != std::string::npos);
+    assert(selected_instance->success_criteria.find("The requested change is implemented") != std::string::npos);
+    selection_config.task_plan_id = "selected-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector, {}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
+    const auto resumed_instance = plans.get(selection_config.task_plan_id, error);
+    assert(resumed_instance && resumed_instance->namespace_id == config.namespace_id && resumed_instance->project_id == config.project_id);
+    assert(common_plan_scope_matches(*resumed_instance, common_plan_scope::project,
+        config.namespace_id, config.session_id, config.project_id, {}));
+
+    // A host may opt a selected dataset blueprint into the bounded A* backend
+    // before persistence. The callback receives host-owned task data, verifies
+    // the proposal, and returns an ordinary task plan; no second plan store or
+    // runtime path is introduced.
+    common_explicit_blueprint_selector dataset_selector("dataset-inspect-summarize");
+    common_blueprint_selection_config dataset_selection_config;
+    dataset_selection_config.task_plan_id = "dataset-astar-instance";
+    dataset_selection_config.session_id = config.session_id;
+    dataset_selection_config.scope = common_plan_scope::project;
+    dataset_selection_config.now = 45;
+    dataset_selection_config.materialize_instance =
+        [](const common_agent_request &, const common_plan_state & instance,
+                common_plan_state & materialized, std::string & materialization_error) {
+            materialization_error.clear();
+            if (!instance.derived_from_plan_id ||
+                    instance.derived_from_plan_id->find("dataset-inspect-summarize") == std::string::npos) {
+                return common_blueprint_materialization_outcome::not_applicable;
+            }
+            materialized = instance;
+            materialized.steps.clear();
+            common_plan_step select;
+            select.id = instance.id + ":host:select";
+            select.title = "Select dataset";
+            select.objective = "Select the host-resolved dataset.";
+            select.mode = common_plan_step_mode::tool;
+            select.status = common_plan_step_status::active;
+            select.selected_tool = "dataset.select";
+            select.tool_call = common_plan_tool_call{"dataset.select", R"({"dataset":"dataset://local/sales"})"};
+            common_plan_step answer;
+            answer.id = instance.id + ":host:answer";
+            answer.title = "Answer";
+            answer.objective = instance.goal;
+            answer.mode = common_plan_step_mode::final_response;
+            answer.depends_on = {select.id};
+            materialized.steps = {select, answer};
+            materialized.active_step_id = select.id;
+            materialized.next_action = select.id;
+            materialized.status = common_plan_status::active;
+            return common_blueprint_materialization_outcome::applied;
+        };
+    dataset_selection_config.task_plan_id = "dataset-astar-instance";
+    assert(common_agent_select_and_instantiate_blueprint(
+        plans, selection_request, dataset_selector,
+        {{"dataset-inspect-summarize", first.installed_blueprint_ids[2], "dataset workflow"}},
+        dataset_selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
+    const auto dataset_instance = plans.get(dataset_selection_config.task_plan_id, error);
+    assert(dataset_instance && dataset_instance->steps.size() == 2);
+    assert(dataset_instance->steps[0].selected_tool &&
+        *dataset_instance->steps[0].selected_tool == "dataset.select");
+    assert(dataset_instance->steps[1].mode == common_plan_step_mode::final_response);
+    assert(dataset_instance->derived_from_plan_id &&
+        *dataset_instance->derived_from_plan_id == first.installed_blueprint_ids[2]);
+
+    // When a selected workflow cannot be host-materialized because semantic
+    // operation arguments are absent, do not persist its generic blueprint
+    // template as an executable task. The normal planner owns that fallback.
+    common_blueprint_selection_config deferred_selection_config;
+    deferred_selection_config.task_plan_id = "deferred-workflow-instance";
+    deferred_selection_config.session_id = config.session_id;
+    deferred_selection_config.scope = common_plan_scope::project;
+    deferred_selection_config.now = 46;
+    deferred_selection_config.selected_workflow = checked_in_dataset->workflow_bindings.front();
+    deferred_selection_config.materialize_instance =
+        [](const common_agent_request &, const common_plan_state &,
+                common_plan_state &, std::string &) {
+            return common_blueprint_materialization_outcome::not_applicable;
+        };
+    common_explicit_blueprint_selector deferred_selector("dataset-analysis-v2");
+    assert(common_agent_select_and_instantiate_blueprint(
+        checked_in_plans, selection_request, deferred_selector,
+        {{"dataset-analysis-v2", "bootstrap:local:project:project-a:blueprint:dataset-analysis-v2",
+            "dataset analysis"}},
+        deferred_selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::deferred_to_planner);
+    assert(!checked_in_plans.get(deferred_selection_config.task_plan_id, error));
+
+    common_blueprint_selection_config rejected_selection_config = dataset_selection_config;
+    rejected_selection_config.task_plan_id = "rejected-astar-instance";
+    rejected_selection_config.materialize_instance =
+        [](const common_agent_request &, const common_plan_state &,
+                common_plan_state &, std::string & materialization_error) {
+            materialization_error = "host Oracle rejected the proposal";
+            return common_blueprint_materialization_outcome::failed_safely;
+        };
+    common_explicit_blueprint_selector rejected_selector("fixture-change");
+    assert(common_agent_select_and_instantiate_blueprint(
+        plans, selection_request, rejected_selector,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}},
+        rejected_selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
+    assert(plans.get(rejected_selection_config.task_plan_id, error) == std::nullopt);
+
+    selection_config.expected_source_revision = "default@v0";
+    selection_config.task_plan_id = "stale-source-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        { {"fixture-change", first.installed_blueprint_ids.front(), "repository work"} },
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined &&
+        selection_result.eligible_count == 0 && selection_result.rejections.size() == 1 &&
+        selection_result.rejections.front().reason.find("stale") != std::string::npos);
+    selection_config.expected_source_revision.clear();
+
+    common_plan_state invalid_assumption = *blueprint;
+    invalid_assumption.id = "invalid-assumption-blueprint";
+    invalid_assumption.assumptions.push_back({"workspace", "A controlled workspace is available.", 0.1f, false, {}});
+    assert(plans.create(invalid_assumption, error));
+    selection_config.task_plan_id = "invalid-assumption-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"fixture-change", invalid_assumption.id, "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined && selector.calls == 1);
+    assert(selection_result.candidate_count == 1 && selection_result.eligible_count == 0 && selection_result.rejections.size() == 1);
+    common_plan_state capability_blueprint = *blueprint;
+    capability_blueprint.id = "capability-blueprint";
+    capability_blueprint.required_capabilities = {"development.build"};
+    assert(plans.create(capability_blueprint, error));
+    selection_config.task_plan_id = "missing-capability-instance";
+    selection_config.capabilities_resolved = true;
+    selection_config.available_capabilities = {"workspace.read"};
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"capability", capability_blueprint.id, "build work", "Build", "Build", "Build succeeds.", {}, {}, {}, {"development.build"}}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined && selector.calls == 1);
+    assert(selection_result.rejections.size() == 1 && selection_result.rejections.front().reason == "required host capability is unavailable");
+    common_plan_state blocked_blueprint = *blueprint;
+    blocked_blueprint.id = "blocked-blueprint";
+    blocked_blueprint.constraints = {{"host-write", "requires host-approved writes", true}};
+    assert(plans.create(blocked_blueprint, error));
+    selection_config.capabilities_resolved = false;
+    selection_config.available_capabilities.clear();
+    selection_config.blocked_constraint_ids = {"host-write"};
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"blocked", blocked_blueprint.id, "blocked work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined &&
+        selection_result.rejections.size() == 1 &&
+        selection_result.rejections.front().reason == "hard constraint conflicts with host policy");
+    selection_config.blocked_constraint_ids.clear();
+    selection_config.capabilities_resolved = false;
+    selection_config.available_capabilities.clear();
+    selection_config.task_plan_id = "selected-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::resumed && selector.calls == 1);
+
+    common_plan_state wrong_scope = *selected_instance;
+    wrong_scope.id = "wrong-scope-instance";
+    wrong_scope.project_id = "other-project";
+    assert(plans.create(wrong_scope, error));
+    selection_config.task_plan_id = wrong_scope.id;
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
+
+    // Compatibility-only opt-in: production routing and the default never
+    // infer blueprint intent from lexical overlap.
+    selection_config.allow_keyword_fallback = true;
+    declining_selector declining;
+    low_confidence_selector low_confidence;
+    selection_config.task_plan_id = "fallback-instance";
+    selection_request.prompt = "Diagnose unexpected behavior in an agent regression.";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, low_confidence,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"fixture-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
+    assert(selection_result.logical_id && *selection_result.logical_id == "fixture-regression");
+    assert(selection_result.reason.rfind("native keyword fallback", 0) == 0);
+
+    // A single generic overlap such as "tool" must not make auto-plan replace
+    // a data task with the unrelated regression blueprint.  When no blueprint
+    // is semantically applicable, normal agent orchestration owns the turn.
+    selection_config.task_plan_id = "single-keyword-fallback-instance";
+    selection_request.prompt = "Use the data and statistics tool families to inspect a dataset.";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, low_confidence,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"fixture-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
+
+    // An explicit model decline is semantically different from a low
+    // confidence selection: it must preserve normal agent orchestration even
+    // when a keyword fallback would otherwise find a matching blueprint.
+    selection_config.task_plan_id = "explicit-decline-instance";
+    selection_request.prompt = "Diagnose unexpected behavior in an agent regression.";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "Implement or modify code in a repository."},
+         {"fixture-regression", first.installed_blueprint_ids.back(), "Diagnose unexpected behavior at the plan, memory, tool, or reflection boundary."}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
+
+    selection_config.allow_keyword_fallback = false;
+    selection_config.task_plan_id = "fallback-disabled-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, declining,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::declined);
+    selection_config.allow_keyword_fallback = true;
+
+    common_plan_state build_blueprint = *blueprint;
+    build_blueprint.id = "build-repair-blueprint";
+    build_blueprint.purpose = "Diagnose and repair repository build failures.";
+    build_blueprint.goal = "Repair the failing build.";
+    build_blueprint.success_criteria = "The affected build succeeds.";
+    assert(plans.create(build_blueprint, error));
+    common_plan_state explanation_blueprint = *blueprint;
+    explanation_blueprint.id = "architecture-explanation-blueprint";
+    explanation_blueprint.purpose = "Explain repository architecture and runtime boundaries.";
+    explanation_blueprint.goal = "Produce an architecture explanation.";
+    explanation_blueprint.success_criteria = "The explanation is evidence-backed.";
+    assert(plans.create(explanation_blueprint, error));
+    selection_request.prompt = "Fix the repository build failure and verify the result.";
+    common_memory_policy_pack selection_policy;
+    selection_policy.purpose = "Repair a repository build failure.";
+    selection_policy.goal = "Restore a passing build.";
+    selection_policy.success_criteria = "The affected build succeeds.";
+    selection_request.policy_pack = selection_policy;
+    selection_config.task_plan_id = "ranked-build-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, low_confidence,
+        {{"build-repair", build_blueprint.id, "Repository work",
+          build_blueprint.purpose, build_blueprint.goal, build_blueprint.success_criteria},
+         {"architecture", explanation_blueprint.id, "Repository work",
+          explanation_blueprint.purpose, explanation_blueprint.goal, explanation_blueprint.success_criteria}},
+        selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
+    assert(selection_result.logical_id && *selection_result.logical_id == "build-repair");
+    assert(selection_result.reason.rfind("native keyword fallback", 0) == 0);
+    selection_request.policy_pack.reset();
+
+    common_agent_bootstrap_package custom;
+    custom.name = "custom";
+    custom.version = "v1";
+    custom.procedures.push_back({"review-loop", "Review the implementation against its acceptance criteria before completion.", "review-loop"});
+    common_agent_bootstrap_blueprint custom_blueprint;
+    custom_blueprint.id = "review";
+    custom_blueprint.goal = "Review a change";
+    custom_blueprint.success_criteria = "Review findings are evidence-backed.";
+    custom_blueprint.required_capabilities = {"workspace.read"};
+    custom_blueprint.steps.push_back({"inspect", "Inspect", "Inspect the change."});
+    custom_blueprint.constraints.push_back({"evidence", "Use inspection evidence.", true});
+    custom_blueprint.assumptions.push_back({"repository", "The requested change is in the current repository.", 0.8f, true, {}});
+    custom.blueprints.push_back(custom_blueprint);
+    assert(common_agent_package_to_json(custom, package_json, error));
+    assert(common_agent_package_parse_json(package_json, parsed_package, error));
+    assert(parsed_package.blueprints.size() == 1);
+    assert(parsed_package.blueprints.front().constraints.size() == 1);
+    assert(parsed_package.blueprints.front().assumptions.size() == 1);
+    assert(parsed_package.blueprints.front().assumptions.front().valid);
+    assert(parsed_package.blueprints.front().required_capabilities.size() == 1);
+    common_agent_bootstrap_result custom_result;
+    assert(common_agent_install_bootstrap_package(memory, plans, config, custom, embed, custom_result, error));
+    assert(custom_result.installed_memory_ids.size() == 1 && custom_result.installed_blueprint_ids.size() == 1);
+
+    common_plan_state incompatible = *blueprint;
+    incompatible.id = "incompatible-task";
+    assert(plans.create(incompatible, error));
+    selection_config.task_plan_id = incompatible.id;
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, selector,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::failed_safely);
+
+    common_explicit_blueprint_selector explicit_selector("fixture-change");
+    selection_config.task_plan_id = "explicit-instance";
+    assert(common_agent_select_and_instantiate_blueprint(plans, selection_request, explicit_selector,
+        {{"fixture-change", first.installed_blueprint_ids.front(), "repository work"}}, selection_config, selection_result, error));
+    assert(selection_result.outcome == common_blueprint_selection_outcome::instantiated);
+
+    common_agent_bootstrap_config invalid;
+    invalid.namespace_id = "local";
+    common_agent_bootstrap_result invalid_result;
+    assert(!common_agent_install_default_bootstrap(memory, plans, invalid, embed, invalid_result, error));
+    return 0;
+}

@@ -1,0 +1,245 @@
+#include "tools/agent/host/agent-host-config.h"
+#include "tools/agent/daemon/agent-daemon-adapter.h"
+
+#include <iostream>
+#include <string>
+
+int main() {
+    using json = nlohmann::ordered_json;
+    std::string error;
+    agent_host_config config;
+
+    if (!parse_agent_host_config_json(json::object(), config, error) ||
+            config.adaptation_flydelta_disable_factorized_cvec_batch ||
+            config.adaptation_flydelta_outcome_guidance.mode !=
+                common_flydelta_outcome_guidance_mode::shadow ||
+            config.adaptation_flydelta_outcome_guidance.matched_evaluation ||
+            config.adaptation_flydelta_outcome_guidance.matched_max_arms != 9 ||
+            config.adaptation_flydelta_teacher_scoring_backend != "auto" ||
+            config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "exact" ||
+            config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.0 ||
+            config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_sampling" ||
+            config.adaptation_outcome_guidance_generalization.tool_family_backoff ||
+            config.adaptation_outcome_guidance_generalization.project_history) {
+        std::cerr << "factorized cvec must not be disabled by default: " << error << '\n';
+        return 1;
+    }
+    const auto serialized = agent_host_config_to_json(config);
+    if (config.adaptation_flydelta_dose_mode != "direction_dose" ||
+            serialized["runtime"]["adaptation"]["flydelta"]["dose_mode"] != "direction_dose") return __LINE__;
+    if (!serialized["runtime"]["adaptation"]["flydelta"].contains("disable_factorized_cvec_batch") ||
+            serialized["runtime"]["adaptation"]["flydelta"]["disable_factorized_cvec_batch"] != false ||
+            serialized["runtime"]["adaptation"]["flydelta"].contains("factorized_cvec_batch") ||
+            serialized["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["mode"] != "shadow" ||
+            serialized["runtime"]["adaptation"]["flydelta"]["teacher_scoring_backend"] != "auto") {
+        std::cerr << "factorized cvec opt-out default was not serialized canonically\n";
+        return 1;
+    }
+
+    json compatible = {
+        {"model", {{"backend", "server-context"}}},
+        {"models", {
+            {"schema_version", 1},
+            {"directory", "models"},
+            {"bases", {{"agent", {{"kind", "generation"}, {"backend", "server-context"},
+                {"path", "model.gguf"}, {"load", "resident"}}}}},
+            {"profiles", {{"agent-default", {{"base", "agent"}, {"context_size", 4096},
+                {"n_parallel", 2}, {"n_sequences", 2}, {"load", "resident"}}}}},
+            {"routing", {{"default_profile", "agent-default"}}},
+        }},
+        {"runtime", {{"adaptation", {{"flydelta", {
+            {"enabled", true},
+            {"teacher_scoring_backend", "backend"},
+            {"worker_count", 1},
+            {"queue_path", "var/flydelta/queue"},
+            {"batch_mode", "auto"},
+            {"batch_parallelism", 2},
+        }}}}}},
+        {"limits", {{"worker_count", 2}}},
+    };
+    compatible["runtime"]["adaptation"]["semi_oracle"] = {
+        {"search", {{"algorithm", "focal"}, {"suboptimality_bound", 1.1}, {"exact_history_order", "after_h"}}},
+        {"outcome_guidance", {{"mode", "experimental"}, {"sampling_policy", "posterior_mean"},
+            {"projection_cache_bytes", 2097152}}}
+    };
+    compatible["runtime"]["adaptation"]["outcome_guidance"]["generalization"] = {
+        {"tool_family_backoff", true}, {"project_history", true},
+        {"tool_families", {{"data-analysis", {"dataset.aggregate", "dataset.join"}}}}
+    };
+    if (!parse_agent_host_config_json(compatible, config, error) ||
+            !config.adaptation_outcome_guidance_generalization.tool_family_backoff ||
+            !config.adaptation_outcome_guidance_generalization.project_history ||
+            config.adaptation_outcome_guidance_generalization.tool_families["data-analysis"].size() != 2) {
+        std::cerr << "outcome guidance opt-ins did not parse: " << error << '\n';
+        return 1;
+    }
+    const auto generalization_roundtrip = agent_host_config_to_json(config);
+    agent_host_config parsed_generalization;
+    if (!parse_agent_host_config_json(generalization_roundtrip, parsed_generalization, error) ||
+            parsed_generalization.adaptation_outcome_guidance_generalization.tool_families !=
+                config.adaptation_outcome_guidance_generalization.tool_families) return __LINE__;
+    auto invalid_family = compatible;
+    invalid_family["runtime"]["adaptation"]["outcome_guidance"]["generalization"]["tool_families"]["duplicate"] =
+        {"dataset.join", "repository.search"};
+    if (parse_agent_host_config_json(invalid_family, parsed_generalization, error)) return __LINE__;
+    auto invalid_opt_in = compatible;
+    invalid_opt_in["runtime"]["adaptation"]["outcome_guidance"]["generalization"]["project_history"] = "yes";
+    if (parse_agent_host_config_json(invalid_opt_in, parsed_generalization, error)) return __LINE__;
+    if (!parse_agent_host_config_json(compatible, config, error) ||
+            config.adaptation_flydelta_disable_factorized_cvec_batch ||
+            config.adaptation_flydelta_teacher_scoring_backend != "backend" ||
+            config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "focal" ||
+            config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.1 ||
+            config.adaptation_semi_oracle_outcome_guidance.exact_history_order != common_semi_oracle_history_order::after_heuristic ||
+            config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_mean") {
+        std::cerr << "default compatible factorized cvec config rejected: " << error << '\n';
+        return 1;
+    }
+    compatible["runtime"]["adaptation"]["flydelta"]["outcome_guidance"] = {
+        {"mode", "experimental"}, {"seed", uint64_t{71}},
+        {"harm_penalty", 6.0}, {"min_backoff_groups", 9}, {"max_prior_strength", 3.0},
+        {"projection_cache_bytes", 1048576}, {"matched_evaluation", true}, {"matched_max_arms", 6}
+    };
+    if (!parse_agent_host_config_json(compatible, config, error) ||
+            config.adaptation_flydelta_outcome_guidance.mode !=
+                common_flydelta_outcome_guidance_mode::experimental ||
+            config.adaptation_flydelta_outcome_guidance.seed != 71 ||
+            config.adaptation_flydelta_outcome_guidance.harm_penalty != 6.0 ||
+            config.adaptation_flydelta_outcome_guidance.min_backoff_groups != 9 ||
+            config.adaptation_flydelta_outcome_guidance.max_prior_strength != 3.0) {
+        std::cerr << "outcome guidance config fields were not parsed: " << error << '\n';
+        return 1;
+    }
+    daemon_options guidance_options;
+    apply_agent_host_config_to_daemon_options(config, guidance_options);
+    if (guidance_options.adaptation_flydelta_outcome_guidance.mode !=
+            common_flydelta_outcome_guidance_mode::experimental ||
+            guidance_options.adaptation_flydelta_outcome_guidance.seed != 71 ||
+            guidance_options.adaptation_flydelta_teacher_scoring_backend != "backend" ||
+            guidance_options.adaptation_flydelta_outcome_guidance.projection_cache_bytes != 1048576 ||
+            !guidance_options.adaptation_flydelta_outcome_guidance.matched_evaluation ||
+            guidance_options.adaptation_flydelta_outcome_guidance.matched_max_arms != 6 ||
+            guidance_options.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 2097152 ||
+            guidance_options.adaptation_semi_oracle_outcome_guidance.exact_history_order !=
+                common_semi_oracle_history_order::after_heuristic) {
+        std::cerr << "outcome guidance config did not reach daemon options\n";
+        return 1;
+    }
+    const auto guidance_roundtrip = agent_host_config_to_json(config);
+    if (guidance_roundtrip["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["matched_evaluation"] != true ||
+            guidance_roundtrip["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["matched_max_arms"] != 6) return 1;
+    auto bad_matched = compatible;
+    bad_matched["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["matched_evaluation"] = "true";
+    agent_host_config rejected;
+    if (parse_agent_host_config_json(bad_matched, rejected, error)) return 1;
+    bad_matched = compatible;
+    bad_matched["runtime"]["adaptation"]["flydelta"]["outcome_guidance"]["matched_max_arms"] = 0;
+    if (parse_agent_host_config_json(bad_matched, rejected, error)) return 1;
+    daemon_options enabled_options;
+    apply_agent_host_config_to_daemon_options(config, enabled_options);
+    if (!enabled_options.adaptation_flydelta_factorized_cvec_batch) {
+        std::cerr << "factorized cvec was not enabled for a compatible default config\n";
+        return 1;
+    }
+
+    const auto roundtrip = agent_host_config_to_json(config);
+    agent_host_config roundtrip_config;
+    if (!parse_agent_host_config_json(roundtrip, roundtrip_config, error) ||
+            roundtrip_config.adaptation_flydelta_disable_factorized_cvec_batch ||
+            roundtrip_config.adaptation_flydelta_teacher_scoring_backend != "backend" ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.search_algorithm != "focal" ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound != 1.1 ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.exact_history_order != common_semi_oracle_history_order::after_heuristic ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.sampling_policy != "posterior_mean" ||
+            roundtrip_config.adaptation_flydelta_outcome_guidance.projection_cache_bytes != 1048576 ||
+            roundtrip_config.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes != 2097152) {
+        std::cerr << "factorized cvec config did not round-trip: " << error << '\n';
+        return 1;
+    }
+    auto bad_exact_order=compatible;
+    bad_exact_order["runtime"]["adaptation"]["semi_oracle"]["search"]["exact_history_order"]="random";
+    if (parse_agent_host_config_json(bad_exact_order, config, error)) return __LINE__;
+    for (const auto * family : {"semi_oracle", "flydelta"}) {
+        auto zero_cache = compatible;
+        zero_cache["runtime"]["adaptation"][family]["outcome_guidance"]["projection_cache_bytes"] = 0;
+        if (!parse_agent_host_config_json(zero_cache, config, error)) return __LINE__;
+        for (const auto & invalid : {nlohmann::ordered_json(-1), nlohmann::ordered_json(268435457),
+                nlohmann::ordered_json("unbounded")}) {
+            zero_cache["runtime"]["adaptation"][family]["outcome_guidance"]["projection_cache_bytes"] = invalid;
+            if (parse_agent_host_config_json(zero_cache, config, error)) return __LINE__;
+        }
+    }
+
+    auto disabled = compatible;
+    disabled["runtime"]["adaptation"]["flydelta"]["dose_mode"] = "raw_coefficients";
+    disabled["runtime"]["adaptation"]["flydelta"]["dose_calibration_ref"] = "resource://calibration";
+    disabled["runtime"]["adaptation"]["flydelta"]["search_model_call_budget"] = 512;
+    disabled["runtime"]["adaptation"]["flydelta"]["disable_factorized_cvec_batch"] = true;
+    if (!parse_agent_host_config_json(disabled, config, error) ||
+            !config.adaptation_flydelta_disable_factorized_cvec_batch) {
+        std::cerr << "explicit factorized cvec disable was not parsed: " << error << '\n';
+        return 1;
+    }
+    daemon_options disabled_options;
+    apply_agent_host_config_to_daemon_options(config, disabled_options);
+    if (disabled_options.adaptation_flydelta_dose_mode != "raw_coefficients" ||
+            disabled_options.adaptation_flydelta_dose_calibration_ref != "resource://calibration" ||
+            disabled_options.adaptation_flydelta_search_model_call_budget != 512) return __LINE__;
+    if (disabled_options.adaptation_flydelta_factorized_cvec_batch) {
+        std::cerr << "explicit factorized cvec disable was ignored\n";
+        return 1;
+    }
+
+    auto unsupported = compatible;
+    unsupported["model"]["backend"] = "cli";
+    if (!parse_agent_host_config_json(unsupported, config, error)) {
+        std::cerr << "non-server-context config unexpectedly rejected: " << error << '\n';
+        return 1;
+    }
+    daemon_options unsupported_options;
+    apply_agent_host_config_to_daemon_options(config, unsupported_options);
+    if (unsupported_options.adaptation_flydelta_factorized_cvec_batch) {
+        std::cerr << "factorized cvec should fall back for a non-server-context backend\n";
+        return 1;
+    }
+
+    auto legacy_enabled = compatible;
+    legacy_enabled["runtime"]["adaptation"]["flydelta"]["factorized_cvec_batch"] = true;
+    if (!parse_agent_host_config_json(legacy_enabled, config, error) ||
+            config.adaptation_flydelta_disable_factorized_cvec_batch) {
+        std::cerr << "legacy enabled config was not migrated: " << error << '\n';
+        return 1;
+    }
+    auto legacy_disabled = compatible;
+    legacy_disabled["runtime"]["adaptation"]["flydelta"]["factorized_cvec_batch"] = false;
+    if (!parse_agent_host_config_json(legacy_disabled, config, error) ||
+            !config.adaptation_flydelta_disable_factorized_cvec_batch) {
+        std::cerr << "legacy disabled config was not migrated: " << error << '\n';
+        return 1;
+    }
+    auto conflicting = compatible;
+    conflicting["runtime"]["adaptation"]["flydelta"]["factorized_cvec_batch"] = true;
+    conflicting["runtime"]["adaptation"]["flydelta"]["disable_factorized_cvec_batch"] = true;
+    if (parse_agent_host_config_json(conflicting, config, error)) {
+        std::cerr << "ambiguous legacy and opt-out settings were accepted\n";
+        return 1;
+    }
+
+    auto unsupported_teacher_backend = compatible;
+    auto invalid_dose = compatible;
+    invalid_dose["runtime"]["adaptation"]["flydelta"]["dose_mode"] = "unknown";
+    if (parse_agent_host_config_json(invalid_dose, config, error)) return __LINE__;
+    for (const auto & invalid_budget : {json(-1), json(0), json(65537), json(1.5), json("256")}) {
+        auto invalid = compatible;
+        invalid["runtime"]["adaptation"]["flydelta"]["search_model_call_budget"] = invalid_budget;
+        if (parse_agent_host_config_json(invalid, config, error)) return __LINE__;
+    }
+    unsupported_teacher_backend["runtime"]["adaptation"]["flydelta"]["teacher_scoring_backend"] = "cuda-maybe";
+    if (parse_agent_host_config_json(unsupported_teacher_backend, config, error)) {
+        std::cerr << "unknown teacher scoring backend was accepted\n";
+        return 1;
+    }
+
+    std::cout << "agent_factorized_cvec_config=passed\n";
+    return 0;
+}

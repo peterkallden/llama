@@ -1,0 +1,606 @@
+import { afterEach, expect, it, vi } from "vitest";
+
+const transport = vi.hoisted(() => ({
+  calls: [] as Array<Record<string, unknown>>,
+  signals: [] as Array<AbortSignal | undefined>,
+  replies: [] as Array<(value: unknown) => void>,
+  history: undefined as ((id: string, project: string) => Promise<unknown>) | undefined,
+  detach: undefined as (() => Promise<unknown>) | undefined,
+  detachRequests: [] as Array<Record<string, unknown>>,
+  upload: undefined as (() => Promise<unknown>) | undefined,
+  uploadedResources: [] as Array<Record<string, unknown>>,
+  sink: (_event: Record<string, unknown>) => {},
+}));
+
+vi.mock("./api/agent-api", () => ({ AgentApiError: class extends Error { constructor(message: string, readonly status: number) { super(message); } }, AgentApi: class {
+  status() { return Promise.resolve({}); }
+  projects() { return Promise.resolve({ projects: [] }); }
+  chats() { return Promise.resolve({ chats: [], next_cursor: "" }); }
+  chatMessages(session_id: string, project_id = "") { return transport.history?.(session_id, project_id) ?? Promise.resolve({ chat: { id: session_id, project_id, title: "New chat" }, messages: [], history_available: true }); }
+  createChat(session_id: string, project_id = "", title = "New chat") { return Promise.resolve({ chat: { id: session_id, project_id, title } }); }
+  migrateLegacyChat(session_id: string) { return Promise.resolve({ chat: { id: session_id, project_id: "legacy-project", title: "Imported chat" }, migrated: true }); }
+  createProject(name: string) { return Promise.resolve({ project: { id: "project-test", name, created_at: 1, last_active_at: 1 } }); }
+  resources() { return Promise.resolve({ resources: [], next_cursor: "" }); }
+  setChatResource(input: Record<string, unknown>) {
+    transport.detachRequests.push(input);
+    return transport.detach?.() ?? Promise.resolve({ chat: {} });
+  }
+  cancelTurn() { return Promise.resolve({ ok: true }); }
+  putResource(resource: Record<string, unknown>) {
+    transport.uploadedResources.push(resource);
+    return transport.upload?.() ?? Promise.resolve({ resource: { uri: "resource://upload/test" } });
+  }
+  connectEvents(sink: typeof transport.sink, _signal: AbortSignal, connected: () => void) {
+    transport.sink = sink; connected();
+    return new Promise<void>(() => {});
+  }
+  submitTurn(turn: Record<string, unknown>, signal?: AbortSignal) {
+    transport.calls.push(turn);
+    transport.signals.push(signal);
+    return new Promise((resolve, reject) => {
+      transport.replies.push(resolve);
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    });
+  }
+} }));
+
+afterEach(() => { transport.upload = undefined; transport.history = undefined; transport.detach = undefined; transport.detachRequests.length = 0; transport.uploadedResources.length = 0; vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+it("preserves an in-flight answer when initial history arrives after submission", async () => {
+  transport.calls.length=0; transport.replies.length=0;
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  let restore!: (value: unknown) => void;
+  transport.history=()=>new Promise(resolve=>{restore=resolve;});
+  const loading=session.ensureActiveChat();
+  const pending=session.submit("Verify the saved note");
+  const turnId=String(transport.calls[0].turn_id);
+  restore({chat:{id:session.sessionId,project_id:session.projectId,title:"Saved work"},messages:[],history_available:true});
+  await loading;
+  expect(session.messages.find(message=>message.turnId===turnId && message.role==="assistant")?.pending).toBe(true);
+  transport.replies[0]({ok:true,response:"Saved and verified"});
+  expect(await pending).toBe(true);
+  expect(session.messages.find(message=>message.turnId===turnId && message.role==="assistant")?.content).toBe("Saved and verified");
+});
+
+it("ignores initial history for a session that has since been replaced", async () => {
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  const oldSession=session.sessionId;
+  let restore!: (value: unknown) => void;
+  transport.history=()=>new Promise(resolve=>{restore=resolve;});
+  const loading=session.ensureActiveChat();
+  await session.newSession();
+  restore({chat:{id:oldSession,project_id:"",title:"Old work"},messages:[{id:"old",turn_id:"old",role:"assistant",content:"Old answer",recorded_at:1}],history_available:true});
+  await loading;
+  expect(session.sessionId).not.toBe(oldSession);
+  expect(session.messages).toHaveLength(0);
+  expect(session.chatTitle).not.toBe("Old work");
+});
+
+it("retains an unapproved draft when terminal SSE precedes the failed turn response", async () => {
+  transport.calls.length=0; transport.replies.length=0;
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  const pending=session.submit("Write a bounded report");
+  const turnId=String(transport.calls[0].turn_id);
+  transport.sink({event_type:"turn.failed",turn_id:turnId,session_id:session.sessionId,error:"Review incomplete"});
+  expect(transport.signals[0]?.aborted).toBe(false);
+  const draft={text:"A provisional report",review_status:"unverified",stop_reason:"Review incomplete",plan_id:"p",
+    draft_fingerprint:"draft",evidence_fingerprint:"evidence",issues:[{id:"review-1-1",description:"Missing disclosure",correction:"Disclose unavailable text",evidence_ids:[]}]};
+  transport.replies[0]({ok:false,response:"",error:"Review incomplete",unverified_draft:draft});
+  expect(await pending).toBe(false);
+  const assistant=session.messages.find(message=>message.role==="assistant");
+  expect(assistant?.unverifiedDraft).toEqual(draft);
+  expect(assistant?.content).not.toBe(draft.text);
+  transport.history=async(id,project)=>({chat:{id,project_id:project,title:"Review"},history_available:true,messages:[{
+    id:assistant?.id,turn_id:turnId,role:"assistant",content:"",recorded_at:1,sequence:1,unverified_draft:draft}]});
+  await session.activateChat({id:session.sessionId,project_id:"",title:"Review",created_at:1,last_active_at:1});
+  expect(session.messages.find(message=>message.role==="assistant")?.unverifiedDraft).toEqual(draft);
+  transport.signals.length=0;
+});
+
+it("presents a bounded review as paused work and restores its partial assessment", async () => {
+  transport.calls.length=0; transport.replies.length=0;
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  const pending=session.submit("Update the saved report with retained evidence");
+  const turnId=String(transport.calls[0].turn_id);
+  const draft={text:"Report saved with qualified coverage",review_status:"unverified",stop_reason:"Step capacity exhausted",
+    plan_id:"p",draft_fingerprint:"draft",evidence_fingerprint:"evidence",issues:[]};
+  const progress={schema:"review-progress.v1",plan_id:"p",draft_fingerprint:"draft",evidence_fingerprint:"evidence",
+    accepted:false,paused:true,parts:[{observation_id:"read",excerpt:"Observed event",status:"reviewed",
+      reason:"Supported by retained evidence",evidence_ids:["source"],resource_uri:"resource://report-r3",content_fingerprint:"content"}],
+    remaining:[{id:"review-1",description:"Review the remaining section",correction:"Inspect its citations",evidence_ids:[]}],follow_up:[]};
+  transport.sink({event_type:"turn.failed",turn_id:turnId,session_id:session.sessionId,error:"Step capacity exhausted"});
+  transport.replies[0]({ok:false,response:"",error:"Step capacity exhausted",unverified_draft:draft,review_progress:progress});
+  expect(await pending).toBe(false); // Paused work is not an accepted answer.
+  expect(session.error).toBe("");
+  let assistant=session.messages.find(message=>message.role==="assistant");
+  expect(assistant?.content).toContain("Review paused");
+  expect(assistant?.reviewProgress).toEqual(progress);
+  expect(assistant?.unverifiedDraft).toEqual(draft);
+  transport.history=async(id,project)=>({chat:{id,project_id:project,title:"Partial review"},history_available:true,messages:[{
+    id:assistant?.id,turn_id:turnId,role:"assistant",content:"",recorded_at:1,sequence:1,unverified_draft:draft,review_progress:progress}]});
+  await session.activateChat({id:session.sessionId,project_id:"",title:"Partial review",created_at:1,last_active_at:1});
+  assistant=session.messages.find(message=>message.role==="assistant");
+  expect(assistant?.reviewProgress?.parts[0].status).toBe("reviewed");
+  expect(assistant?.reviewProgress?.remaining[0].id).toBe("review-1");
+});
+
+it("retains report metadata from the completed HTTP turn when the event stream was unavailable", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const { reportReferences } = await import("./components/report-view");
+  const session = useAgentSession();
+  const pending = session.submit("Create a report");
+  transport.replies[0]({ ok: true, response: "The report is ready.", events: [{
+    type: "resource.created", sequence: 23, request_id: "report-request",
+    resource_uri: "agent-resource://report", resource_name: "Report.json",
+    resource_mime_type: "application/vnd.llama-agent.report+json",
+  }] });
+  expect(await pending).toBe(true);
+  expect(reportReferences(session.events, session.sessionId)).toEqual([{
+    uri: "agent-resource://report", name: "Report.json", turnId: String(transport.calls[0].turn_id),
+  }]);
+});
+
+it("automatically orients each uploaded attachment as its own read-only host task", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  const file = { name: "notes.md", type: "text/markdown", size: 20,
+    text: async () => "# Notes\nA short document." } as File;
+  await session.upload(file);
+  await new Promise((resolve) => setTimeout(resolve, 1600));
+  expect(transport.calls).toHaveLength(1);
+  expect(transport.calls[0].attachment_orientation).toBe(true);
+  expect(transport.calls[0].resource_refs).toEqual(["resource://upload/test"]);
+  expect(session.messages[0].content).toBe("Initial orientation: notes.md");
+  transport.replies[0]({ ok: true, response: "This is a short note." });
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  expect(session.messages[1].content).toBe("This is a short note.");
+  expect(session.attachmentOrientations[0].state).toBe("completed");
+});
+
+it("stores an editor upload in project scope without attaching it or starting an orientation turn", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  transport.uploadedResources.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  session.projectId = "project-test";
+  const uri = await session.upload({ name: "draft.markdown", type: "application/octet-stream", size: 12,
+    text: async () => "# Draft" } as File, { scope: "project", orient: false, attach: false });
+  expect(uri).toBe("resource://upload/test");
+  expect(transport.uploadedResources[0]).toMatchObject({ scope: "project", project_id: "project-test", mime_type: "text/markdown" });
+  expect(session.attachments).toHaveLength(0);
+  expect(session.attachmentOrientations).toHaveLength(0);
+  expect(transport.calls).toHaveLength(0);
+});
+
+it("skips the pending default orientation when the user sends an explicit question with the attachment", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  const file = { name: "notes.md", type: "text/markdown", size: 20,
+    text: async () => "# Notes\nA short document." } as File;
+  await session.upload(file);
+  session.selectedResourceRefs = ["resource://upload/test"];
+  const send = session.submit("Who is this document about?");
+  expect(transport.calls).toHaveLength(1);
+  expect(transport.calls[0].prompt).toBe("Who is this document about?");
+  expect(transport.calls[0].attachment_orientation).toBeUndefined();
+  expect(transport.calls[0].attachment_context_required).toBe(true);
+  expect(transport.calls[0].resource_refs).toEqual(["resource://upload/test"]);
+  expect(session.attachmentOrientations).toHaveLength(0);
+  transport.replies[0]({ ok: true, response: "The document is about Dag Hammarskjöld." });
+  await send;
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+});
+
+it("queues a user question submitted during attachment orientation and sends it afterward", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  await session.upload({ name: "notes.md", type: "text/markdown", size: 20,
+    text: async () => "# Notes\nSubject text." } as File);
+  await new Promise((resolve) => setTimeout(resolve, 1600));
+  expect(transport.calls).toHaveLength(1);
+  session.selectedResourceRefs = ["resource://upload/test"];
+  await session.submit("Who is this document about?", [], false, undefined, undefined,
+    session.selectedResourceRefs);
+  expect(transport.calls).toHaveLength(1);
+  expect(session.pendingUserTurns).toHaveLength(1);
+  expect(session.messages.at(-2)?.content).toBe("Who is this document about?");
+  transport.replies[0]({ ok: true, response: "Initial orientation." });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(transport.calls).toHaveLength(2);
+  expect(transport.calls[1].prompt).toBe("Who is this document about?");
+  expect(transport.calls[1].attachment_context_required).toBe(true);
+  expect(transport.calls[1].resource_refs).toEqual(["resource://upload/test"]);
+  transport.replies[1]({ ok: true, response: "It is about the subject in the note." });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(session.pendingUserTurns).toHaveLength(0);
+});
+
+it("does not attach saved session files to unrelated turns, but uses the explicit current-turn selection", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  await session.upload({ name: "notes.md", type: "text/markdown", size: 20,
+    text: async () => "# Notes" } as File);
+  session.attachmentOrientations[0].state = "completed";
+  const unrelated = session.submit("A question unrelated to the file");
+  expect(transport.calls[0].resource_refs).toBeUndefined();
+  transport.replies[0]({ ok: true, response: "Answer" });
+  await unrelated;
+  const selected = session.submit("Now use this file", [], false, undefined, undefined,
+    ["resource://upload/test"]);
+  expect(transport.calls[1].resource_refs).toEqual(["resource://upload/test"]);
+  expect(transport.calls[1].attachment_context_required).toBe(true);
+  transport.replies[1]({ ok: true, response: "Grounded answer" });
+  await selected;
+});
+
+it("persists document context on a queued user turn and keeps failed turns retryable", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  const first = session.submit("first");
+  const documentContext = { document_uri: "resource://doc", revision: 3, block_ids: ["b1"] };
+  const investigationContext = { case_id: "case-7", revision: 4, entity_ids: ["host:7"], relation_ids: [], event_ids: ["event:9"],
+    source_ids: ["source:report-a", "source:logs-a"], analysis_profile: "narrative_comparison" };
+  const queued = await session.submit("review this", [], false, documentContext, "queued-review",
+    ["resource://attachment"], "Review draft", false, investigationContext);
+  expect(queued).toBe(true);
+  expect(session.pendingUserTurns[0].document_context).toEqual(documentContext);
+  expect(session.pendingUserTurns[0].investigation_context).toEqual(investigationContext);
+  expect(session.pendingUserTurns[0].attachment_context_required).toBe(true);
+  transport.replies[0]({ ok: true, response: "first done" });
+  await first;
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(transport.calls[1].document_context).toEqual(documentContext);
+  expect(transport.calls[1].investigation_context).toEqual(investigationContext);
+  expect(transport.calls[1].resource_refs).toEqual(["resource://attachment"]);
+  transport.replies[1]({ ok: false, error: "turn deadline exceeded" });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(session.pendingUserTurns[0].state).toBe("failed");
+  expect(session.pendingUserTurns[0].error).toContain("deadline");
+  session.retryPendingUserTurn("queued-review");
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(transport.calls).toHaveLength(3);
+  expect(transport.calls[2].document_context).toEqual(documentContext);
+  expect(transport.calls[2].investigation_context).toEqual(investigationContext);
+});
+
+it("ignores late upload and turn completions after the user starts a new session", async () => {
+  transport.calls.length = 0;
+  transport.signals.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  let finishUpload!: (value: unknown) => void;
+  transport.upload = () => new Promise((resolve) => { finishUpload = resolve; });
+  const upload = session.upload({ name: "late.txt", type: "text/plain", size: 4,
+    text: async () => "late" } as File);
+  await Promise.resolve();
+  await Promise.resolve();
+  await session.newSession();
+  finishUpload({ resource: { uri: "resource://old-session/upload" } });
+  await upload;
+  expect(session.attachments).toHaveLength(0);
+
+  transport.upload = undefined;
+  const oldSessionTurn = session.submit("old session question");
+  const oldSessionId = session.sessionId;
+  await session.newSession();
+  expect(session.sessionId).not.toBe(oldSessionId);
+  transport.replies[0]({ ok: true, response: "late response" });
+  await oldSessionTurn;
+  expect(session.messages).toHaveLength(0);
+  expect(session.busy).toBe(false);
+});
+
+it("keeps an accepted turn alive when navigating to another chat and isolates its completion", async () => {
+  transport.calls.length = 0; transport.replies.length = 0; transport.signals.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  const firstSession = session.sessionId;
+  const firstTurn = session.submit("long investigation");
+  await session.newSession("project-1");
+  expect(session.sessionId).not.toBe(firstSession);
+  expect(transport.signals[0]?.aborted).toBe(false);
+  const secondTurn = session.submit("separate question");
+  expect(transport.calls).toHaveLength(2);
+  transport.replies[0]({ ok: true, response: "The earlier work finished." });
+  expect(await firstTurn).toBe(false);
+  expect(session.busy).toBe(true);
+  transport.replies[1]({ ok: true, response: "The current chat response." });
+  expect(await secondTurn).toBe(true);
+  expect(session.messages.at(-1)?.content).toBe("The current chat response.");
+  expect(session.runningChats[firstSession]).toBeUndefined();
+});
+
+it("cancels a queued orientation when its attachment is removed", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  vi.useFakeTimers();
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  await session.upload({ name: "notes.txt", type: "text/plain", size: 8,
+    text: async () => "some text" } as File);
+  expect(session.attachmentOrientations).toHaveLength(1);
+  await session.removeAttachment(0);
+  expect(session.attachmentOrientations).toHaveLength(0);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.calls).toHaveLength(0);
+});
+
+it("dispatches a review queued during a queued chat turn", async () => {
+  transport.calls.length = 0; transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  const first = session.submit("first");
+  await session.submit("second");
+  transport.replies[0]({ ok: true, response: "first done" });
+  await first;
+  expect(transport.calls).toHaveLength(2);
+  await session.submitReview("review", { document_uri: "resource://doc", revision: 1, block_ids: [] }, "later-review");
+  transport.replies[1]({ ok: true, response: "second done" });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(transport.calls).toHaveLength(3);
+  expect(transport.calls[2].turn_id).toBe("later-review");
+  transport.replies[2]({ ok: true, response: "review done" });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+});
+
+it("isolates a draining review from a new session and ignores unrelated turn events", async () => {
+  transport.calls.length = 0; transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  void session.connect();
+  await session.submitReview("old review", { document_uri: "resource://old", revision: 1, block_ids: [] }, "old-review");
+  await session.newSession();
+  await session.submitReview("new review", { document_uri: "resource://new", revision: 1, block_ids: [] }, "new-review");
+  expect(transport.calls).toHaveLength(2);
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(session.documentReviews[0].state).toBe("running");
+  expect(session.busy).toBe(true);
+  transport.sink({ event_type: "turn.failed", session_id: session.sessionId, turn_id: "old-review", error: "stale" });
+  expect(session.error).toBe("");
+  transport.replies[1]({ ok: true, response: "review done" });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(session.documentReviews[0].state).toBe("completed");
+  transport.sink({ event_type: "turn.started", session_id: session.sessionId, turn_id: "old-review" });
+  expect(session.busy).toBe(false);
+});
+
+it("waits for the active HTTP turn before dispatching a queued review, despite an earlier SSE completion", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  void session.connect();
+  const ordinary = session.submit("Question");
+  await session.submitReview("Review", { document_uri: "resource://doc", revision: 2, block_ids: [] }, "review-operation");
+  transport.sink({ event_type: "turn.completed", session_id: "another-session" });
+  expect(session.busy).toBe(true);
+  transport.sink({ event_type: "turn.completed", session_id: session.sessionId, turn_id: transport.calls[0].turn_id });
+  expect(session.busy).toBe(true);
+  expect(transport.calls).toHaveLength(1);
+  expect(session.documentReviews[0].state).toBe("queued");
+  transport.replies[0]({ ok: true, response: "Answer" });
+  await ordinary;
+  expect(transport.calls).toHaveLength(2);
+  expect(transport.calls[1].turn_id).toBe("review-operation");
+  transport.replies[1]({ ok: true, response: "Reviewed" });
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  expect(session.documentReviews[0].state).toBe("completed");
+  await session.submitReview("Review", { document_uri: "resource://doc", revision: 2, block_ids: [] }, "review-operation");
+  expect(transport.calls).toHaveLength(2);
+  const cancelled = session.submit("A long request");
+  transport.sink({ event_type: "turn.cancelled", session_id: session.sessionId,
+    turn_id: transport.calls[2].turn_id, detail: "turn deadline exceeded" });
+  await cancelled;
+  expect(session.busy).toBe(false);
+  expect(session.error).toBe("turn deadline exceeded");
+});
+
+it("does not automatically replay operations that were running when the browser session was restored", async () => {
+  transport.calls.length = 0;
+  transport.replies.length = 0;
+  const sessionId = "web-restored";
+  const values = new Map<string, string>([
+    ["llama-agent-web.session-id", sessionId],
+    ["llama-agent-web.navigation-schema", "1"],
+    [`llama-agent-web.document-reviews:${sessionId}`, JSON.stringify([{
+      operation_id: "review-1", turn_id: "review-1", session_id: sessionId, prompt: "Review",
+      document_context: { document_uri: "resource://doc", revision: 1, block_ids: [] }, state: "running",
+    }])],
+    [`llama-agent-web.attachment-orientations:${sessionId}`, JSON.stringify([{
+      operation_id: "orientation-1", turn_id: "orientation-1", session_id: sessionId,
+      resource_uri: "resource://attachment", name: "notes.txt", state: "running",
+    }])],
+    [`llama-agent-web.pending-user-turns:${sessionId}`, JSON.stringify([{
+      turn_id: "turn-1", session_id: sessionId, prompt: "Question", resource_refs: [],
+      display_prompt: "Question", state: "running",
+    }])],
+  ]);
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  expect(session.documentReviews[0].state).toBe("failed");
+  expect(session.documentReviews[0].error).toMatch(/check the chat history/i);
+  expect(session.attachmentOrientations[0].state).toBe("failed");
+  expect(session.pendingUserTurns[0].state).toBe("failed");
+  expect(transport.calls).toHaveLength(0);
+});
+
+
+it("keeps the current turn attached when loading another chat fails", async () => {
+  transport.calls.length = 0; transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const session = (await import("./session")).useAgentSession();
+  const original = session.sessionId;
+  const turn = session.submit("Keep working");
+  transport.history = async () => { throw new Error("History unavailable"); };
+  await expect(session.activateChat({ id: "web-other", project_id: "", title: "Other", created_at: 1, last_active_at: 1 })).rejects.toThrow("History unavailable");
+  expect(session.sessionId).toBe(original);
+  expect(session.busy).toBe(true);
+  transport.replies[0]({ ok: true, response: "Finished original task" });
+  expect(await turn).toBe(true);
+  expect(session.messages.at(-1)?.content).toBe("Finished original task");
+});
+
+it("does not remove an attachment from a new chat after a late detach response", async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const session = (await import("./session")).useAgentSession();
+  session.attachments.push({ name: "old.txt", mime_type: "text/plain", scope: "session", uri: "resource://old" });
+  let resolveDetach!: (value: unknown) => void;
+  transport.detach = () => new Promise((resolve) => { resolveDetach = resolve; });
+  const removal = session.removeAttachment(0);
+  await session.newSession();
+  session.attachments.push({ name: "new.txt", mime_type: "text/plain", scope: "session", uri: "resource://new" });
+  resolveDetach({ chat: {} });
+  await removal;
+  expect(session.attachments.map((item) => item.uri)).toEqual(["resource://new"]);
+});
+
+it("detaches project resources using their owning scope", async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const session = (await import("./session")).useAgentSession();
+  session.projectId = "project-test";
+  session.attachments.push({ name: "research.md", mime_type: "text/markdown", scope: "project", uri: "resource://project/research" });
+  await session.removeAttachment(0);
+  expect(transport.detachRequests[0]).toMatchObject({ projectId: "project-test", uri: "resource://project/research", scope: "project", action: "detach" });
+});
+
+it("updates the scoped chat title from the latest persisted goal", async () => {
+  transport.calls.length = 0; transport.replies.length = 0;
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  vi.resetModules();
+  const { useAgentSession } = await import("./session");
+  const session = useAgentSession();
+  for (const title of ["Investigate failed authentication", "Explain the database timeout"]) {
+    const pending = session.submit("Continue the investigation");
+    transport.replies.at(-1)!({ ok: true, response: "Done", chat: { id: session.sessionId, project_id: session.projectId, title } });
+    expect(await pending).toBe(true);
+    expect(session.chatTitle).toBe(title);
+    expect(values.get("llama-agent-web.chat-title")).toBe(title);
+  }
+  const pending = session.submit("Continue");
+  transport.replies.at(-1)!({ ok: true, response: "Done", chat: { id: "other-chat", project_id: session.projectId, title: "Wrong chat" } });
+  await pending;
+  expect(session.chatTitle).toBe("Explain the database timeout");
+});
+
+
+it("shows a validated blocked outcome without accepting it or displaying an infrastructure error", async () => {
+  transport.calls.length=0; transport.replies.length=0;
+  const values=new Map<string,string>();
+  vi.stubGlobal("sessionStorage",{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value)});
+  vi.resetModules();
+  const {useAgentSession}=await import("./session");
+  const session=useAgentSession();
+  const pending=session.submit("Inspect the configured source");
+  const turnId=String(transport.calls[0].turn_id);
+  const progress={schema:"review-progress.v1",plan_id:"blocked-plan",draft_fingerprint:"",evidence_fingerprint:"evidence",
+    accepted:false,paused:false,parts:[],remaining:[],follow_up:[],blocked_reason:"The case is saved; collection is unavailable."};
+  transport.sink({event_type:"turn.failed",turn_id:turnId,session_id:session.sessionId,error:"Source unavailable"});
+  transport.replies[0]({ok:false,response:"",error:"Source unavailable",review_progress:progress});
+  expect(await pending).toBe(false);
+  expect(session.error).toBe("");
+  const assistant=session.messages.find(message=>message.role==="assistant");
+  expect(assistant?.content).toContain("Work blocked");
+  expect(assistant?.reviewProgress?.accepted).toBe(false);
+  expect(assistant?.reviewProgress?.paused).toBe(false);
+  expect(assistant?.unverifiedDraft).toBeUndefined();
+  transport.history=async(id,project)=>({chat:{id,project_id:project,title:"Blocked"},history_available:true,messages:[{
+    id:assistant?.id,turn_id:turnId,role:"assistant",content:assistant?.content,recorded_at:1,sequence:1,review_progress:progress}]});
+  await session.activateChat({id:session.sessionId,project_id:"",title:"Blocked",created_at:1,last_active_at:1});
+  expect(session.messages.find(message=>message.role==="assistant")?.reviewProgress?.blocked_reason).toBe(progress.blocked_reason);
+});

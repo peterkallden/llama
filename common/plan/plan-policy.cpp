@@ -1,0 +1,377 @@
+#include "plan/plan-policy.h"
+#include "plan/plan-workflow-state.h"
+
+#include <algorithm>
+#include <functional>
+#include <map>
+#include <set>
+#include <nlohmann/json.hpp>
+
+const char * common_plan_operation_kind_name(common_plan_operation_kind kind) {
+    switch (kind) {
+        case common_plan_operation_kind::create_plan: return "create_plan"; case common_plan_operation_kind::revise_goal: return "revise_goal";
+        case common_plan_operation_kind::add_step: return "add_step"; case common_plan_operation_kind::revise_step: return "revise_step";
+        case common_plan_operation_kind::replace_step: return "replace_step"; case common_plan_operation_kind::remove_step: return "remove_step";
+        case common_plan_operation_kind::activate_step: return "activate_step"; case common_plan_operation_kind::reset_step: return "reset_step";
+        case common_plan_operation_kind::complete_step: return "complete_step"; case common_plan_operation_kind::block_step: return "block_step";
+        case common_plan_operation_kind::unblock_step: return "unblock_step"; case common_plan_operation_kind::fail_step: return "fail_step";
+        case common_plan_operation_kind::skip_step: return "skip_step"; case common_plan_operation_kind::add_dependency: return "add_dependency";
+        case common_plan_operation_kind::remove_dependency: return "remove_dependency"; case common_plan_operation_kind::add_constraint: return "add_constraint";
+        case common_plan_operation_kind::add_assumption: return "add_assumption"; case common_plan_operation_kind::invalidate_assumption: return "invalidate_assumption";
+        case common_plan_operation_kind::record_observation: return "record_observation"; case common_plan_operation_kind::set_next_action: return "set_next_action";
+        case common_plan_operation_kind::request_replan: return "request_replan"; case common_plan_operation_kind::request_route_transition: return "request_route_transition"; case common_plan_operation_kind::complete_plan: return "complete_plan";
+        case common_plan_operation_kind::fail_plan: return "fail_plan";
+    } return "unknown";
+}
+
+bool common_plan_workflow_control_observation(const common_plan_state & plan, const common_plan_observation & observation) {
+    if (plan.phase_review_required &&
+            (observation.source == "method_phase_review" || observation.source == "response_review")) return true;
+    if (!plan.workflow_definition || plan.workflow_definition->transitions.empty()) return false;
+    for (const auto * source : {"workflow_arguments", "workflow_verification", "workflow_choice",
+            "workflow_grounding_policy", "workflow_terminal_choice", "artifact_continuation",
+            "workflow_handoff", "workflow_continuation_resolution", "response_review"})
+        if (observation.source == source) return true;
+    return false;
+}
+
+common_plan_storage_capacity common_plan_remaining_capacity(const common_plan_state & plan,
+        const common_plan_policy_config & config) {
+    size_t observations = 0, controls = 0;
+    for (const auto & observation : plan.observations) {
+        if (observation.source == "resource_chunk_planned" || observation.source == "resource_chunk" ||
+                observation.source == "resource_chunk_unresolved") continue;
+        if (common_plan_workflow_control_observation(plan, observation)) ++controls;
+        else ++observations;
+    }
+    const auto remaining = [](size_t used, size_t maximum) { return used < maximum ? maximum - used : 0; };
+    return {remaining(plan.steps.size(),config.max_steps),remaining(observations,config.max_observations),
+        remaining(controls,config.max_workflow_control_observations)};
+}
+
+common_plan_policy::common_plan_policy(common_plan_policy_config config) : config(config) {}
+
+static const common_plan_step * find_step(const common_plan_state & plan, const std::string & id) {
+    for (const auto & step : plan.steps) if (step.id == id) return &step;
+    return nullptr;
+}
+static bool transition(common_plan_step_status from, common_plan_step_status to) {
+    return (from == common_plan_step_status::pending && (to == common_plan_step_status::active || to == common_plan_step_status::skipped)) ||
+           (from == common_plan_step_status::active && (to == common_plan_step_status::completed || to == common_plan_step_status::blocked || to == common_plan_step_status::failed)) ||
+           (from == common_plan_step_status::blocked && (to == common_plan_step_status::active || to == common_plan_step_status::failed)) ||
+           (from == common_plan_step_status::failed && to == common_plan_step_status::active);
+}
+static bool reset_transition(common_plan_step_status from) {
+    return from == common_plan_step_status::active || from == common_plan_step_status::blocked ||
+           from == common_plan_step_status::failed || from == common_plan_step_status::skipped;
+}
+static bool plan_transition(common_plan_status from, common_plan_status to) {
+    return (from == common_plan_status::proposed && to == common_plan_status::active) ||
+           (from == common_plan_status::active && (to == common_plan_status::completed || to == common_plan_status::blocked || to == common_plan_status::failed)) ||
+           (from == common_plan_status::blocked && (to == common_plan_status::active || to == common_plan_status::failed));
+}
+static bool has_cycle(const common_plan_state & plan, const common_plan_operation & op) {
+    std::map<std::string, std::vector<std::string>> graph;
+    for (const auto & step : plan.steps) graph[step.id] = step.depends_on;
+    if (op.kind == common_plan_operation_kind::add_dependency && op.step_id && op.target_id) graph[*op.step_id].push_back(*op.target_id);
+    if (op.kind == common_plan_operation_kind::replace_step && op.step_id && op.step) graph[*op.step_id] = op.step->depends_on;
+    std::set<std::string> visiting, visited;
+    std::function<bool(const std::string &)> visit = [&](const std::string & id) { if (visiting.count(id)) return true; if (visited.count(id)) return false; visiting.insert(id); for (const auto & d : graph[id]) if (visit(d)) return true; visiting.erase(id); visited.insert(id); return false; };
+    for (const auto & item : graph) if (visit(item.first)) return true;
+    return false;
+}
+
+common_plan_policy_result common_plan_policy::validate(const common_plan_state & plan, const common_plan_operation & op) const {
+    auto deny = [](const std::string & reason) { return common_plan_policy_result{false, reason}; };
+    if (op.plan_id.empty() || op.plan_id != plan.id) return deny("operation plan id does not match plan");
+    if (op.reason_summary.size() > config.max_string_length) return deny("reason summary is too long");
+    if (op.expected_version != plan.version) return deny("stale plan version");
+    if (op.kind != common_plan_operation_kind::request_route_transition &&
+            (!op.route_steps.empty() || op.route_handoff)) return deny("route entry is only valid in a host route transition");
+    if (plan.workflow_definition && !plan.workflow_definition->verification_checks.empty() &&
+            (op.kind == common_plan_operation_kind::remove_step || op.kind == common_plan_operation_kind::skip_step) && op.step_id) {
+        const auto * step = find_step(plan, *op.step_id);
+        if (step && !step->optional && step->semantic_alias && step->semantic_alias->rfind("workflow-transition:", 0) == 0)
+            return deny("mandatory guarded workflow transitions require a host-authorized route change");
+    }
+    const auto guarded_result = [&](const common_plan_step & step) {
+        return step.tool_call && (!step.tool_call->result_requirement_json.empty() ||
+            (plan.workflow_definition && plan.workflow_definition->result_contracts.count(step.tool_call->name)));
+    };
+    if (!op.host_authorized && op.step_id &&
+            (op.kind == common_plan_operation_kind::remove_step || op.kind == common_plan_operation_kind::skip_step)) {
+        const auto * prior = find_step(plan, *op.step_id);
+        if (prior && !prior->optional && guarded_result(*prior))
+            return deny("mandatory result contract cannot be removed or skipped by model operations");
+    }
+    if (!op.host_authorized && op.step && op.step->tool_call &&
+            (op.kind == common_plan_operation_kind::add_step || op.kind == common_plan_operation_kind::replace_step || op.kind == common_plan_operation_kind::revise_step)) {
+        const auto * prior = find_step(plan, op.step_id.value_or(op.step->id));
+        const auto expected = prior && prior->tool_call ? prior->tool_call->result_requirement_json : std::string{};
+        if (op.step->tool_call->result_requirement_json != expected ||
+                (!expected.empty() && prior->tool_call->name != op.step->tool_call->name))
+            return deny("result requirements are host-owned and cannot be changed by model operations");
+    }
+    if (!op.host_authorized && op.step && !op.step->tool_call) {
+        const auto * prior = find_step(plan, op.step_id.value_or(op.step->id));
+        if (prior && guarded_result(*prior)) return deny("model replacement cannot erase a guarded analysis operation");
+    }
+    if (op.kind == common_plan_operation_kind::add_step) {
+        if (!op.step || op.step->id.empty() || op.step->title.empty()) return deny("add_step requires an identified step with a title");
+        if (op.step->objective.size() > config.max_string_length || op.step->intended_contribution.size() > config.max_string_length) return deny("step objective or contribution is too long");
+        const auto mode = common_plan_step_effective_mode(*op.step);
+        if ((mode == common_plan_step_mode::tool) != op.step->tool_call.has_value()) return deny("step mode does not match tool binding");
+        if (op.step->generated_from_memory && op.step->source_memory_ids.empty()) return deny("memory-generated step requires source memory id");
+        if (!op.step->generated_from_memory && !op.step->source_memory_ids.empty()) return deny("source memory ids require memory-generated step");
+        if (plan.steps.size() >= config.max_steps) return deny("plan step limit reached");
+        if (find_step(plan, op.step->id)) return deny("step already exists");
+        for (const auto & dep : op.step->depends_on) if (!find_step(plan, dep)) return deny("step dependency does not exist");
+    }
+    if (op.kind == common_plan_operation_kind::revise_step) {
+        if (!op.step) return deny("revise_step requires a replacement step");
+        const auto * prior = find_step(plan, op.step->id);
+        if (!prior) return deny("revise_step references an unknown step");
+        if (plan.workflow_definition && !plan.workflow_definition->verification_checks.empty() &&
+                prior->semantic_alias && prior->semantic_alias->rfind("workflow-transition:", 0) == 0 &&
+                (prior->semantic_alias != op.step->semantic_alias || !op.step->tool_call ||
+                 !prior->tool_call || prior->tool_call->name != op.step->tool_call->name))
+            return deny("workflow verification requires the original transition and tool identity");
+        if (prior->title != op.step->title || prior->objective != op.step->objective || prior->intended_contribution != op.step->intended_contribution || prior->depends_on != op.step->depends_on ||
+                prior->required_evidence != op.step->required_evidence || prior->source_memory_ids != op.step->source_memory_ids ||
+                prior->status != op.step->status || prior->optional != op.step->optional || prior->generated_from_memory != op.step->generated_from_memory ||
+                prior->blocked_by != op.step->blocked_by || prior->result_summary != op.step->result_summary ||
+                prior->method_phase_id != op.step->method_phase_id || prior->method_turn_id != op.step->method_turn_id) return deny("revise_step may only bind a tool to an unchanged step");
+        if (!op.step->tool_call || !op.step->selected_tool || *op.step->selected_tool != op.step->tool_call->name || common_plan_step_effective_mode(*op.step) != common_plan_step_mode::tool) return deny("revise_step requires a consistent tool binding");
+    }
+    if (op.kind == common_plan_operation_kind::replace_step) {
+        if (!op.step_id || !op.step) return deny("replace_step requires step_id and step");
+        const auto * prior = find_step(plan, *op.step_id);
+        if (!prior) return deny("replace_step references an unknown step");
+        if (plan.workflow_definition && !plan.workflow_definition->verification_checks.empty() &&
+                prior->semantic_alias && prior->semantic_alias->rfind("workflow-transition:", 0) == 0 &&
+                (prior->semantic_alias != op.step->semantic_alias || !op.step->tool_call ||
+                 !prior->tool_call || prior->tool_call->name != op.step->tool_call->name))
+            return deny("workflow verification requires the original transition and tool identity");
+        if (prior->status == common_plan_step_status::completed) return deny("replace_step cannot replace a completed step");
+        if (op.step->id != *op.step_id) return deny("replace_step step id must match target step id");
+        if (op.step->title.empty()) return deny("replace_step requires a step title");
+        if (op.step->objective.size() > config.max_string_length || op.step->intended_contribution.size() > config.max_string_length) return deny("step objective or contribution is too long");
+        const auto mode = common_plan_step_effective_mode(*op.step);
+        if ((mode == common_plan_step_mode::tool) != op.step->tool_call.has_value()) return deny("step mode does not match tool binding");
+        if (op.step->generated_from_memory && op.step->source_memory_ids.empty()) return deny("memory-generated step requires source memory id");
+        if (!op.step->generated_from_memory && !op.step->source_memory_ids.empty()) return deny("source memory ids require memory-generated step");
+        for (const auto & dep : op.step->depends_on) {
+            if (dep == *op.step_id) return deny("step dependency cycle rejected");
+            if (!find_step(plan, dep)) return deny("step dependency does not exist");
+        }
+        if (has_cycle(plan,op)) return deny("step dependency cycle rejected");
+        (void) prior;
+    }
+    if (op.kind == common_plan_operation_kind::add_dependency) {
+        if (!op.step_id || !op.target_id || !find_step(plan, *op.step_id) || !find_step(plan, *op.target_id)) return deny("dependency references an unknown step");
+        if (*op.step_id == *op.target_id || has_cycle(plan, op)) return deny("dependency cycle rejected");
+    }
+    if (op.kind == common_plan_operation_kind::activate_step || op.kind == common_plan_operation_kind::reset_step || op.kind == common_plan_operation_kind::complete_step || op.kind == common_plan_operation_kind::block_step || op.kind == common_plan_operation_kind::unblock_step || op.kind == common_plan_operation_kind::fail_step || op.kind == common_plan_operation_kind::skip_step) {
+        if (!op.step_id) return deny("step operation requires step id"); const auto * step = find_step(plan, *op.step_id); if (!step) return deny("unknown step");
+        common_plan_step_status target = common_plan_step_status::pending;
+        if (op.kind == common_plan_operation_kind::activate_step || op.kind == common_plan_operation_kind::unblock_step) target = common_plan_step_status::active;
+        if (op.kind == common_plan_operation_kind::reset_step) target = common_plan_step_status::pending;
+        if (op.kind == common_plan_operation_kind::complete_step) target = common_plan_step_status::completed;
+        if (op.kind == common_plan_operation_kind::block_step) target = common_plan_step_status::blocked;
+        if (op.kind == common_plan_operation_kind::fail_step) target = common_plan_step_status::failed;
+        if (op.kind == common_plan_operation_kind::skip_step) target = common_plan_step_status::skipped;
+        if (op.kind == common_plan_operation_kind::reset_step) {
+            if (!reset_transition(step->status)) return deny("illegal step reset");
+        } else if (!transition(step->status, target)) return deny("illegal step state transition");
+        if (target == common_plan_step_status::active) for (const auto & dep : step->depends_on) { const auto * d = find_step(plan, dep); if (!d || (d->status != common_plan_step_status::completed && !common_plan_workflow_failure_handled(plan, *d))) return deny("step has unmet dependency"); }
+        if (target == common_plan_step_status::completed && config.require_evidence_for_completion) {
+            for (const auto & id : step->required_evidence) {
+                if (std::find(op.evidence_ids.begin(), op.evidence_ids.end(), id) == op.evidence_ids.end()) return deny("required evidence is missing");
+            }
+            if (step->tool_call) {
+                bool observed = false;
+                for (const auto & evidence_id : op.evidence_ids) {
+                    for (const auto & observation : plan.observations) {
+                        if (observation.id == evidence_id && observation.source == step->tool_call->name) {
+                            observed = true;
+                            break;
+                        }
+                    }
+                    if (observed) break;
+                }
+                if (!observed) return deny("tool step requires a successful tool observation");
+            }
+        }
+        // A tool-backed step is a host-execution claim.  It may never be
+        // completed merely because a planner or reflection response names
+        // it: the completing operation must carry the observation emitted by
+        // that exact tool step.
+        if (target == common_plan_step_status::completed && step->tool_call) {
+            if (guarded_result(*step)) {
+                if (!op.host_authorized || step->tool_call->result_requirement_json.empty())
+                    return deny("analysis completion requires a host-bound result requirement");
+                for (const auto * phase : {"before_tool", "after_tool"}) {
+                    bool passed = false;
+                    for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+                        if (item->source != "workflow_verification") continue;
+                        const auto value = nlohmann::ordered_json::parse(item->summary, nullptr, false);
+                        if (!value.is_object() || value.value("step_id", nlohmann::ordered_json{}) != step->id ||
+                                value.value("check", nlohmann::ordered_json{}) != "analysis-result-contract" ||
+                                value.value("phase", nlohmann::ordered_json{}) != phase) continue;
+                        passed = value.value("status", nlohmann::ordered_json{}) == "passed";
+                        break;
+                    }
+                    if (!passed) return deny("analysis completion requires passed argument and result verification");
+                }
+            }
+
+            if (plan.workflow_definition && !plan.workflow_definition->verification_checks.empty()) {
+                std::string transition;
+                if (step->semantic_alias && step->semantic_alias->rfind("workflow-transition:", 0) == 0) {
+                    const auto comma = step->semantic_alias->rfind(',');
+                    transition = step->semantic_alias->substr(comma == std::string::npos ? std::string("workflow-transition:").size() : comma + 1);
+                }
+                for (const auto & check : plan.workflow_definition->verification_checks) {
+                    if (!check.required || check.phase == common_plan_verification_phase::before_answer ||
+                            (!check.tool_name.empty() && check.tool_name != step->tool_call->name) ||
+                            (!check.transition_id.empty() && check.transition_id != transition)) continue;
+                    if (!op.host_authorized) return deny("guarded workflow completion is host-authorized only");
+                    bool passed = false;
+                    const auto phase = check.phase == common_plan_verification_phase::before_tool ? "before_tool" : "after_tool";
+                    for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+                        if (item->source != "workflow_verification") continue;
+                        const auto proof = nlohmann::ordered_json::parse(item->summary, nullptr, false);
+                        if (!proof.is_object() || proof.value("step_id", std::string{}) != step->id ||
+                                proof.value("check", std::string{}) != check.id || proof.value("phase", std::string{}) != phase) continue;
+                        passed = proof.value("status", std::string{}) == "passed" &&
+                            proof.value("workflow_revision", std::string{}) == plan.workflow_definition->workflow_revision;
+                        break;
+                    }
+                    if (!passed) return deny("mandatory workflow verification is missing or incomplete");
+                }
+            }
+            const std::string tool_observation_prefix = "tool:" + step->id + ":";
+            const bool has_tool_observation = std::any_of(
+                op.evidence_ids.begin(), op.evidence_ids.end(),
+                [&](const std::string & evidence_id) {
+                    return evidence_id.rfind(tool_observation_prefix, 0) == 0;
+                });
+            if (!has_tool_observation) {
+                return deny("tool step completion requires its verified tool observation");
+            }
+        }
+    }
+    if (op.kind == common_plan_operation_kind::complete_plan ||
+            (op.kind == common_plan_operation_kind::complete_step && op.step_id &&
+             find_step(plan, *op.step_id) &&
+             common_plan_step_effective_mode(*find_step(plan, *op.step_id)) == common_plan_step_mode::final_response)) {
+        // A completed work plan may still need draft synthesis. Gate the
+        // response step here; the runtime separately verifies answers even
+        // when a planner produced no explicit final-response step.
+        if (op.kind == common_plan_operation_kind::complete_step &&
+                plan.workflow_definition && !plan.workflow_definition->result_contracts.empty()) {
+            const size_t first = plan.route_binding ? std::min(plan.route_binding->workflow_step_start_index, plan.steps.size()) : 0;
+            for (size_t index = first; index < plan.steps.size(); ++index) {
+                const auto & analysis = plan.steps[index];
+                if (analysis.optional || !analysis.tool_call || analysis.status != common_plan_step_status::completed ||
+                        !plan.workflow_definition->result_contracts.count(analysis.tool_call->name)) continue;
+                if (!op.host_authorized) return deny("analysis answer completion is host-authorized only");
+                bool passed = false;
+                for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+                    if (item->source != "workflow_verification") continue;
+                    const auto proof = nlohmann::ordered_json::parse(item->summary, nullptr, false);
+                    if (!proof.is_object() || proof.value("check", nlohmann::ordered_json{}) != "analysis-result-contract" ||
+                            proof.value("phase", nlohmann::ordered_json{}) != "before_answer" ||
+                            proof.value("analysis_step_id", nlohmann::ordered_json{}) != analysis.id) continue;
+                    passed = proof.value("status", nlohmann::ordered_json{}) == "passed" &&
+                        proof.value("workflow_revision", nlohmann::ordered_json{}) == plan.workflow_definition->workflow_revision;
+                    break;
+                }
+                if (!passed) return deny("analysis answer coverage is missing or incomplete");
+            }
+        }
+        for (auto item = plan.observations.rbegin(); item != plan.observations.rend(); ++item) {
+            if (item->source != "response_review") continue;
+            const auto review = nlohmann::ordered_json::parse(item->summary, nullptr, false);
+            if (!review.is_object() || review.value("accepted", nlohmann::ordered_json(false)) != true)
+                return deny("response review remains unresolved");
+            break;
+        }
+    }
+    if (op.kind == common_plan_operation_kind::complete_plan) { if (!plan_transition(plan.status, common_plan_status::completed)) return deny("illegal plan state transition"); for (const auto & step : plan.steps) if (!step.optional && step.status != common_plan_step_status::completed && step.status != common_plan_step_status::skipped && !common_plan_workflow_failure_handled(plan, step)) return deny("mandatory steps remain incomplete"); }
+    if (op.kind == common_plan_operation_kind::fail_plan && !plan_transition(plan.status, common_plan_status::failed)) return deny("illegal plan state transition");
+    if (op.kind == common_plan_operation_kind::record_observation) {
+        if (!op.observation) return deny("invalid or excessive observation");
+        const auto is_chunk = [](const common_plan_observation & observation) {
+            return observation.source == "resource_chunk_planned" ||
+                observation.source == "resource_chunk" || observation.source == "resource_chunk_unresolved";
+        };
+        const bool chunk = is_chunk(*op.observation);
+        if (chunk && !op.host_authorized) return deny("resource chunk observations are host-authorized only");
+        const size_t chunk_count = std::count_if(plan.observations.begin(), plan.observations.end(), is_chunk);
+        const bool control = common_plan_workflow_control_observation(plan, *op.observation);
+        const auto capacity = common_plan_remaining_capacity(plan, config);
+        if ((chunk && chunk_count >= config.max_resource_chunk_observations) ||
+                (!chunk && (control ? capacity.workflow_control == 0 : capacity.observations == 0)))
+            return deny("invalid or excessive observation");
+    }
+    if (op.kind == common_plan_operation_kind::record_observation && op.observation && !op.host_authorized &&
+            (op.observation->source == "prior_work_checkpoint" || op.observation->source == "method_phase_review" ||
+             op.observation->source == "blueprint_outline" ||
+             op.observation->source == "workflow_verification" || op.observation->source == "workflow_arguments" ||
+             op.observation->source == "workflow_choice" ||
+             op.observation->source == "workflow_handoff" || op.observation->source == "workflow_grounding_policy" ||
+             op.observation->source == "response_review" || op.observation->source == "declared_claim" || op.observation->source == "artifact_snapshot" ||
+             op.observation->source == "artifact_section" || op.observation->source == "artifact_publication" ||
+             op.observation->source == "research_checkpoint" || op.observation->source == "artifact_continuation" ||
+             op.observation->source == "workflow_terminal_choice" || op.observation->source == "workflow_handled_failure" ||
+             op.observation->source == "workflow_continuation_resolution" || op.observation->source == "unverified_draft"))
+        return deny("workflow grounding and artifact publication observations are host-authorized only");
+    if (op.kind == common_plan_operation_kind::request_route_transition) {
+        if (!op.host_authorized || !op.route_binding || !op.workflow_definition) return deny("route transition is host-authorized only");
+        if (op.route_binding->route_id.empty() || op.route_binding->policy_revision.empty()) return deny("route transition requires a complete route binding");
+        if (op.route_binding->workflow_ref != op.workflow_definition->workflow_ref ||
+                op.route_binding->workflow_revision != op.workflow_definition->workflow_revision ||
+                op.route_binding->graph_revision != op.workflow_definition->graph_revision) return deny("route transition workflow identity does not match its binding");
+        auto projected = plan;
+        for (const auto & step : op.route_steps) {
+            if (step.status != common_plan_step_status::pending ||
+                    common_plan_step_effective_mode(step) == common_plan_step_mode::final_response)
+                return deny("route entry steps must be pending executable work");
+            for (const auto & dependency : step.depends_on) {
+                const auto * producer = find_step(projected, dependency);
+                if (producer && common_plan_step_effective_mode(*producer) == common_plan_step_mode::final_response)
+                    return deny("route entry cannot depend on final synthesis");
+            }
+            common_plan_operation add;
+            add.kind = common_plan_operation_kind::add_step;
+            add.plan_id = plan.id; add.expected_version = plan.version;
+            add.host_authorized = true; add.step = step;
+            const auto checked = validate(projected, add);
+            if (!checked.allowed) return checked;
+            projected.steps.push_back(step);
+        }
+        if (op.route_handoff) {
+            if (op.route_handoff->source != "workflow_handoff" || op.route_steps.empty())
+                return deny("route handoff requires executable entry work");
+            common_plan_operation record;
+            record.kind = common_plan_operation_kind::record_observation;
+            record.plan_id = plan.id; record.expected_version = plan.version;
+            record.host_authorized = true; record.observation = op.route_handoff;
+            const auto checked = validate(projected, record);
+            if (!checked.allowed) return checked;
+            const auto snapshot = nlohmann::ordered_json::parse(op.route_handoff->summary, nullptr, false);
+            if (!snapshot.is_object() || !snapshot.contains("value") ||
+                    !snapshot.contains("source_fingerprint") || !snapshot["source_fingerprint"].is_string() ||
+                    !snapshot.contains("target_revision") || !snapshot["target_revision"].is_string() ||
+                    snapshot.value("source_fingerprint", std::string{}) != op.route_binding->continuation_source_fingerprint ||
+                    snapshot.value("target_revision", std::string{}) != op.workflow_definition->workflow_revision)
+                return deny("route handoff does not match the committed route");
+            if (op.workflow_continuation_record &&
+                    (op.workflow_continuation_record->source_observation_id.empty() ||
+                     op.route_handoff->evidence_ids != std::vector<std::string>{op.workflow_continuation_record->source_observation_id}))
+                return deny("route handoff evidence does not match its continuation record");
+        }
+    }
+    return {true, {}};
+}

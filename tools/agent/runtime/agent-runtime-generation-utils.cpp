@@ -1,0 +1,77 @@
+#include "tools/agent/runtime/agent-runtime-generation-utils.h"
+#include "agent/investigation-context.h"
+#include <algorithm>
+
+std::string make_agent_runtime_generation_trace_id(
+        const common_agent_request & request,
+        common_agent_generation_purpose purpose) {
+    const std::string base = !request.turn_id.empty() ? request.turn_id : request.session_id;
+    return base + ":" + common_agent_generation_purpose_name(purpose);
+}
+
+std::string describe_agent_runtime_generation_failure(
+        const char * label,
+        const common_agent_generation_result & result) {
+    std::string text = std::string(label) + " failed";
+    text += " (status=" + std::string(common_agent_generation_status_name(result.status));
+    text += ", stop=" + std::string(common_agent_generation_stop_reason_name(result.stop_reason)) + ")";
+    if (!result.error_message.empty()) {
+        text += ": " + result.error_message;
+    }
+    return text;
+}
+
+common_agent_generation_options make_agent_runtime_generation_options(
+        const common_agent_generation_config & generation_config,
+        int n_predict) {
+    common_agent_generation_options options;
+    options.n_predict = generation_config.n_predict;
+    options.n_threads = generation_config.n_threads;
+    options.generation_trace = generation_config.generation_trace;
+    return common_agent_generation_options_with_n_predict(
+        options,
+        n_predict);
+}
+
+common_agent_generation_request make_agent_runtime_generation_request(
+        const common_agent_request & request,
+        common_agent_generation_purpose purpose,
+        std::vector<common_chat_msg> messages,
+        common_agent_generation_options options,
+        std::string json_schema,
+        std::vector<common_chat_tool> tools,
+        common_chat_tool_choice tool_choice) {
+    const auto investigation = common_agent_render_investigation_context(request);
+    if (!investigation.empty()) {
+        const auto user = std::find_if(messages.rbegin(),messages.rend(),[](const auto & message) { return message.role == "user"; });
+        if (user != messages.rend()) user->content += investigation;
+        else messages.push_back({"user", investigation});
+    }
+    auto generation = common_agent_make_generation_request(
+        purpose,
+        make_agent_runtime_generation_trace_id(request, purpose),
+        common_agent_scope_from_request(request),
+        std::move(messages),
+        std::move(options),
+        std::move(json_schema),
+        std::move(tools),
+        tool_choice,
+        request.flydelta_activation,
+        request.flydelta_capture);
+    common_chat_msg cognitive_mode;
+    cognitive_mode.role = "system";
+    cognitive_mode.content = common_agent_cognitive_mode_instruction(
+        request.cognitive_state.mode);
+    generation.messages.insert(generation.messages.begin(), std::move(cognitive_mode));
+    // Default to per-message cost diagnostics. Planner callers can replace
+    // these spans with finer contract/context sections after composition.
+    for (size_t index = 0; index < generation.messages.size(); ++index) {
+        generation.prompt_sections.push_back({index == 0 ? "cognitive_mode" : "message_" + std::to_string(index),
+            index, 0, generation.messages[index].content.size()});
+    }
+    generation.input_resources.reserve(request.input_resources.size());
+    for (const auto & input : request.input_resources) {
+        generation.input_resources.push_back({input.resource, input.role, input.required});
+    }
+    return generation;
+}

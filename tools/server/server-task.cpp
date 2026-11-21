@@ -11,6 +11,420 @@
 #include "server-common.h"
 
 #include <sstream>
+#include <cmath>
+#include <limits>
+#include <algorithm>
+#include <set>
+bool server_task_cvec_equal(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right) {
+    if (left == right) {
+        return true;
+    }
+    if (!left || !right) {
+        return false;
+    }
+    if (left->identity != right->identity ||
+            left->content_hash != right->content_hash ||
+            left->n_embd != right->n_embd ||
+            left->il_start != right->il_start ||
+            left->il_end != right->il_end ||
+            left->data.size() != right->data.size()) {
+        return false;
+    }
+    // A host-provided hash is the normal fast path.  Compare the payload when
+    // no hash is available so an incomplete identity can never alias state.
+    return !left->content_hash.empty() || left->data == right->data;
+}
+
+bool server_task_cvec_batch_compatible(
+        const server_task_cvec_ptr & left,
+        const server_task_cvec_ptr & right) {
+    // Native factorized compatibility is checked when binding. Keep a batch
+    // eligible for sparse materialization even when its rank/basis layout
+    // differs between rows.
+    const bool same_representation = left && right &&
+        static_cast<bool>(left->factorized_basis) == static_cast<bool>(right->factorized_basis);
+    return left && right && left->n_embd == right->n_embd &&
+        left->il_start == right->il_start && left->il_end == right->il_end &&
+        left->data.size() == right->data.size() &&
+        left->sparse_layer_indices == right->sparse_layer_indices &&
+        left->sparse_data.size() == right->sparse_data.size() &&
+        left->execution_batch_id == right->execution_batch_id &&
+        left->execution_wave_id == right->execution_wave_id &&
+        left->execution_phase == right->execution_phase &&
+        left->execution_strategy == right->execution_strategy &&
+        same_representation;
+}
+
+void server_task_cvec_batch::clear() {
+    entries.clear();
+}
+
+bool server_task_cvec_batch::add(
+        const llama_seq_id seq_id,
+        server_task_cvec_ptr cvec,
+        std::string & error) {
+    error.clear();
+    if (!cvec) {
+        error = "per-sequence control vector is null";
+        return false;
+    }
+    if (std::any_of(entries.begin(), entries.end(), [seq_id](const entry & value) {
+            return value.seq_id == seq_id;
+        })) {
+        error = "duplicate sequence id in per-sequence control-vector batch";
+        return false;
+    }
+    if (!entries.empty()) {
+        const server_task_cvec_ptr & first = entries.front().cvec;
+        if (!server_task_cvec_batch_compatible(first, cvec)) {
+            error = "per-sequence control vectors have incompatible geometry";
+            return false;
+        }
+    }
+    entries.push_back({seq_id, std::move(cvec)});
+    return true;
+}
+
+bool server_task_cvec_batch::materialize(
+        std::vector<llama_seq_id> & seq_ids,
+        std::vector<const float *> & data,
+        size_t & data_len,
+        int32_t & n_embd,
+        int32_t & il_start,
+        int32_t & il_end,
+        std::string & error) const {
+    error.clear();
+    seq_ids.clear();
+    data.clear();
+    data_len = 0;
+    n_embd = 0;
+    il_start = 1;
+    il_end = 0;
+    if (entries.empty()) {
+        error = "per-sequence control-vector batch is empty";
+        return false;
+    }
+
+    const server_task_cvec & first = *entries.front().cvec;
+    data_len = first.data.size();
+    n_embd = first.n_embd;
+    il_start = first.il_start;
+    il_end = first.il_end;
+    seq_ids.reserve(entries.size());
+    data.reserve(entries.size());
+    for (const entry & value : entries) {
+        seq_ids.push_back(value.seq_id);
+        data.push_back(value.cvec->data.data());
+    }
+    return true;
+}
+
+bool server_task_cvec_batch::materialize_sparse(
+        std::vector<llama_seq_id> & seq_ids,
+        std::vector<const float *> & data,
+        size_t & data_len,
+        int32_t & n_embd,
+        std::vector<uint32_t> & layer_indices,
+        std::string & error) const {
+    error.clear();
+    seq_ids.clear();
+    data.clear();
+    layer_indices.clear();
+    data_len = 0;
+    n_embd = 0;
+    if (entries.empty() || entries.front().cvec->sparse_layer_indices.empty()) {
+        error = "per-sequence sparse control-vector batch is empty";
+        return false;
+    }
+
+    const server_task_cvec & first = *entries.front().cvec;
+    layer_indices = first.sparse_layer_indices;
+    data_len = first.sparse_data.size();
+    n_embd = first.n_embd;
+    seq_ids.reserve(entries.size());
+    data.reserve(entries.size());
+    for (const entry & value : entries) {
+        if (value.cvec->sparse_layer_indices != layer_indices ||
+                value.cvec->sparse_data.size() != data_len) {
+            error = "per-sequence sparse control vectors have incompatible layer layouts";
+            seq_ids.clear();
+            data.clear();
+            layer_indices.clear();
+            return false;
+        }
+        seq_ids.push_back(value.seq_id);
+        data.push_back(value.cvec->sparse_data.data());
+    }
+    return true;
+}
+
+bool server_task_cvec_batch::materialize_factorized(
+        std::vector<llama_seq_id> & seq_ids,
+        std::shared_ptr<const server_task_cvec::factorized_basis_data> & basis,
+        std::vector<const float *> & coefficients,
+        int32_t & n_embd,
+        std::string & error) const {
+    error.clear();
+    seq_ids.clear(); coefficients.clear(); basis.reset(); n_embd = 0;
+    if (entries.empty() || !entries.front().cvec->factorized_basis) {
+        error = "per-sequence factorized control-vector batch is empty";
+        return false;
+    }
+    basis = entries.front().cvec->factorized_basis;
+    n_embd = entries.front().cvec->n_embd;
+    if (n_embd <= 0 || basis->rank <= 0 || basis->layer_indices.empty() || !basis->data ||
+            static_cast<size_t>(basis->rank) >
+                std::numeric_limits<size_t>::max() / static_cast<size_t>(n_embd) ||
+            basis->layer_indices.size() > std::numeric_limits<size_t>::max() /
+                (static_cast<size_t>(basis->rank) * static_cast<size_t>(n_embd)) ||
+            basis->data->size() != basis->layer_indices.size() *
+                static_cast<size_t>(basis->rank) * static_cast<size_t>(n_embd)) {
+        error = "per-sequence factorized control-vector basis is invalid";
+        return false;
+    }
+    seq_ids.reserve(entries.size()); coefficients.reserve(entries.size());
+    for (const auto & value : entries) {
+        if (!value.cvec->factorized_basis ||
+                value.cvec->factorized_basis->rank != basis->rank ||
+                value.cvec->factorized_basis->layer_indices != basis->layer_indices ||
+                value.cvec->factorized_basis->fingerprint != basis->fingerprint ||
+                value.cvec->factorized_basis->data != basis->data ||
+                value.cvec->factorized_coefficients.size() != static_cast<size_t>(basis->rank)) {
+            error = "per-sequence factorized control vectors have incompatible basis";
+            seq_ids.clear(); coefficients.clear(); basis.reset();
+            return false;
+        }
+        seq_ids.push_back(value.seq_id);
+        coefficients.push_back(value.cvec->factorized_coefficients.data());
+    }
+    return true;
+}
+
+bool server_task_cvec_batch::materialize_factorized_sparse(
+        std::vector<llama_seq_id> & seq_ids,
+        std::vector<std::vector<float>> & owned_rows,
+        std::vector<const float *> & rows,
+        int32_t & n_embd,
+        std::vector<uint32_t> & layer_indices,
+        std::string & error) const {
+    error.clear();
+    seq_ids.clear(); owned_rows.clear(); rows.clear(); layer_indices.clear(); n_embd = 0;
+    if (entries.empty()) {
+        error = "per-sequence factorized fallback batch is empty";
+        return false;
+    }
+    n_embd = entries.front().cvec->n_embd;
+    if (n_embd <= 0) {
+        error = "per-sequence factorized fallback embedding width is invalid";
+        return false;
+    }
+    const size_t dimension = static_cast<size_t>(n_embd);
+    std::set<uint32_t> union_layers;
+    for (const auto & entry : entries) {
+        const auto & cvec = *entry.cvec;
+        const auto & basis = cvec.factorized_basis;
+        if (!basis || !basis->data || basis->rank <= 0 || cvec.n_embd != n_embd ||
+                cvec.factorized_coefficients.size() != static_cast<size_t>(basis->rank) ||
+                basis->layer_indices.empty()) {
+            error = "per-sequence factorized fallback row is incomplete";
+            return false;
+        }
+        const size_t rank = static_cast<size_t>(basis->rank);
+        if (rank > std::numeric_limits<size_t>::max() / dimension ||
+                basis->layer_indices.size() > std::numeric_limits<size_t>::max() /
+                    (rank * dimension) ||
+                basis->data->size() != basis->layer_indices.size() * rank * dimension) {
+            error = "per-sequence factorized fallback row dimensions overflow or mismatch";
+            return false;
+        }
+        for (const uint32_t layer : basis->layer_indices) union_layers.insert(layer);
+        for (const float value : *basis->data) {
+            if (!std::isfinite(value)) {
+                error = "per-sequence factorized fallback basis is non-finite";
+                return false;
+            }
+        }
+        for (const float value : cvec.factorized_coefficients) {
+            if (!std::isfinite(value)) {
+                error = "per-sequence factorized fallback coefficient is non-finite";
+                return false;
+            }
+        }
+    }
+    if (union_layers.empty() || union_layers.size() >
+            std::numeric_limits<size_t>::max() / dimension) {
+        error = "per-sequence factorized fallback layer union is invalid";
+        return false;
+    }
+    layer_indices.assign(union_layers.begin(), union_layers.end());
+    const size_t row_size = layer_indices.size() * dimension;
+    owned_rows.assign(entries.size(), std::vector<float>(row_size, 0.0f));
+    seq_ids.reserve(entries.size());
+    rows.reserve(entries.size());
+    for (size_t arm = 0; arm < entries.size(); ++arm) {
+        const auto & cvec = *entries[arm].cvec;
+        const auto & basis = *cvec.factorized_basis;
+        const size_t rank = static_cast<size_t>(basis.rank);
+        for (size_t source_layer = 0; source_layer < basis.layer_indices.size(); ++source_layer) {
+            const auto found = std::lower_bound(
+                layer_indices.begin(), layer_indices.end(), basis.layer_indices[source_layer]);
+            if (found == layer_indices.end() || *found != basis.layer_indices[source_layer]) {
+                error = "per-sequence factorized fallback lost a source layer";
+                return false;
+            }
+            const size_t target_layer = static_cast<size_t>(found - layer_indices.begin());
+            for (size_t component = 0; component < rank; ++component) {
+                const size_t basis_component = (source_layer * rank + component) * dimension;
+                const size_t row_layer = target_layer * dimension;
+                const float coefficient = cvec.factorized_coefficients[component];
+                for (size_t value = 0; value < dimension; ++value) {
+                    owned_rows[arm][row_layer + value] +=
+                        (*basis.data)[basis_component + value] * coefficient;
+                }
+            }
+        }
+        seq_ids.push_back(entries[arm].seq_id);
+        rows.push_back(owned_rows[arm].data());
+    }
+    return true;
+}
+
+bool server_task_cvec_validate(
+        const server_task_cvec & cvec,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (cvec.identity.empty() || cvec.n_embd <= 0 || cvec.il_start < 1 ||
+            cvec.il_end < cvec.il_start || model_n_embd == 0 || model_n_layers < 2 ||
+            static_cast<size_t>(cvec.n_embd) != model_n_embd ||
+            static_cast<size_t>(cvec.il_end) >= model_n_layers) {
+        error = "server task cvec identity or dimensions are invalid";
+        return false;
+    }
+    if (cvec.factorized_basis) {
+        const auto & basis = *cvec.factorized_basis;
+        if (basis.rank <= 0 || basis.layer_indices.empty() || !basis.data ||
+                static_cast<size_t>(basis.rank) >
+                    std::numeric_limits<size_t>::max() / model_n_embd ||
+                basis.layer_indices.size() > std::numeric_limits<size_t>::max() /
+                    (static_cast<size_t>(basis.rank) * model_n_embd) ||
+                basis.data->size() != basis.layer_indices.size() *
+                    static_cast<size_t>(basis.rank) * model_n_embd ||
+                cvec.factorized_coefficients.size() != static_cast<size_t>(basis.rank)) {
+            error = "server task factorized cvec dimensions are invalid";
+            return false;
+        }
+        for (const uint32_t layer : basis.layer_indices) {
+            if (layer < static_cast<uint32_t>(cvec.il_start) ||
+                    layer > static_cast<uint32_t>(cvec.il_end)) {
+                error = "server task factorized cvec layer is invalid";
+                return false;
+            }
+        }
+        for (const float value : *basis.data) if (!std::isfinite(value)) {
+            error = "server task factorized basis contains a non-finite value";
+            return false;
+        }
+        for (const float value : cvec.factorized_coefficients) if (!std::isfinite(value)) {
+            error = "server task factorized coefficients contain a non-finite value";
+            return false;
+        }
+        if (basis.data->size() > std::numeric_limits<size_t>::max() -
+                cvec.factorized_coefficients.size()) {
+            error = "server task factorized cvec byte count overflows";
+            return false;
+        }
+        const size_t values = basis.data->size() + cvec.factorized_coefficients.size();
+        if (max_bytes != 0 && values > max_bytes / sizeof(float)) {
+            error = "server task factorized cvec exceeds its byte bound";
+            return false;
+        }
+        return true;
+    }
+    if (!cvec.sparse_layer_indices.empty()) {
+        if (cvec.sparse_data.size() !=
+                cvec.sparse_layer_indices.size() * static_cast<size_t>(cvec.n_embd)) {
+            error = "server task sparse cvec data dimensions are invalid";
+            return false;
+        }
+        uint32_t previous = 0;
+        bool first = true;
+        for (const uint32_t layer : cvec.sparse_layer_indices) {
+            if (layer < static_cast<uint32_t>(cvec.il_start) ||
+                    layer > static_cast<uint32_t>(cvec.il_end) ||
+                    (!first && layer <= previous)) {
+                error = "server task sparse cvec layer indices are invalid";
+                return false;
+            }
+            previous = layer;
+            first = false;
+        }
+        for (const float value : cvec.sparse_data) {
+            if (!std::isfinite(value)) {
+                error = "server task sparse cvec contains a non-finite value";
+                return false;
+            }
+        }
+        if (max_bytes != 0 && cvec.sparse_data.size() > max_bytes / sizeof(float)) {
+            error = "server task sparse cvec exceeds its byte bound";
+            return false;
+        }
+    } else if (cvec.data.size() !=
+            static_cast<size_t>(cvec.n_embd) * (model_n_layers - 1)) {
+        error = "server task dense cvec data dimensions are invalid";
+        return false;
+    }
+    if (model_n_embd > std::numeric_limits<size_t>::max() / (model_n_layers - 1)) {
+        error = "server task cvec dimensions overflow";
+        return false;
+    }
+    const size_t required_values = model_n_embd * (model_n_layers - 1);
+    if (cvec.data.size() < required_values ||
+            (max_bytes != 0 && cvec.data.size() > max_bytes / sizeof(float))) {
+        error = "server task cvec exceeds its byte bound";
+        return false;
+    }
+    for (const float value : cvec.data) {
+        if (!std::isfinite(value)) {
+            error = "server task cvec contains a non-finite value";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool server_task_residual_patch_validate(
+        const server_task_residual_patch & patch,
+        size_t model_n_embd,
+        size_t model_n_layers,
+        size_t max_bytes,
+        std::string & error) {
+    error.clear();
+    if (patch.site != server_task_residual_patch_site::layer_input_residual) {
+        error = "unsupported residual patch site";
+        return false;
+    }
+    if (patch.layer >= model_n_layers || patch.absolute_position < 0) {
+        error = "invalid residual patch layer, position or sequence";
+        return false;
+    }
+    if (patch.values.size() != model_n_embd || patch.values.empty() ||
+            patch.values.size() * sizeof(float) > max_bytes) {
+        error = "residual patch vector does not match model embedding width or byte budget";
+        return false;
+    }
+    for (const float value : patch.values) {
+        if (!std::isfinite(value)) {
+            error = "residual patch contains a non-finite value";
+            return false;
+        }
+    }
+    return true;
+}
 
 //
 // task_params
@@ -1511,6 +1925,17 @@ json server_task_result_rerank::to_json() {
         {"index",            index},
         {"score",            score},
         {"tokens_evaluated", n_tokens},
+    };
+}
+
+// server_task_result_teacher_score
+json server_task_result_teacher_score::to_json() {
+    return json {
+        {"total_logprob", total_logprob},
+        {"token_count",   token_count},
+        {"teacher_scoring_representation", teacher_scoring_representation},
+        {"teacher_scoring_device", teacher_scoring_device},
+        {"teacher_scoring_returned_bytes", teacher_scoring_returned_bytes},
     };
 }
 

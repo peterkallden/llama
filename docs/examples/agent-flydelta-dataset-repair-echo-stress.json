@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "id": "flydelta://fixture/dataset-repair-echo-stress",
+  "suite_role": "experimental-repair-echo",
+  "language": "en",
+  "dataset": "dataset://local/sales",
+  "dataset_name": "Sales",
+  "purpose": "Stress the model-facing replay of host-constructed canonical repairs without granting learning credit to failed or unresolved repairs.",
+  "model_contract": {
+    "selection": "Choose exactly one most-specific read-only dataset tool. Return only {\"name\":\"tool.name\",\"arguments\":{...}}.",
+    "dataset_rule": "Use the canonical dataset reference dataset://local/sales when a dataset argument is required.",
+    "learning_rule": "A repair-echo failure is a search observation only; it is not positive FlyDelta evidence."
+  },
+  "scenarios": [
+    {
+      "id": "repair-echo-query-many-fields",
+      "behavior_key": "tool_use/dataset/data_query",
+      "question": "Return all available order fields for north or east orders with amount at least 4, units at least 1, and customer_id not equal to 999. Sort by amount descending and units ascending, and return at most four rows.",
+      "expected_tool": "data.query",
+      "plan": {
+        "goal": "Replay a long canonical query repair with several predicates and sort keys",
+        "steps": [
+          {"tool": "data.query", "args": {"dataset": "dataset://local/sales", "select": ["order_id", "customer_id", "region", "amount", "units"], "where": [{"field": "region", "operator": "in", "value": ["north", "east"]}, {"field": "amount", "operator": ">=", "value": 4}, {"field": "units", "operator": ">=", "value": 1}, {"field": "customer_id", "operator": "!=", "value": 999}], "order_by": [{"field": "amount", "direction": "desc"}, {"field": "units", "direction": "asc"}], "limit": 4}}
+        ]
+      }
+    },
+    {
+      "id": "repair-echo-aggregate-many-measures",
+      "behavior_key": "tool_use/dataset/data_aggregate",
+      "question": "For every customer and region, report row count, total amount, total units, average amount, and maximum amount in one grouped summary.",
+      "expected_tool": "data.aggregate",
+      "plan": {
+        "goal": "Replay a long canonical aggregate repair with multiple grouped measures",
+        "steps": [
+          {"tool": "data.aggregate", "args": {"dataset": "dataset://local/sales", "group_by": ["customer_id", "region"], "measures": [{"function": "count", "column": "*", "as": "row_count"}, {"function": "sum", "column": "amount", "as": "total_amount"}, {"function": "sum", "column": "units", "as": "total_units"}, {"function": "avg", "column": "amount", "as": "average_amount"}, {"function": "max", "column": "amount", "as": "maximum_amount"}]}}
+        ]
+      }
+    },
+    {
+      "id": "repair-echo-filter-many-conditions",
+      "behavior_key": "tool_use/dataset/data_filter",
+      "question": "Keep north or east records whose amount is at least 4, units are not zero, and customer_id is one of 10, 11, or 12. Preserve the original columns and bound the result.",
+      "expected_tool": "data.filter",
+      "plan": {
+        "goal": "Replay a long canonical filter repair with membership and threshold predicates",
+        "steps": [
+          {"tool": "data.filter", "args": {"dataset": "dataset://local/sales", "conditions": [{"field": "region", "operator": "in", "value": ["north", "east"]}, {"field": "amount", "operator": ">=", "value": 4}, {"field": "units", "operator": "!=", "value": 0}, {"field": "customer_id", "operator": "in", "value": [10, 11, 12]}], "limit": 100}}
+        ]
+      }
+    },
+    {
+      "id": "repair-echo-query-distinct-ordering",
+      "behavior_key": "tool_use/dataset/data_query",
+      "question": "Return distinct region and customer_id combinations for records whose amount is positive and units are at least one. Sort first by region ascending and then by customer_id descending, with a maximum of four rows.",
+      "expected_tool": "data.query",
+      "plan": {
+        "goal": "Replay a canonical query repair with distinct projection and multiple ordering keys",
+        "steps": [
+          {"tool": "data.query", "args": {"dataset": "dataset://local/sales", "select": ["region", "customer_id"], "distinct": true, "where": [{"field": "amount", "operator": ">", "value": 0}, {"field": "units", "operator": ">=", "value": 1}], "order_by": [{"field": "region", "direction": "asc"}, {"field": "customer_id", "direction": "desc"}], "limit": 4}}
+        ]
+      }
+    },
+    {
+      "id": "repair-echo-aggregate-complete-profile",
+      "behavior_key": "tool_use/dataset/data_aggregate",
+      "question": "For each region, calculate count, sum, average, minimum, and maximum for amount, plus the sum of units, and return one complete regional profile.",
+      "expected_tool": "data.aggregate",
+      "plan": {
+        "goal": "Replay the fullest supported grouped aggregate repair",
+        "steps": [
+          {"tool": "data.aggregate", "args": {"dataset": "dataset://local/sales", "group_by": ["region"], "measures": [{"function": "count", "column": "*", "as": "row_count"}, {"function": "sum", "column": "amount", "as": "total_amount"}, {"function": "avg", "column": "amount", "as": "average_amount"}, {"function": "min", "column": "amount", "as": "minimum_amount"}, {"function": "max", "column": "amount", "as": "maximum_amount"}, {"function": "sum", "column": "units", "as": "total_units"}]}}
+        ]
+      }
+    },
+    {
+      "id": "repair-echo-filter-complete-predicate-set",
+      "behavior_key": "tool_use/dataset/data_filter",
+      "question": "Keep north or east records with amount greater than zero, units between one and five, and customer_id not equal to 999. Preserve all original columns and cap the result at four rows.",
+      "expected_tool": "data.filter",
+      "plan": {
+        "goal": "Replay a canonical filter repair with five bounded predicates",
+        "steps": [
+          {"tool": "data.filter", "args": {"dataset": "dataset://local/sales", "conditions": [{"field": "region", "operator": "in", "value": ["north", "east"]}, {"field": "amount", "operator": ">", "value": 0}, {"field": "units", "operator": ">=", "value": 1}, {"field": "units", "operator": "<=", "value": 5}, {"field": "customer_id", "operator": "!=", "value": 999}], "limit": 4}}
+        ]
+      }
+    }
+  ]
+}

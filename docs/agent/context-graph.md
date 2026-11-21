@@ -1,0 +1,278 @@
+# Project context graph
+
+The project context graph stores explicitly proposed relationships separately
+from memory records, research workspaces and investigation cases. A proposal
+is not a verified fact. Nodes contain names and optional source locations;
+they do not contain copies of source files. Evidence references and revisions
+are recorded as submitted and require independent verification.
+
+The `graph` tool family offers `graph.find`, `graph.get`, `graph.expand`, `graph.search`, `graph.source`,
+`graph.link.propose` and `graph.retract.propose`. New relationships start as
+`proposed`; a withdrawal changes the current status to `retraction_proposed`
+while preserving previous versions. New retraction proposals keep their
+reason in `retraction_rationale`, separately from the original proposal's
+`rationale`. Older saved retractions may only have the earlier combined field;
+their previous versions remain in the storage history. Cozo persistence is scoped by the
+host-provided namespace and project, and graph operations fail if a project is
+not configured. File and symbol paths are repository-relative. A symbol may
+include a provider-qualified `symbol_key`: observations with the same key in
+the same project share a node and retain their individual locations and stated
+revisions. A key is a caller-supplied identifier, not independently verified
+evidence; it must also distinguish repositories within a project. Without a
+key, symbol identity includes its source location and stated revision, so
+ambiguous symbols are not silently combined across revisions. Existing node
+IDs remain unchanged. Tool responses show the most recently submitted
+observation as the location and include up to eight recent observations, with
+an explicit truncation flag. Submission order does not establish which
+revision is newest. To read the full bounded observation list, call `graph.get`
+with `observation_offset: 0` and follow `observation_page.next_offset` until it
+is null. Actor, claim, event and plan nodes require
+an opaque source reference, which distinguishes objects with the same name and
+does not grant access to their sources. Legacy references have unknown freshness. Structured sources can carry per-source currentness as described below.
+
+Planning context prioritizes proposed relationships before relationships with
+a pending retraction. A pending retraction remains visible and is not an
+approved withdrawal.
+
+Relation names are strings, up to 64 bytes. Suggested names include `calls`,
+`depends_on`, `related_to`, `contains`, `supports` and `references`; arbitrary names
+are accepted. Names are compared exactly: `authored` and `authored_by` are not
+automatically treated as synonyms or inverses.
+
+New relations use a stable identity derived from the project scope, endpoints
+and exact relation name. Repeating a proposal with different evidence or a
+different rationale adds an unverified model assertion to that relation;
+repeating identical evidence reuses the existing assertion. A pending
+retraction prevents adding further assertions until it has been resolved.
+Each relation retains up to 64 assertions; the host reports an error if the
+limit is reached.
+The response includes a bounded assertion list and an explicit truncation flag.
+Use `graph.get` with `assertion_offset: 0` and follow `assertion_page.next_offset`
+to inspect all saved assertions for a relation.
+Older test graphs are not migrated to the new relation identity.
+
+Use `graph.find` to resolve names to project graph IDs. Then `graph.search`
+accepts any combination of `from`, `to`, `relation`, `from_kind`, `to_kind`
+and `status` (at least one filter is required); `limit` defaults to 32 and is
+at most 100. Both proposed and retraction-proposed edges are included unless a
+status is specified. Results contain the edges and their endpoints, and mark
+truncation. For example, `{ "from": "<alice-id>", "relation": "authored" }`
+finds Alice's saved authorship proposals. Use the paper ID as `to` to search
+in the other direction, or `graph.expand` to browse its other relationships.
+`graph.find` also accepts a `limit` from 1 to 32 (default 32); its `truncated`
+flag indicates that further matching nodes exist. The graph investigation
+workflow requests five, offers those returned nodes or an option to finish,
+and binds the selected node ID from the host observation before expansion.
+`graph.describe.propose` adds a sourced description to an existing node using
+the graph revision from a read as `expected_revision`. Descriptions are model
+proposals, not verified facts. The node ID does not change; prior descriptions
+are retained. The latest proposal participates in `graph.find` and bounded
+planning projection. Use `graph.get` with `description_offset` to page through
+description history. Full tool responses include `text_bytes` and
+`text_complete: true`: its text is the complete literal stored value, not a
+preview. Description pagination selects records, not fragments of one text.
+The surrounding tool/context projection may still report omitted coverage.
+Existing nodes without descriptions remain valid.
+The current adapter still loads the bounded project graph before applying
+endpoint-kind and status filters; the indexes narrow candidate edges but do
+not yet eliminate that graph load.
+
+Opening an older Cozo database builds the graph search indexes from its saved
+edges in an atomic migration. Stop older server processes writing to the same
+database before upgrading; older versions do not maintain these indexes. An
+incomplete index schema fails closed instead of returning incomplete results.
+
+Graph reads and policy-gated relationship proposals are available in the Codex
+tool-audit profile. The separate `graph-project`
+profile allows graph proposals under the existing memory-proposal policy.
+For a standalone server, `scripts/agent-codex-mcp-graph.sh` accepts the normal
+server options `--memory-project PROJECT` and `--memory-namespace NAMESPACE`.
+`LLAMA_AGENT_GRAPH_CONFIG` selects the host config; the default audit config
+uses an isolated store. Matching project and namespace IDs do not connect
+different stores.
+
+To use the running daemon's graph, connect the MCP client to the daemon's
+inbound HTTP endpoint. Configure an inbound token profile with the same
+`namespace` and `project` as the daemon request, and a tool profile that permits
+the desired graph operations. The daemon's tool profile must expose those tools
+as well. Calls use the daemon dispatcher and its configured data store. The
+token profile is host authority; the client cannot choose another project by
+passing tool arguments. Separate MCP client sessions can access the same
+project graph when their authorized namespace and project match. See
+[inbound MCP HTTP setup](agent-daemon-usage.md#inbound-mcp-http-in-the-daemon-host).
+Reload the MCP connection after changing its profile or tool schema.
+
+For example, add a token profile to the daemon's existing `mcp.inbound.tokens`:
+
+```json
+{
+  "id": "codex-project-reader",
+  "token_env": "LLAMA_AGENT_CODEX_TOKEN",
+  "audience": "llama-agent",
+  "namespace": "<session namespace>",
+  "project": "<session project ID>",
+  "tool_profile": "developer-read",
+  "allow_writes": false
+}
+```
+
+Replace the placeholders with the values used by the daemon session and
+configure the client with the daemon's MCP URL and the same bearer token. This
+profile can read graph data; proposing relations requires a separately
+authorized profile and the existing write policy. A token identifies a fixed
+authorized project, not whichever project a different client last selected.
+
+The saved graph contains proposals only. `graph.source` delegates an explicit
+request to `code.calls`, `visualize.research_graph` or
+`investigate.graph.expand` through the same resolved native tool view. The
+source tool must itself be authorized and model-visible, receives its normal
+arguments, and consumes a separate tool-call slot. Its scope, validation and
+result limits still apply. The response labels the source and includes the
+source result and, where available, a bounded visualization. It does not
+persist or silently merge those observations with proposals. Source revisions
+and evidence references supplied in proposals are not verified.
+
+The web chat can search and reopen the current project's saved graph, and shows
+graph expansions in the shared relationship renderer. With the corresponding
+read tools authorized, selecting a project graph node can
+expand that neighborhood or read a bounded excerpt around its repository
+location. This uses the currently selected session and project.
+
+When authorized graph reads are available, ordinary planning performs a bounded
+host-side search and includes a small projection as untrusted context. It never
+turns a proposal into verified evidence or grants new tools. Graph tool results
+also travel through the existing plan-observation path. A missing project or
+unavailable graph does not prevent ordinary planning.
+
+The general starter package includes separate project graph investigation and
+maintenance blueprints and workflows. Investigation starts with `graph.find`
+and can finish without a match or expand a relevant node. Maintenance searches
+first and can finish without writing or propose a description, relation or
+retraction through the existing host tool policy. These definitions do not
+grant tools or turn proposals into verified facts; availability depends on the
+active project scope and authorized tool view.
+
+`llama-agent-context-graph-smoke --no-model` exercises proposals and lookup
+through the native tool view. Pass `--model PATH` to exercise the same lookup
+with a model-produced tool call; `--n-gpu-layers` selects offloading. The MCP
+smoke in `scripts/agent-context-graph-mcp-smoke.py` additionally checks Cozo
+persistence, project isolation and the read-only profile. Pass the repository
+root as its second argument to exercise the configured clangd provider too.
+
+The daemon scope smoke can be run without inference using
+`python3 scripts/agent-daemon-graph-mcp-smoke.py build-agent-vulkan-cozo/bin/llama-agent-daemon`.
+It uses a temporary data store and verifies shared project access, read-only
+policy, and namespace and project isolation through the daemon dispatcher.
+
+### Standalone descriptions and comprehension refresh
+
+`graph.describe.propose` accepts exactly one of an existing `id` or a `node`
+descriptor using the same identity rules as relationship endpoints. The host
+resolves the entity and appends its description in the same scoped publication,
+protected by `expected_revision`. No edge is created. Existing id-based callers
+remain supported. Descriptions remain model proposals and retain the existing
+2048-byte bound and evidence references.
+
+The starter `comprehension-refresh-v1` blueprint applies to code, research,
+documents and investigations. It inspects at most ten candidates and proposes
+at most three compact Purpose/Invariant/Dependencies/Change hazard notes.
+Research artifacts remain the detailed evidence workspace; graph notes link to
+them. Unknown facts must remain explicit. This blueprint is explicitly selected
+through normal planning; post-verification opt-in variants are described below.
+
+### Phased comprehension and opt-in development methods
+
+The description limit is now 2048 bytes in the adapter and Cozo store, with the
+same bound in the tool schema. Retrieval retains the existing bounded context
+projection; longer stored notes do not increase the prompt allocation.
+
+`execution.tool_limits.v1` is an imported hard method constraint whose JSON
+object maps exact tool names to reservation limits. Method progress validation
+counts persisted tool steps and new unique steps together, including failed
+steps, before accepting another slice. The comprehension starter reserves at
+most three description steps and ten graph lookups. These limits do not replace
+host authorization or research budgets. They bound tool reservations, not the
+number of entities returned by one call; the ten-subject frontier and depth-one
+selection remain model instructions.
+
+For opt-in post-verification maintenance select
+`repository-change-v5-with-comprehension` or
+`regression-repair-v5-with-comprehension`. These configuration variants append
+the existing comprehension phases after the development phases. Normal method
+review and continuation own ordering, saved progress and partial completion.
+No autonomous worker is started. Failed or unavailable verification is reported
+as a maintenance blocker. Source and research references remain plan evidence;
+this feature creates no second research workspace.
+
+The method-phase contract includes persisted reservation checks. The existing
+CLI graph smoke now covers standalone creation, a description over 512 bytes,
+idempotent replay and reading an isolated node through a separate tool view.
+These source changes have not yet been compiled or executed.
+
+## Source revisions and currentness
+
+Node endpoints, descriptions and relation assertions accept an optional `sources`
+array with at most 16 entries. Each entry records `type`, `id`, optional
+`location`, `revision`, `observed_at` (Unix seconds), `branch` and
+`local_changes`. Existing `source_ref`, `source_revision` and `evidence_refs`
+remain supported. Old records retain empty sources and unknown currentness;
+no source identity is inferred from their free-form references. Source metadata
+is submitted evidence, not proof that the submitter actually read that revision.
+Node source references are append-only, including when evidence is attached to
+a legacy node. Different assertion or description source metadata creates a distinct record rather
+than replacing historical evidence. Keyed symbols retain it per observation.
+
+The resolved native tool view checks sources on `graph.get`, `graph.find`,
+`graph.search` and `graph.expand`. Every checked entry has a `currentness`
+object. The view requires the corresponding model-visible, read-only tool:
+`repository.read`, `document.open`, `dataset.inspect` or `resource.inspect`.
+The existing host root and resource/dataset scope checks still apply. A source
+reference never grants access. A bare adapter registry cannot perform these
+checks and returns the saved sources with unknown freshness.
+
+Checks admit at most 16 distinct references within a two-second admission
+window, reuse duplicate checks within the response and report unknown for
+unavailable, unsupported or budget-exhausted sources. An admitted provider read
+may finish after that window. No network fetch is initiated. Results describe
+the check time and do not change saved graph data or proposal status.
+
+For Git, use the `id`, `revision`, `branch`, `location`, `observed_at` and
+`local_changes` returned by a code tool's `source` or `source_files` entry.
+The ID is the canonical local Git common directory, shared by linked worktrees;
+`root` in code observations identifies the particular checkout. A different
+local clone has a different ID. Currentness compares against the host-bound
+checkout's HEAD, not a remote branch tip. Branch names are context only.
+Full commit IDs are required. The response distinguishes `same_revision`,
+`newer_source`, `diverged` and `unknown`, with `commits_behind` only when the
+observed commit is an ancestor. `file_changed` compares the referenced path
+between commits; `local_changes` reports its current worktree/index state.
+An observation made with local changes has unknown currentness because its
+bytes cannot be reconstructed from the commit alone. A current local change
+is reported even when the commit is unchanged. No hash is required.
+
+For `document`, `id` is the host document ID and `revision` its numeric published
+revision. The existing authorized document-head lookup provides the current
+revision and, when newer, `revisions_behind`. Document sections belong in
+`location`. For `resource`, use an authorized immutable resource URI as both
+`id` and `revision` when referring to that exact revision. Neither check claims
+that no newer independent resource exists.
+
+Dataset descriptors currently expose retrieval time, not a mutable source
+revision or modification time. Authorized dataset sources therefore return
+`unknown`; retrieval time must not be treated as change time. The shared
+comparison helper supports `possibly_stale` when an authoritative modification
+time is later than `observed_at`, and `not_modified_since_observation` otherwise.
+Providers without comparable revision or modification metadata stay unknown.
+Currentness does not establish the truth or completeness of a graph claim.
+
+The functional `llama-agent-context-graph-smoke` supports `--no-model` and
+`--model PATH --n-gpu-layers -1`, with `--repository PATH` pointing to a local
+checkout. `--trace-file PATH` retains JSONL requests and results for all tool
+calls and the optional model generation; without it, those events go to stdout.
+Run either mode from the intended environment and retain backend diagnostics
+alongside the trace. The smoke exercises sourced graph search through the
+native view; it is not a model-quality or project-index coverage benchmark.
+
+Restart graph writers and reconnect MCP clients when upgrading so that both
+storage writers and advertised input schemas understand `sources`. Older
+writers do not preserve fields they do not understand.

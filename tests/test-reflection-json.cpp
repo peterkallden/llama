@@ -1,0 +1,301 @@
+#include "agent/thinking/reflection-json.h"
+
+
+#include <cstdlib>
+#include <iostream>
+#include <nlohmann/json.hpp>
+
+namespace {
+
+bool same_json_object(const std::string & lhs, const std::string & rhs) {
+    return nlohmann::json::parse(lhs, nullptr, false) ==
+           nlohmann::json::parse(rhs, nullptr, false);
+}
+
+} // namespace
+
+// Evaluate checks and setup in release builds as well.
+#define CHECK_CONTRACT(condition) do { \
+    if (!(condition)) { \
+        std::cerr << "contract failed at line " << __LINE__ << ": " << #condition << '\n'; \
+        std::exit(1); \
+    } \
+} while (false)
+
+int main() {
+    common_reflection_result result;
+    std::string error;
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","parts":[{"observation_id":"e1","excerpt":"Observed event","status":"reviewed","reason":"Matches saved evidence","evidence_ids":["e2"]}]})",result,error));
+    CHECK_CONTRACT(result.parts.size()==1 && result.parts.front().status=="reviewed");
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept\npart observation_id=\"e1\" excerpt=\"Observed event\" status=\"reviewed\" reason=\"Matches saved evidence\" evidence_ids=[\"e2\"]",result,error));
+    CHECK_CONTRACT(result.parts.size()==1 && result.parts.front().evidence_ids==std::vector<std::string>{"e2"});
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"accept","parts":[{"observation_id":"e1","excerpt":"Observed event","status":"verified_fact","reason":"Wrong status","evidence_ids":[]}]})",result,error));
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","task_outcome":"remaining","assurance_action":"revise_plan"})", result, error));
+    CHECK_CONTRACT(result.task_outcome == "remaining");
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept\ntask_outcome blocked", result, error));
+    CHECK_CONTRACT(result.task_outcome == "blocked");
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"accept","task_outcome":"unknown"})", result, error));
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","phase_reviews":[{"phase_id":"method:knowledge","status":"remaining","reason":"Inspect primary documentation","evidence_ids":[]}]})",result,error));
+    CHECK_CONTRACT(result.phase_reviews.size()==1 && result.phase_reviews.front().phase_id=="method:knowledge");
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept\nphase phase_id=\"method:knowledge\" status=\"not_needed\" reason=\"Local evidence is sufficient\" evidence_ids=[]",result,error));
+    CHECK_CONTRACT(result.phase_reviews.size()==1 && result.phase_reviews.front().status=="not_needed");
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","phase_reviews":[{"phase_id":"method:knowledge","status":"remaining","reason":"Need a primary source","evidence_ids":[],"next_work_kind":"external_lookup","next_work_goal":"Read the primary source"}]})",result,error));
+    CHECK_CONTRACT(result.phase_reviews.size()==1 && result.phase_reviews.front().next_work_kind=="external_lookup" &&
+        result.phase_reviews.front().next_work_goal=="Read the primary source");
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect revise\nphase phase_id=\"method:knowledge\" status=\"remaining\" reason=\"Need source\" evidence_ids=[] next_work_kind=\"inspect_source\" next_work_goal=\"Read implementation\"",
+        result,error));
+    CHECK_CONTRACT(result.phase_reviews.size()==1 && result.phase_reviews.front().next_work_kind=="inspect_source" &&
+        result.phase_reviews.front().next_work_goal=="Read implementation");
+    const std::string host_step = "tool:agent-blueprint:" + std::string(96, 'a') + ":workflow:action:investigate.source.attach";
+    if (!common_reflection_parse_compact_dsl("reflect retry", result, error, {}, 8, {}, host_step) ||
+            result.proposed_plan_operations.size() != 1 || result.proposed_plan_operations.front().step_id != host_step) {
+        std::cerr << "host-bound long retry identity failed: " << error << '\n'; return 1;
+    }
+    if (!common_reflection_parse_compact_dsl("reflect retry A", result, error, {}, 8, {}, {}, {}, {{"A", host_step}}) ||
+            result.proposed_plan_operations.front().step_id != host_step ||
+            common_reflection_parse_compact_dsl("reflect retry B", result, error, {}, 8, {}, {}, {}, {{"A", host_step}}) ||
+            common_reflection_parse_compact_dsl("reflect retry " + host_step, result, error) ||
+            common_reflection_parse_json(nlohmann::json{{"decision", "revise"}, {"retry", {host_step}}}.dump(), result, error)) {
+        std::cerr << "host retry binding changed model ID validation" << '\n'; return 1;
+    }
+    CHECK_CONTRACT(common_reflection_parse_json(
+        nlohmann::json{{"decision", "revise"}, {"retry", {host_step}}}.dump(),
+        result, error, 8, {}, {host_step}));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1 &&
+        result.proposed_plan_operations.front().step_id == host_step);
+    if (!common_reflection_parse_compact_dsl("reflect retry\nactivate host-retry-1", result, error, {}, 8, {}, host_step) ||
+            result.proposed_plan_operations.size() != 2 || result.proposed_plan_operations[0].step_id != "host-retry-1" ||
+            result.proposed_plan_operations[1].step_id != host_step) {
+        std::cerr << "host retry alias rewrote a model-written reference" << '\n'; return 1;
+    }
+    const auto next_work = nlohmann::json{{"decision","revise"},{"assurance_action","revise_plan"},
+        {"task_outcome","remaining"},{"next_action",std::string(1024,'x')}};
+    CHECK_CONTRACT(common_reflection_parse_json(next_work.dump(),result,error));
+    CHECK_CONTRACT(result.proposed_plan_operations.front().value == std::string(1024,'x'));
+    auto too_long = next_work; too_long["next_action"] = std::string(1025,'x');
+    CHECK_CONTRACT(!common_reflection_parse_json(too_long.dump(),result,error));
+    std::string unicode_work;
+    for (size_t i=0;i<1024;++i) unicode_work += "å";
+    auto unicode_next=next_work;unicode_next["next_action"]=unicode_work;
+    CHECK_CONTRACT(common_reflection_parse_json(unicode_next.dump(),result,error));
+    unicode_next["next_action"]=unicode_work+"å";
+    CHECK_CONTRACT(!common_reflection_parse_json(unicode_next.dump(),result,error));
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect revise\nassurance_action fail_bounded\nguidance \"Source unavailable; retain unfinished work\"\ntask_outcome blocked",result,error));
+    CHECK_CONTRACT(result.next_action==common_agent_reflection_next_action::fail_bounded && result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"remaining"})",result,error));
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"blocked","add_steps":[{"mode":"reasoning"}]})",result,error));
+    common_plan_state stopped_plan;
+    common_plan_step done;done.id="created";done.status=common_plan_step_status::completed;
+    common_plan_step failed;failed.id="collect";failed.status=common_plan_step_status::failed;
+    stopped_plan.steps={done,failed};
+    CHECK_CONTRACT(common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"blocked","complete":["created"]})",result,error));
+    CHECK_CONTRACT(common_reflection_validate_bounded_stop(result,stopped_plan,error));
+    CHECK_CONTRACT(result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"fail_bounded","task_outcome":"blocked","complete":["collect"]})",result,error));
+    CHECK_CONTRACT(!common_reflection_validate_bounded_stop(result,stopped_plan,error));
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","next_action":""})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","next_action":"  \t "})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"accept","next_action":42})", result, error));
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl("reflect accept", result, error));
+    CHECK_CONTRACT(result.decision == common_reflection_decision::accept);
+    CHECK_CONTRACT(result.proposed_plan_operations.empty());
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect revise\nguidance \"count is missing\"", result, error));
+    CHECK_CONTRACT(result.decision == common_reflection_decision::revise);
+    CHECK_CONTRACT(result.revision_guidance == std::vector<std::string>{"count is missing"});
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect retry", result, error, {}, 8, {}, "failed-search"));
+    CHECK_CONTRACT(result.decision == common_reflection_decision::revise);
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1);
+    CHECK_CONTRACT(*result.proposed_plan_operations[0].step_id == "failed-search");
+    const std::vector<std::pair<std::string, std::string>> retry_choices = {
+        {"A", "failed-search"}, {"B", "failed-fetch"},
+    };
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect retry B", result, error, {}, 8, {}, {}, {}, retry_choices));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1);
+    CHECK_CONTRACT(*result.proposed_plan_operations[0].step_id == "failed-fetch");
+    CHECK_CONTRACT(!common_reflection_parse_compact_dsl(
+        "reflect retry C", result, error, {}, 8, {}, {}, {}, retry_choices));
+
+    const common_chat_tool memory_search_tool{
+        "memory.search", "Search memory.",
+        R"({"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":10}}})",
+        R"({"type":"object"})",
+    };
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect revise\nquery: \"corrected lookup\"\nlimit: 3\n",
+        result, error, "failed-search", 8, "memory.search", {}, {memory_search_tool}));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1);
+    CHECK_CONTRACT(result.proposed_plan_operations[0].step->tool_call->name == "memory.search");
+    CHECK_CONTRACT(*result.proposed_plan_operations[0].step_id == "failed-search");
+    CHECK_CONTRACT(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json,
+        R"({"query":"corrected lookup","limit":3})"));
+    CHECK_CONTRACT(!common_reflection_parse_compact_dsl(
+        "reflect revise\nunknown: value\n",
+        result, error, "failed-search", 8, "memory.search", {}, {memory_search_tool}));
+
+    CHECK_CONTRACT(common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"escalate_research","issues":[]})",
+        result, error));
+    CHECK_CONTRACT(result.next_action == common_agent_reflection_next_action::escalate_research);
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","ready_to_answer":false,"revision_guidance":["cite evidence"],"operations":[{"kind":"complete_step","step_id":"lookup","reason_summary":"evidence received"},{"kind":"add_step","reason_summary":"procedure adds verification","evidence_ids":[],"step":{"id":"reopen","title":"Reopen store","objective":"Verify persistence","depends_on":[],"required_evidence":[],"source_memory_ids":["procedure-1"]}}]})", result, error));
+    CHECK_CONTRACT(result.decision == common_reflection_decision::revise);
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 2);
+    CHECK_CONTRACT(result.proposed_plan_operations[1].kind == common_plan_operation_kind::add_step);
+    CHECK_CONTRACT(result.proposed_plan_operations[1].step->source_memory_ids[0] == "procedure-1");
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","ready_to_answer":false,"confidence":0.7,"revision_guidance":["repair the failed branch"],"complete":["lookup"],"activate":["retry"],"retry":["retry-2"],"reset":["fetch"],"next_action":"re-run verification","add_steps":[{"tool":"repository.search","args":{"query":"planner"}},{"mode":"reasoning","source_memory_ids":["procedure-1"]}],"replace_steps":[{"step_id":"fetch","title":"Retry fetch","objective":"Retry with corrected parameters","tool":"repository.search","args":{"query":"planner repair"}}]})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 8);
+    CHECK_CONTRACT(result.proposed_plan_operations[0].kind == common_plan_operation_kind::complete_step);
+    CHECK_CONTRACT(*result.proposed_plan_operations[0].step_id == "lookup");
+    CHECK_CONTRACT(result.proposed_plan_operations[1].kind == common_plan_operation_kind::activate_step);
+    CHECK_CONTRACT(*result.proposed_plan_operations[1].step_id == "retry");
+    CHECK_CONTRACT(result.proposed_plan_operations[2].kind == common_plan_operation_kind::activate_step);
+    CHECK_CONTRACT(*result.proposed_plan_operations[2].step_id == "retry-2");
+    CHECK_CONTRACT(result.proposed_plan_operations[3].kind == common_plan_operation_kind::reset_step);
+    CHECK_CONTRACT(*result.proposed_plan_operations[3].step_id == "fetch");
+    const std::string long_workflow_id = "agent-blueprint:" + std::string(64, 'a') + ":workflow:fetch-full-text:0123456789ab";
+    common_reflection_result long_id_result;
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        nlohmann::json{{"decision", "revise"}, {"retry", {long_workflow_id}}}.dump(), long_id_result, error));
+    CHECK_CONTRACT(common_reflection_parse_json(
+        nlohmann::json{{"decision", "revise"}, {"retry", {long_workflow_id}}}.dump(),
+        long_id_result, error, 8, {}, {long_workflow_id}));
+    CHECK_CONTRACT(long_id_result.proposed_plan_operations.size() == 1 &&
+        *long_id_result.proposed_plan_operations[0].step_id == long_workflow_id);
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        nlohmann::json{{"decision", "revise"}, {"retry", {std::string(4097, 'x')}}}.dump(), long_id_result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations[4].kind == common_plan_operation_kind::set_next_action);
+    CHECK_CONTRACT(*result.proposed_plan_operations[4].value == "re-run verification");
+    CHECK_CONTRACT(result.proposed_plan_operations[5].kind == common_plan_operation_kind::add_step);
+    CHECK_CONTRACT(result.proposed_plan_operations[5].step->id == "repair_1");
+    CHECK_CONTRACT(result.proposed_plan_operations[5].step->tool_call && result.proposed_plan_operations[5].step->tool_call->name == "repository.search");
+    CHECK_CONTRACT(result.proposed_plan_operations[6].kind == common_plan_operation_kind::add_step);
+    CHECK_CONTRACT(result.proposed_plan_operations[6].step->id == "repair_2");
+    CHECK_CONTRACT(result.proposed_plan_operations[6].step->depends_on == std::vector<std::string>{"repair_1"});
+    CHECK_CONTRACT(result.proposed_plan_operations[7].kind == common_plan_operation_kind::replace_step);
+    CHECK_CONTRACT(*result.proposed_plan_operations[7].step_id == "fetch");
+    CHECK_CONTRACT(result.proposed_plan_operations[7].step->tool_call && result.proposed_plan_operations[7].step->tool_call->name == "repository.search");
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","operations":[{"kind":"add_constraint","reason_summary":"preserve the repository boundary","constraint":{"id":"repo-boundary","description":"Do not modify files outside the repository.","hard":true}},{"kind":"add_assumption","reason_summary":"record the working assumption","assumption":{"id":"local-model","statement":"The configured model is available locally.","confidence":0.8,"evidence_ids":["model-check"]}},{"kind":"invalidate_assumption","reason_summary":"assumption no longer holds","target_id":"old-model"}]})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 3);
+    CHECK_CONTRACT(result.proposed_plan_operations[0].kind == common_plan_operation_kind::add_constraint);
+    CHECK_CONTRACT(result.proposed_plan_operations[0].constraint && result.proposed_plan_operations[0].constraint->hard);
+    CHECK_CONTRACT(result.proposed_plan_operations[1].kind == common_plan_operation_kind::add_assumption);
+    CHECK_CONTRACT(result.proposed_plan_operations[1].assumption && result.proposed_plan_operations[1].assumption->confidence == 0.8f);
+    CHECK_CONTRACT(result.proposed_plan_operations[2].kind == common_plan_operation_kind::invalidate_assumption);
+    CHECK_CONTRACT(result.proposed_plan_operations[2].target_id && *result.proposed_plan_operations[2].target_id == "old-model");
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory.search","args":{"tool":{"name":"memory.search","arguments":{"query":"regression procedure","limit":"2"}}}}],"replace_steps":[{"step_id":"fetch","tool":"memory.search","args":{"tool":"memory.search","arguments":{"query":"corrected lookup","limit":"3"}}}]})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 2);
+    CHECK_CONTRACT(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":2,"query":"regression procedure"})"));
+    CHECK_CONTRACT(same_json_object(result.proposed_plan_operations[1].step->tool_call->arguments_json, R"({"limit":3,"query":"corrected lookup"})"));
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory.search","args":{"tool":"memory.search","query":"regression procedure","limit":"2"}}],"replace_steps":[{"step_id":"fetch","tool":"memory.search","args":{"tool":"memory.search","query":"corrected lookup","limit":"3"}}]})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 2);
+    CHECK_CONTRACT(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":2,"query":"regression procedure"})"));
+    CHECK_CONTRACT(same_json_object(result.proposed_plan_operations[1].step->tool_call->arguments_json, R"({"limit":3,"query":"corrected lookup"})"));
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"tool":"memory.get","args":"memory-1"}],"replace_steps":[]})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1);
+    CHECK_CONTRACT(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"id":"memory-1"})"));
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"accept","ready_to_answer":true,"confidence":0.9,"revision_guidance":[],"learning_hint":{"category":"tool_precondition","statement":"Verify a repository path before reading it.","expected_reuse":0.8},"operations":[]})", result, error));
+    CHECK_CONTRACT(result.learning_hint && result.learning_hint->category == "tool_precondition");
+    const std::string explicit_tool_call_reflection =
+        "{\"decision\":\"revise\",\"operations\":[{\"kind\":\"add_step\",\"step\":"
+        "{\"id\":\"repair-fetch\",\"title\":\"Repair fetch\",\"objective\":\"Retry the fetch with normalized args\","
+        "\"tool_call\":{\"name\":\"memory.search\",\"arguments_json\":\"{\\\"tool\\\":\\\"memory.search\\\",\\\"query\\\":\\\"reopened evidence\\\",\\\"limit\\\":\\\"4\\\"}\"}}}]}";
+    CHECK_CONTRACT(common_reflection_parse_json(explicit_tool_call_reflection, result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1);
+    CHECK_CONTRACT(result.proposed_plan_operations[0].step->tool_call);
+    CHECK_CONTRACT(same_json_object(result.proposed_plan_operations[0].step->tool_call->arguments_json, R"({"limit":4,"query":"reopened evidence"})"));
+    CHECK_CONTRACT(common_reflection_parse_json(R"({"decision":"revise","add_steps":[{"mode":"reasoning"},{"mode":"reasoning"}]})", result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 2);
+    CHECK_CONTRACT(result.proposed_plan_operations[0].step->id == "repair_1");
+    CHECK_CONTRACT(result.proposed_plan_operations[1].step->id == "repair_2");
+    CHECK_CONTRACT(result.proposed_plan_operations[1].step->depends_on == std::vector<std::string>{"repair_1"});
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"accept","learning_hint":{"category":"x","statement":"","expected_reuse":2}})", result, error));
+    CHECK_CONTRACT(!common_reflection_parse_json("not json", result, error));
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"unsafe"})", result, error));
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"accept","operations":[{"kind":"remove_step"}]})", result, error));
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"revise","operations":[{"kind":"add_assumption","assumption":{"id":"a","statement":"x","confidence":2}}]})", result, error));
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"revise","operations":[{"kind":"invalidate_assumption"}]})", result, error));
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"revise","complete":"lookup"})", result, error));
+    CHECK_CONTRACT(!common_reflection_parse_json(R"({"decision":"revise","replace_steps":[{"tool":"memory.search","args":{"query":"repair"}}]})", result, error));
+    CHECK_CONTRACT(common_reflection_parse_json(
+        R"({"decision":"revise","replace_steps":[{"tool":"memory.search","args":{"query":"repair"}}]})",
+        result, error, 8, "failed-search"));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1);
+    CHECK_CONTRACT(*result.proposed_plan_operations[0].step_id == "failed-search");
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        R"({"decision":"revise","replace_steps":[{"step_id":"","tool":"memory.search","args":{"query":"repair"}}]})",
+        result, error, 8, "failed-search"));
+    CHECK_CONTRACT(!common_reflection_parse_json(
+        R"({"decision":"revise","replace_steps":[{"step_id":"other-step","tool":"memory.search","args":{"query":"repair"}}]})",
+        result, error, 8, "failed-search"));
+
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect decision=revise\nguidance \"repair the failed lookup\"\n"
+        "replace | open! memory.search query=\"corrected lookup\" limit=3\n",
+        result, error, "failed-search"));
+    CHECK_CONTRACT(result.decision == common_reflection_decision::revise);
+    CHECK_CONTRACT(result.revision_guidance == std::vector<std::string>{"repair the failed lookup"});
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 1);
+    CHECK_CONTRACT(*result.proposed_plan_operations[0].step_id == "failed-search");
+    CHECK_CONTRACT(result.proposed_plan_operations[0].step->tool_call->name == "memory.search");
+    CHECK_CONTRACT(same_json_object(
+        result.proposed_plan_operations[0].step->tool_call->arguments_json,
+        R"({"limit":3,"query":"corrected lookup"})"));
+    CHECK_CONTRACT(!common_reflection_parse_compact_dsl(
+        "reflect decision=revise\nreplace other-step | open! memory.search query=\"wrong target\" limit=3\n",
+        result, error, "failed-search"));
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect decision=revise\ncomplete lookup\n"
+        "add | open! memory.search query=\"follow-up\" limit=2\n",
+        result, error));
+    CHECK_CONTRACT(result.proposed_plan_operations.size() == 2);
+    CHECK_CONTRACT(*result.proposed_plan_operations[0].step_id == "lookup");
+    CHECK_CONTRACT(result.proposed_plan_operations[1].kind == common_plan_operation_kind::add_step);
+    CHECK_CONTRACT(common_reflection_parse_compact_dsl(
+        "reflect decision=revise\nassurance_action escalate_research\n"
+        "learning_hint category=\"tool_precondition\" statement=\"Check the schema before querying.\" expected_reuse=0.8\n",
+        result, error));
+    CHECK_CONTRACT(result.next_action == common_agent_reflection_next_action::escalate_research);
+    CHECK_CONTRACT(result.learning_hint && result.learning_hint->category == "tool_precondition");
+    const auto require = [](bool condition, const char * message) {
+        if (!condition) { std::cerr << message << '\n'; std::exit(1); }
+    };
+    const std::string review_dsl = "reflect revise\nassurance_action revise_plan\nguidance \"Fetch the missing evidence.\"";
+    common_reflection_result dsl_review, json_review;
+    require(common_reflection_parse_compact_dsl(review_dsl, dsl_review, error), "compact evidence repair review was rejected");
+    require(common_reflection_parse_json(
+        R"({"decision":"revise","assurance_action":"revise_plan","revision_guidance":["Fetch the missing evidence."]})",
+        json_review, error), "JSON evidence repair review was rejected");
+    require(dsl_review.next_action == common_agent_reflection_next_action::revise_plan &&
+        dsl_review.next_action == json_review.next_action && dsl_review.revision_guidance == json_review.revision_guidance,
+        "DSL and JSON changed the meaning of the same repair decision");
+    require(common_reflection_parse_compact_dsl("reflect revise", result, error) &&
+        result.next_action == common_agent_reflection_next_action::revise_response,
+        "legacy bare revision became implicit acceptance");
+    require(!common_reflection_parse_json(R"({"decision":"revise","ready_to_answer":true})", result, error),
+        "negative review contradicted readiness without a controlled error");
+    require(!common_reflection_parse_json(R"({"decision":"accept","assurance_action":"revise_plan"})", result, error),
+        "acceptance allowed a contradictory plan-repair verdict");
+    require(common_reflection_review_grammar().find("revise_plan") != std::string::npos &&
+        common_reflection_review_grammar().find("guidance") != std::string::npos,
+        "compact sampling grammar removed actionable evidence repair");
+    require(common_reflection_parse_json(R"({"decision":"revise","assurance_action":"revise_response","issues":[{"description":"Missing limitation","correction":"Disclose unread full text","previous_issue_id":"review-1-1","evidence_ids":["tool:fetch:web.fetch"]}],"advisory_notes":["Shorten the title"],"resolved_issue_ids":[]})",result,error) &&
+        result.structured_review && result.issues.size()==1 && result.issues.front().previous_issue_id=="review-1-1",
+        "structured review lost its blocker identity or correction");
+    require(common_reflection_parse_compact_dsl(
+        "reflect revise\nassurance_action revise_response\nissue description=\"Missing limitation\" correction=\"Disclose unread full text\" previous_issue_id=\"review-1-1\"\nadvisory \"Shorten the title\"",
+        result,error) && result.structured_review && result.issues.size()==1 && result.advisory_notes.size()==1,
+        "DSL checklist fields did not reach the shared reflection contract");
+    require(!common_reflection_parse_json(R"({"decision":"revise","issues":[{"description":"Missing correction"}]})",result,error),
+        "structured blocker accepted an incomplete correction contract");
+    return 0;
+}

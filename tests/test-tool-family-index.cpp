@@ -1,0 +1,268 @@
+#include "agent/tool-family-index.h"
+#include "agent/tool-workflow-index.h"
+
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+#include <algorithm>
+#include <cassert>
+#include <nlohmann/json.hpp>
+
+int main() {
+    const std::vector<common_chat_tool> tools = {
+        {"data.join", "join", "{}", "{}"},
+        {"data.aggregate", "aggregate", "{}", "{}"},
+        {"dataset.list", "list", "{}", "{}"},
+        {"diagnostics.native_crash", "native crash", "{}", "{}"},
+        {"web.search", "search", "{}", "{}"},
+        {"time.now", "time", "{}", "{}"},
+        {"math.calculate", "calculate", "{}", "{}"},
+        {"memory.search", "search memory", "{}", "{}"},
+        {"statistics.describe", "describe", "{}", "{}"},
+        {"document.tables", "list document tables", "{}", "{}"},
+        {"openapi.connect", "admit fetched OpenAPI spec", "{}", "{}"},
+        {"prediction.predict", "inspect historical predictions", "{}", "{}"},
+    };
+
+    const auto families = common_generate_tool_family_index(tools);
+    assert(families.size() == 11);
+    const auto find_family = [&families](const std::string & id) -> const common_tool_family_index * {
+        for (const auto & family : families) if (family.id == id) return &family;
+        return nullptr;
+    };
+    const auto * data_family = find_family("data");
+    assert(data_family && data_family->description == "Query and transform datasets");
+    const auto * math_family = find_family("math");
+    assert(math_family && math_family->tool_names == std::vector<std::string>{"math.calculate"});
+    const auto * web_family = [&families]() -> const common_tool_family_index * {
+        for (const auto & family : families) if (family.id == "web") return &family;
+        return nullptr;
+    }();
+    const auto * openapi_family = [&families]() -> const common_tool_family_index * {
+        for (const auto & family : families) if (family.id == "openapi") return &family;
+        return nullptr;
+    }();
+    assert(web_family && web_family->description ==
+        "Search and fetch public web content, including API specifications");
+    assert(openapi_family && openapi_family->description ==
+        "Load a fetched OpenAPI spec and expose its permitted API operations");
+    const auto * prediction_family = find_family("prediction");
+    assert(prediction_family && prediction_family->tool_names ==
+        std::vector<std::string>{"prediction.predict"});
+    assert(prediction_family->description.find("predictions from verified history") != std::string::npos);
+    const auto investigation_families = common_generate_tool_family_index({
+        {"investigate.case.list", "list cases", "{}", "{}"},
+        {"visualize.create", "create view", "{}", "{}"},
+    });
+    const auto investigation_view = common_render_tool_family_index(investigation_families);
+    assert(investigation_view.find("List and open scoped investigation cases") != std::string::npos);
+    assert(investigation_view.find("Create and open visualizations from approved datasets") != std::string::npos);
+    const auto family_tools = common_filter_tools_by_families(
+        { {"investigate.case.list", "list", "{}", "{}"},
+          {"visualize.create", "create", "{}", "{}"} },
+        {"investigate", "visualize"});
+    assert(family_tools.size() == 2);
+    common_chat_tool scholarly{"openalex.listWorks", "search", "{}", "{}"};
+    common_chat_tool statistics{"eurostat.getData", "data", "{}", "{}"};
+    const std::vector<common_chat_tool> shared_tools{scholarly, statistics};
+    const std::map<std::string, std::vector<std::string>> memberships{
+        {"openalex.listWorks", {"research"}}, {"eurostat.getData", {"research"}}};
+    const auto shared = common_generate_tool_family_index(shared_tools, {}, memberships);
+    assert(shared.size() == 3);
+    assert(common_filter_tools_by_families(shared_tools, {"research"}, memberships).size() == 2);
+    assert(common_filter_tools_by_families(shared_tools, {"openalex", "research"}, memberships).size() == 2);
+    assert(common_filter_tools_by_families({scholarly}, {"research"}, memberships).size() == 1);
+    const auto configured = common_generate_tool_family_index(
+        tools, {{"data", "Query approved datasets from the configured API"}});
+    const auto configured_data = [&configured]() -> const common_tool_family_index * {
+        for (const auto & family : configured) if (family.id == "data") return &family;
+        return nullptr;
+    }();
+    assert(configured_data && configured_data->description ==
+        "Query approved datasets from the configured API");
+    const auto rendered = common_render_tool_family_index(families);
+    assert(rendered.find("data: Query and transform datasets") != std::string::npos);
+    assert(rendered.find("dataset: Choose and inspect datasets for analysis") != std::string::npos);
+    assert(rendered.find("diagnostics: Analyze compiler and test failures, native crashes and debugger dumps") != std::string::npos);
+    assert(rendered.find("web: Search and fetch public web content, including API specifications") != std::string::npos);
+    assert(rendered.find("openapi: Load a fetched OpenAPI spec and expose its permitted API operations") != std::string::npos);
+    assert(rendered.find("prediction: Inspect predictions from verified history") != std::string::npos);
+    assert(rendered.find("time: Read current time and date information") != std::string::npos);
+    assert(rendered.find("math: Perform bounded arithmetic calculations") != std::string::npos);
+    assert(rendered.find("memory: Search and manage scoped runtime memory") != std::string::npos);
+    assert(rendered.find("document: Extract structured content from documents") != std::string::npos);
+    assert(rendered.find("aggregate") == std::string::npos);
+    assert(rendered.find("dataset.list") == std::string::npos);
+
+    const auto selected = common_filter_tools_by_families(tools, {"data", "dataset"});
+    assert(selected.size() == 3);
+    assert(selected[0].name == "data.join");
+    assert(selected[2].name == "dataset.list");
+    const auto prediction_tools = common_filter_tools_by_families(tools, {"prediction"});
+    assert(prediction_tools.size() == 1 && prediction_tools.front().name == "prediction.predict");
+
+    const auto bounded = common_render_tool_family_index(families, 32);
+    assert(bounded.size() > 32);
+    assert(bounded.find("prediction: Inspect predictions from verified history") != std::string::npos);
+
+    common_tool_family_selection selection;
+    std::string error;
+    assert(common_parse_tool_family_selection(
+        R"({"needs_tools":true,"families":["data","dataset"],"reason":"inspect data"})",
+        selection,
+        error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2);
+    assert(common_parse_tool_family_selection(
+        R"({"needs_tools":false,"families":[],"reason":"ordinary conversation"})",
+        selection,
+        error));
+    assert(!selection.needs_tools && selection.family_ids.empty());
+    const auto optional_schema = nlohmann::json::parse(common_tool_family_selection_schema(families));
+    assert(optional_schema["properties"]["families"]["items"]["enum"].get<std::vector<std::string>>().size()
+        == families.size());
+    assert(std::find(optional_schema["properties"]["families"]["items"]["enum"].begin(),
+        optional_schema["properties"]["families"]["items"]["enum"].end(),
+        "prediction") != optional_schema["properties"]["families"]["items"]["enum"].end());
+    const auto empty_schema = nlohmann::json::parse(common_tool_family_selection_schema({}));
+    assert(empty_schema["properties"]["families"]["maxItems"] == 0);
+    assert(!empty_schema["properties"]["families"]["items"].contains("enum"));
+    const auto required_schema = common_tool_family_required_selection_schema(families);
+    const auto required_prompt = common_tool_family_required_selection_prompt(families);
+    assert(required_prompt.find("Tool execution is required for this request") == 0);
+    assert(required_prompt.find("available host-authorized family ids") != std::string::npos);
+    assert(required_prompt.find("tool names, arguments") != std::string::npos);
+    assert(required_prompt.find("data: Query and transform datasets") != std::string::npos);
+    const auto required_repair_prompt = common_tool_family_required_selection_repair_prompt();
+    assert(required_repair_prompt.find("previous family selection was invalid") != std::string::npos);
+    assert(required_repair_prompt.find("non-empty families array") != std::string::npos);
+    assert(required_schema.find("\"minItems\":1") != std::string::npos);
+    assert(required_schema.find("\"maxItems\":11") != std::string::npos);
+    assert(required_schema.find("\"needs_tools\"") == std::string::npos);
+    assert(required_schema.find("\"enum\"") != std::string::npos);
+    assert(common_parse_tool_family_required_selection(
+        R"({"families":["data","dataset"]})", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2);
+    assert(!common_parse_tool_family_required_selection(
+        R"({"families":[]})", families, selection, error));
+    assert(!common_parse_tool_family_required_selection(
+        R"({"families":["unknown"]})", families, selection, error));
+    assert(!common_parse_tool_family_required_selection(
+        R"({"families":["data","data"]})", families, selection, error));
+    assert(!common_parse_tool_family_required_selection(
+        R"({"needs_tools":false,"families":[]})", families, selection, error));
+    const std::vector<common_tool_family_index> singleton_families = {
+        {"openalex", "Search OpenAlex", {"openalex.listWorks"}},
+    };
+    const auto singleton_schema = common_tool_family_required_selection_schema(singleton_families);
+    assert(singleton_schema.find("\"maxItems\":1") != std::string::npos);
+    assert(common_parse_tool_family_required_selection(
+        R"({"families":["openalex"]})", singleton_families, selection, error));
+    assert(!common_parse_tool_family_required_selection(
+        R"({"families":["openalex","openalex"]})", singleton_families, selection, error));
+    assert(!common_parse_tool_family_selection(
+        R"({"needs_tools":true,"families":["data","data"]})",
+        selection,
+        error));
+    assert(common_parse_tool_family_selection_text("NO_TOOLS\n", families, selection, error));
+    assert(common_parse_tool_family_selection_text(" \r\n\tNO_TOOLS\n", families, selection, error));
+    assert(!selection.needs_tools);
+    assert(common_parse_tool_family_selection_text("\n\nTOOLS: dataset", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids == std::vector<std::string>{"dataset"});
+    assert(!common_parse_tool_family_selection_text("\nTOOLS: unknown", families, selection, error));
+    assert(common_parse_tool_family_selection_text("NO_TOOLS", families, selection, error));
+    assert(!selection.needs_tools && selection.family_ids.empty());
+    assert(common_parse_tool_family_selection_text("TOOLS: dataset, data", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2);
+    assert(common_parse_tool_family_selection_text(
+        "TOOLS: dataset.list, data.join", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2 &&
+        selection.family_ids[0] == "dataset" && selection.family_ids[1] == "data");
+    assert(common_parse_tool_family_selection_text(
+        "TOOLS: prediction.predict", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids == std::vector<std::string>{"prediction"});
+    assert(!common_parse_tool_family_selection_text(
+        "TOOLS: prediction.predict, artifact.inspect", families, selection, error));
+    assert(common_parse_tool_family_selection_text("TOOLS: data, data, dataset", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2 &&
+        selection.family_ids[0] == "data" && selection.family_ids[1] == "dataset");
+    assert(common_parse_tool_family_selection_text(
+        "TOOLS: data:QueryAndTransformDatasets, statistics:DescribeAndComputeSummaries",
+        families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 2 &&
+        selection.family_ids[0] == "data" && selection.family_ids[1] == "statistics");
+    assert(!common_parse_tool_family_selection_text("TOOLS: unknown", families, selection, error));
+    // The parser remains the authorization boundary even when the runtime
+    // gives a compact model one bounded retry.  Prompt data appended after a
+    // valid family is not silently accepted as another family selection.
+    assert(!common_parse_tool_family_selection_text(
+        "TOOLS: dataset W2101234009", families, selection, error));
+    assert(common_parse_tool_family_selection_text(
+        "document.tables(resource_id=r1)", families, selection, error));
+    assert(selection.needs_tools && selection.family_ids.size() == 1 &&
+        selection.family_ids[0] == "document");
+    assert(!common_parse_tool_family_selection_text(
+        "invented.tool(resource=r1)", families, selection, error));
+
+    const auto workflows = common_generate_tool_workflow_index();
+    const auto workflow_view = common_render_tool_workflow_index(workflows, {"dataset", "data", "statistics"});
+    assert(workflow_view.find("dataset.discover") != std::string::npos);
+    assert(workflow_view.find("dataset.list() as=candidates") != std::string::npos);
+    assert(workflow_view.find("dataset.select(name=<unique name from $candidates.names> or $candidates.names[index])") != std::string::npos);
+    assert(workflow_view.find("dataset.join") != std::string::npos);
+    assert(workflow_view.find("dataset.select(name=<left_name>) as=left") != std::string::npos);
+    assert(workflow_view.find("data.join(left=$left.dataset, right=$right.dataset") != std::string::npos);
+    assert(workflow_view.find("dataset.inspect_named") != std::string::npos);
+    const auto statistics_only = common_render_tool_workflow_index(workflows, {"statistics"});
+    assert(statistics_only.find("dataset.summarize") != std::string::npos);
+    assert(statistics_only.find("dataset.join") == std::string::npos);
+    common_tool_workflow_selection workflow_selection;
+    assert(common_parse_tool_workflow_selection(
+        R"({"workflows":["dataset.discover","dataset.join"]})", workflow_selection, error));
+    assert(workflow_selection.workflow_ids.size() == 2);
+    assert(!common_parse_tool_workflow_selection(
+        R"({"workflows":["dataset.join","dataset.join"]})", workflow_selection, error));
+
+    const std::vector<common_tool_workflow_step_view> valid_join = {
+        {"dataset.select", R"({"name":"orders"})"},
+        {"dataset.select", R"({"name":"customers"})"},
+        {"data.join", R"({"left":"$left.dataset","right":"$right.dataset"})"},
+    };
+    assert(common_validate_tool_workflow_plan(
+        workflows, {"dataset.join"}, valid_join, error));
+    const std::vector<common_tool_workflow_step_view> invalid_join = {
+        {"data.join", R"({"left":"$left.dataset","right":"$right.dataset"})"},
+    };
+    assert(!common_validate_tool_workflow_plan(
+        workflows, {"dataset.join"}, invalid_join, error));
+    assert(error.find("required_producer_missing") != std::string::npos);
+    const std::vector<common_tool_workflow_step_view> direct_join = {
+        {"data.join", R"({"left":"dataset://orders","right":"dataset://customers"})"},
+    };
+    assert(common_validate_tool_workflow_plan(
+        workflows, {"dataset.join"}, direct_join, error));
+
+    const auto slots = common_expand_tool_workflow_slots(
+        workflows, {"dataset.discover", "dataset.inspect_named", "dataset.join", "dataset.summarize"});
+    assert(slots.size() == 8);
+    assert(slots[0].tool_name == "dataset.list");
+    assert(slots[1].tool_name == "dataset.select");
+    assert(slots[1].alias == "left");
+    assert(slots[2].tool_name == "dataset.select");
+    assert(slots[3].tool_name == "dataset.inspect");
+    assert(slots[3].fixed_arguments.at("dataset") == "$left.dataset");
+    assert(slots[5].tool_name == "data.join");
+    assert(slots[5].fixed_arguments.at("left") == "$left.dataset");
+    assert(slots[6].tool_name == "data.aggregate");
+    assert(slots[6].fixed_arguments.at("dataset") == "$joined.dataset");
+    const std::vector<common_chat_tool> graph_tools = {
+        {"code.calls", "calls", "{}", "{}"}, {"graph.find", "find", "{}", "{}"},
+        {"graph.expand", "expand", "{}", "{}"}, {"graph.search", "search", "{}", "{}"}, {"graph.source", "source", "{}", "{}"},
+        {"graph.link.propose", "propose", "{}", "{}"}};
+    const auto expanded_graph = common_expand_tool_family_prerequisites(graph_tools, {"code"});
+    assert(expanded_graph.size() == 6);
+    assert(std::any_of(expanded_graph.begin(), expanded_graph.end(), [](const auto & t) { return t.name == "graph.search"; }));
+    assert(std::any_of(expanded_graph.begin(), expanded_graph.end(), [](const auto & t) { return t.name == "graph.source"; }));
+    assert(std::any_of(expanded_graph.begin(), expanded_graph.end(), [](const auto & t) { return t.name == "graph.link.propose"; }));
+    assert(common_expand_tool_family_prerequisites({graph_tools[0]}, {"code"}).size() == 1);
+    return 0;
+}

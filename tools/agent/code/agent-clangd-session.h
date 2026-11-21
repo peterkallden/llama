@@ -1,0 +1,62 @@
+#pragma once
+
+#include "agent-clangd-protocol.h"
+#include "../host/agent-project-file-watch.h"
+
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+struct agent_clangd_session_config {
+    std::string executable = "clangd";
+    std::string repository_root;
+    std::string compile_commands_dir;
+    uint32_t request_timeout_ms = 180000;
+    uint32_t shutdown_timeout_ms = 1000;
+    std::string compile_commands_source;
+    std::string compile_commands_destination;
+    std::shared_ptr<agent_project_file_watch_service> file_watch_service;
+};
+
+class agent_clangd_session {
+public:
+    explicit agent_clangd_session(agent_clangd_session_config config);
+    ~agent_clangd_session();
+
+    bool request(
+            const std::string & method,
+            const agent_clangd_json & params,
+            agent_clangd_json & response,
+            std::string & error);
+
+    bool open_document(
+            const std::string & uri,
+            const std::string & language_id,
+            const std::string & text,
+            std::string & error);
+
+    bool apply_file_changes(const std::vector<agent_project_file_change> & changes, std::string & error);
+    void stop_for_refresh();
+
+    bool initialized() const;
+    agent_clangd_json status_snapshot() const;
+
+private:
+    struct impl;
+    bool ensure_started(std::string & error);
+    bool send_notification(const std::string & method, const agent_clangd_json & params, std::string & error);
+    bool send_request(const std::string & method, const agent_clangd_json & params, agent_clangd_json & response, std::string & error);
+    bool read_message(agent_clangd_json & message, std::string & error);
+    void shutdown();
+    void shutdown_locked();
+
+    agent_clangd_session_config config_;
+    std::unique_ptr<impl> state_;
+    mutable std::mutex mutex_;
+    std::atomic<int> session_status_{0};
+    std::atomic<int> index_status_{0};
+    std::atomic<int64_t> index_observed_ms_{0};
+};

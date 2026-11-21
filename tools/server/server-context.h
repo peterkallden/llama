@@ -82,6 +82,25 @@ struct server_context {
     // not thread-safe, should only be used from the main thread
     llama_context * get_llama_context() const;
 
+    // True only when the explicit experimental per-sequence cvec binding was
+    // enabled for this resident server. It is a capability fact for host
+    // registration, not a request to enable the feature.
+    bool per_sequence_cvec_batch_enabled() const;
+
+    // Agent/server hosts set this before load_model(). It intentionally
+    // overrides the legacy process-environment default so independently
+    // configured resident contexts cannot affect one another.
+    void set_per_sequence_cvec_batch_enabled(bool enabled);
+
+    // A second, narrower opt-in for experimental factorized low-rank cvec
+    // batches.  It has no effect unless per_sequence_cvec_batch is enabled.
+    bool per_sequence_factorized_cvec_batch_enabled() const;
+    void set_per_sequence_factorized_cvec_batch_enabled(bool enabled);
+    void set_teacher_scoring_backend(const std::string & backend);
+
+    void set_agent_trace_enabled(bool enabled);
+    bool agent_trace_enabled() const;
+
     // get a new response reader, used by CLI application
     server_response_reader get_response_reader();
 

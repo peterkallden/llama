@@ -1,0 +1,249 @@
+#pragma once
+
+#include "agent/dataset-contracts.h"
+#include "agent/context-graph/context-graph.h"
+#include "agent/investigation-contracts.h"
+#include "agent/thinking/research/research-contract.h"
+
+#include <string>
+#include <utility>
+#include <vector>
+
+enum class common_agent_publication_status { published, invalid, denied, conflict, storage_error };
+
+struct common_agent_data_store_config {
+    std::string backend = "auto";
+    std::string path;
+};
+
+class common_agent_virtual_dataset_source {
+public:
+    virtual ~common_agent_virtual_dataset_source() = default;
+    virtual bool authorize_source(const std::string &, const common_agent_scope &, std::string & error) const {
+        error = "investigation source authorization is unavailable";
+        return false;
+    }
+    virtual bool execute(
+        const common_agent_dataset_descriptor & descriptor,
+        const std::string & operation,
+        const std::string & request_json,
+        const common_agent_scope & scope,
+        bool allow_network,
+        std::string & result_json,
+        std::string & error) = 0;
+};
+
+// Host-owned backend seam for structured data tools. Tool arguments remain
+// semantic JSON; the selected backend owns storage and query translation.
+class common_agent_data_store {
+public:
+    virtual ~common_agent_data_store() = default;
+
+    // Graph methods use a host-resolved project scope and optimistic revision.
+    virtual bool get_context_graph(const common_agent_scope &, common_context_graph_state &, std::string & error) {
+        error = "context graph is unavailable"; return false;
+    }
+    // Returns candidate edge IDs for the given graph revision. Empty filters
+    // are wildcards; the caller still applies status and endpoint-kind filters.
+    virtual bool find_context_graph_edges(const common_agent_scope & scope, uint64_t revision,
+            const std::string & from, const std::string & relation, const std::string & to,
+            std::vector<std::string> & ids, std::string & error) {
+        common_context_graph_state graph;
+        if (!get_context_graph(scope, graph, error)) return false;
+        if (graph.revision != revision) { error = "context graph revision conflict"; return false; }
+        ids.clear();
+        for (const auto & edge : graph.edges)
+            if ((from.empty() || edge.from == from) && (relation.empty() || edge.relation == relation) &&
+                    (to.empty() || edge.to == to)) ids.push_back(edge.id);
+        error.clear(); return true;
+    }
+    virtual common_agent_publication_status publish_context_graph(const common_agent_scope &,
+            uint64_t, const common_context_graph_state &, common_context_graph_state &, std::string & error) {
+        error = "context graph is unavailable"; return common_agent_publication_status::storage_error;
+    }
+
+    // Optional host-owned ingestion seam. Implementations may stream bounded
+    // rows into their existing backend without returning the row set through
+    // the model-facing tool protocol.
+    virtual bool put_row(
+            const std::string & dataset,
+            const std::string & row_id,
+            const std::string & row_json,
+            std::string & error) {
+        (void) dataset;
+        (void) row_id;
+        (void) row_json;
+        error = "data store does not support dataset ingestion";
+        return false;
+    }
+
+    // Batch ingestion keeps importers independent of backend transaction
+    // details. Backends override this to reduce per-row database overhead.
+    virtual bool put_rows(
+            const std::string & dataset,
+            const std::vector<std::pair<std::string, std::string>> & rows,
+            std::string & error) {
+        for (const auto & row : rows) {
+            if (!put_row(dataset, row.first, row.second, error)) return false;
+        }
+        error.clear();
+        return true;
+    }
+
+    virtual bool put_dataset_descriptor(
+            const common_agent_dataset_descriptor & descriptor,
+            std::string & error) {
+        (void) descriptor;
+        error = "data store does not support dataset descriptors";
+        return false;
+    }
+
+    virtual bool get_dataset_descriptor(
+            const std::string & dataset_uri,
+            common_agent_dataset_descriptor & descriptor,
+            std::string & error) {
+        (void) dataset_uri;
+        descriptor = {};
+        error = "data store does not support dataset descriptors";
+        return false;
+    }
+
+    // Optional registry lookup used by the model-facing dataset.select and
+    // dataset.list contracts. Backends that do not persist descriptors keep
+    // the legacy path-based dataset adapter instead.
+    virtual bool list_dataset_descriptors(
+            std::vector<common_agent_dataset_descriptor> & descriptors,
+            std::string & error) {
+        descriptors.clear();
+        error = "data store does not support dataset descriptor listing";
+        return false;
+    }
+
+    virtual bool find_dataset_by_name(
+            const std::string & name,
+            common_agent_dataset_descriptor & descriptor,
+            std::string & error) {
+        (void) name;
+        descriptor = {};
+        error = "data store does not support dataset name lookup";
+        return false;
+    }
+
+    // Find a fully published materialization for the currently authorized
+    // resource bytes. A descriptor is published only after all rows have been
+    // written, so this lookup is safe before parsing/normalizing the source.
+    virtual bool find_dataset_materialization(
+            const std::string & source_resource_uri,
+            const std::string & content_hash,
+            const std::string & importer_version,
+            common_agent_dataset_descriptor & descriptor,
+            std::string & error) {
+        descriptor = {};
+        std::vector<common_agent_dataset_descriptor> candidates;
+        if (!list_dataset_descriptors(candidates, error)) return false;
+        const common_agent_dataset_descriptor * match = nullptr;
+        for (const auto & candidate : candidates) {
+            if (candidate.ref.source_resource_uri != source_resource_uri ||
+                    candidate.ref.content_hash != content_hash ||
+                    candidate.import_processor_version != importer_version) continue;
+            if (match != nullptr) {
+                error = "multiple complete dataset materializations match the source resource";
+                return false;
+            }
+            match = &candidate;
+        }
+        if (match == nullptr) {
+            error.clear();
+            return false;
+        }
+        if (!validate_common_agent_dataset_descriptor(*match, common_agent_dataset_limits{}, error)) {
+            descriptor = {};
+            error = "cached dataset materialization is invalid: " + error;
+            return false;
+        }
+        descriptor = *match;
+        error.clear();
+        return true;
+    }
+
+    virtual bool execute(
+        const std::string & operation,
+        const std::string & request_json,
+        std::string & result_json,
+        std::string & error) = 0;
+
+    // Scoped execution is used by host-backed virtual datasets. Remote
+    // sources must explicitly honor the selected scope and resolved network
+    // permission; existing local stores retain their established behavior.
+    virtual bool execute_scoped(
+        const std::string & operation,
+        const std::string & request_json,
+        const common_agent_scope & scope,
+        bool allow_network,
+        std::string & result_json,
+        std::string & error) {
+        (void) scope;
+        (void) allow_network;
+        return execute(operation, request_json, result_json, error);
+    }
+
+    virtual bool get_investigation_case(const std::string &, const common_agent_scope &,
+            common_investigation_case_revision &, std::string &) {
+        return false;
+    }
+    virtual bool list_investigation_cases(const common_agent_scope &, size_t,
+            const std::string &, std::vector<common_investigation_case_summary> &,
+            std::string &, std::string &) {
+        return false;
+    }
+    virtual bool publish_investigation_case(const common_investigation_case_revision &,
+            uint64_t, const std::string &, common_investigation_case_revision &,
+            std::string &) {
+        return false;
+    }
+    // Legacy backends remain usable; never infer a conflict from an arbitrary
+    // backend error string. Production backends override the typed boundary.
+    virtual common_agent_publication_status publish_investigation_case_checked(
+            const common_investigation_case_revision & value, uint64_t expected,
+            const std::string & uri, common_investigation_case_revision & published,
+            std::string & error) {
+        published = {};
+        if (!common_investigation_case_validate(value, error)) return common_agent_publication_status::invalid;
+        return publish_investigation_case(value, expected, uri, published, error)
+            ? common_agent_publication_status::published : common_agent_publication_status::storage_error;
+    }
+    virtual bool publish_investigation_report(const common_agent_scope &,
+            const common_investigation_report_index_entry &,
+            common_investigation_report_index_entry &, std::string &) {
+        return false;
+    }
+    virtual bool list_investigation_reports(const common_agent_scope &, const std::string &,
+            uint64_t, std::vector<common_investigation_report_index_entry> &, std::string &) {
+        return false;
+    }
+    virtual bool get_research_revision(const std::string &, uint64_t,
+            const common_agent_scope &, common_agent_research_revision_ref &, std::string &) {
+        return false;
+    }
+    virtual bool publish_research_revision(const common_agent_scope &,
+            const common_agent_research_revision_ref &, uint64_t,
+            common_agent_research_revision_ref &, bool &, std::string &) {
+        return false;
+    }
+    virtual bool get_research_draft(const std::string &, const common_agent_scope &,
+            common_agent_research_draft_ref &, std::string &) {
+        return false;
+    }
+    virtual bool save_research_draft(const common_agent_scope &,
+            const common_agent_research_draft_ref &, uint64_t,
+            common_agent_research_draft_ref &, bool &, std::string &) {
+        return false;
+    }
+    virtual bool set_virtual_dataset_source(common_agent_virtual_dataset_source *) { return false; }
+    virtual bool authorize_investigation_source(const std::string & source_id,
+            const common_agent_scope & scope, std::string & error) const {
+        (void) source_id; (void) scope;
+        error = "investigation source authorization is unavailable";
+        return false;
+    }
+};

@@ -145,6 +145,26 @@ LLAMA_API bool llama_batch_ext_set_decision_group(struct llama_batch_ext * batch
 
 // Label of option i of a decision model ("<arch>.decision.labels"), nullptr past the last one
 LLAMA_API const char * llama_model_decision_label(const struct llama_model * model, uint32_t i);
+// LLAMA_API float * llama_get_embeddings_ith(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_embeddings_nextn_ith(struct llama_context * ctx, int32_t i);
+
+// Set whether the context outputs the input embeddings of a specific layer
+LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid, bool value);
+
+// mirrors:
+// LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
+LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
+// Returns only a row captured by the latest decode, identified by sequence and position.
+LLAMA_API float * llama_get_embeddings_layer_inp_row(struct llama_context * ctx, uint32_t lid, llama_seq_id seq_id, llama_pos pos);
+LLAMA_API void llama_set_residual_patch(
+        struct llama_context * ctx,
+        const struct llama_residual_patch_ref * ref);
+
+LLAMA_API void llama_set_layer_reductions(
+        struct llama_context * ctx,
+        struct llama_layer_reduction_ref * ref);
+
+LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
 
 //
 // model/context data extraction
@@ -165,3 +185,10 @@ LLAMA_API uint32_t llama_model_n_tokens_delay(const struct llama_model * model);
 
 // each sequence is paired with an unconditional one at n_seq_max / 2 + seq_id, in a unified KV cache
 LLAMA_API bool llama_model_classifier_free_guidance(const struct llama_model * model);
+// Experimental replay support. All calls require exclusive ownership of the
+// context and completed/synchronized decode. Unsupported memory types fail closed.
+// supports: capability before decode; can_rewind: current last-position check.
+// These operations do not restore arbitrary context state or undo shifting.
+LLAMA_API bool llama_memory_supports_rewind_last(llama_memory_t mem);
+LLAMA_API bool llama_memory_can_rewind_last(llama_memory_t mem, llama_seq_id seq_id, llama_pos pos);
+LLAMA_API bool llama_memory_rewind_last(llama_memory_t mem, llama_seq_id seq_id, llama_pos pos);

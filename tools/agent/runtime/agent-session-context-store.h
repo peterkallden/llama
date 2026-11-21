@@ -1,0 +1,51 @@
+#pragma once
+
+#include "agent/context/conversation-context.h"
+#include "agent/protocol/agent-response.h"
+#include "resource/resource-contract.h"
+#include "tools/agent/resource/agent-resource-store.h"
+
+#include <nlohmann/json.hpp>
+#include <optional>
+#include <string>
+#include <vector>
+
+class agent_session_context_store {
+public:
+    agent_session_context_store(agent_resource_store * store, std::string namespace_id,
+            std::string session_id, bool persist);
+
+    bool load(std::vector<common_agent_conversation_segment> & segments,
+            std::optional<common_agent_context_checkpoint> & checkpoint,
+            uint64_t & epoch, std::string & error) const;
+    bool append(common_agent_conversation_segment segment, std::string & error);
+    // Display-only turn artifact. load() deliberately excludes this purpose
+    // from model conversation segments and compaction checkpoints.
+    bool append_unverified_draft(const std::string & request_id,const std::string & turn_id,
+        const nlohmann::ordered_json & draft,std::string & error);
+    bool append_review_progress(const std::string & request_id,const std::string & turn_id,
+        const nlohmann::ordered_json & progress,std::string & error);
+    // Persist a validated blocked outcome as context, separately from an answer.
+    bool append_blocked_outcome(const std::string & request_id, const std::string & turn_id,
+        const common_agent_review_progress & progress, const std::string & plan_id, std::string & error);
+    bool save_checkpoint(common_agent_context_checkpoint & checkpoint, std::string & error);
+    bool begin_new_epoch(std::string & error);
+    bool persistent() const { return store != nullptr && persist; }
+
+private:
+    bool append_review_record(const std::string &,const std::string &,const std::string &,
+        const nlohmann::ordered_json &,std::string &);
+    bool list_internal(std::vector<agent_resource_descriptor> & resources, std::string & error) const;
+    bool put_internal(const std::string & name, const std::string & key,
+            const nlohmann::ordered_json & payload, agent_resource_descriptor & out,
+            std::string & error) const;
+
+    agent_resource_store * store = nullptr;
+    std::string namespace_id;
+    std::string session_id;
+    bool persist = true;
+    mutable std::vector<common_agent_conversation_segment> transient_segments;
+    mutable std::optional<common_agent_context_checkpoint> transient_checkpoint;
+    mutable uint64_t transient_epoch = 1;
+    mutable uint64_t transient_checkpoint_revision = 0;
+};

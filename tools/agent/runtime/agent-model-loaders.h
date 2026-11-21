@@ -1,0 +1,89 @@
+#pragma once
+
+#include "agent-model-residency.h"
+
+#include "chat.h"
+#include "llama.h"
+
+#include <memory>
+#include <mutex>
+
+class common_agent_server_context_host;
+struct common_flydelta_teaching_material_identity;
+
+// Backend-specific resources are hidden behind the residency contract, but
+// remain inspectable by the runtime session adapter that eventually creates a
+// per-session inference context.
+struct common_agent_runtime_loaded_model final
+    : common_agent_runtime_resident_model {
+    ~common_agent_runtime_loaded_model() override;
+
+    common_agent_model_selection selection;
+    llama_model * model = nullptr;
+    // Model geometry is backend-independent runtime metadata. The server-
+    // context loader keeps the llama_model owned by server_context and thus
+    // leaves `model` null, while consumers such as deployment resolution
+    // still need these dimensions.
+    size_t model_n_embd = 0;
+    size_t model_n_layers = 0;
+    mutable std::mutex flydelta_execution_identity_mutex;
+    std::shared_ptr<const common_flydelta_teaching_material_identity> flydelta_execution_identity;
+    common_chat_templates_ptr chat_templates;
+    std::shared_ptr<common_agent_server_context_host> server_context_host;
+};
+
+struct common_agent_runtime_model_loader_config {
+    int n_gpu_layers = 0;
+    int n_threads = 2;
+    bool fit_params = true;
+    bool per_sequence_cvec_batch = false;
+    bool per_sequence_factorized_cvec_batch = false;
+    std::string teacher_scoring_backend = "auto";
+    bool agent_trace = false;
+    bool allow_flydelta_scalar_fallback = true;
+    bool reserve_flydelta_workspace = true;
+};
+
+class common_agent_runtime_cli_model_loader final
+    : public common_agent_runtime_model_loader {
+public:
+    explicit common_agent_runtime_cli_model_loader(
+            common_agent_runtime_model_loader_config config = {})
+        : config_(config) {}
+
+    bool load(
+            const common_agent_model_selection & selection,
+            std::shared_ptr<common_agent_runtime_resident_model> & model,
+            std::string & error) override;
+
+private:
+    common_agent_runtime_model_loader_config config_;
+};
+
+class common_agent_runtime_server_context_model_loader final
+    : public common_agent_runtime_model_loader {
+public:
+    explicit common_agent_runtime_server_context_model_loader(
+            common_agent_runtime_model_loader_config config = {})
+        : config_(config) {}
+
+    bool load(
+            const common_agent_model_selection & selection,
+            std::shared_ptr<common_agent_runtime_resident_model> & model,
+            std::string & error) override;
+
+private:
+    common_agent_runtime_model_loader_config config_;
+};
+
+class common_agent_runtime_http_model_loader final
+    : public common_agent_runtime_model_loader {
+public:
+    bool load(const common_agent_model_selection & selection,
+            std::shared_ptr<common_agent_runtime_resident_model> & model,
+            std::string & error) override;
+};
+
+std::shared_ptr<common_agent_runtime_loaded_model>
+common_agent_runtime_loaded_model_cast(
+        const std::shared_ptr<common_agent_runtime_resident_model> & model);

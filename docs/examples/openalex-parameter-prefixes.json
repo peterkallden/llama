@@ -1,0 +1,8 @@
+{
+  "getWork": {
+    "id": {
+      "if_starts_with": "10.",
+      "prepend": "https://doi.org/"
+    }
+  }
+}

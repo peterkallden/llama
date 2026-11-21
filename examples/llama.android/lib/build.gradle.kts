@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.jetbrains.kotlin.android)
@@ -8,6 +10,9 @@ android {
     compileSdk = 36
 
     ndkVersion = "29.0.13113456"
+
+    // Package the shared starter library directly from its canonical source.
+    sourceSets.getByName("main").assets.srcDir("../../pocs/memory/bootstrap")
 
     defaultConfig {
         minSdk = 33
@@ -28,9 +33,21 @@ android {
                 arguments += "-DLLAMA_BUILD_APP=OFF"
                 arguments += "-DLLAMA_BUILD_COMMON=ON"
                 arguments += "-DLLAMA_OPENSSL=OFF"
+                // The Android runtime assembly links the shared agent contract
+                // and tooling targets. Keep the host-facing daemon/server
+                // layers disabled, but build the common agent library seam.
+                arguments += "-DLLAMA_AGENT_RUNTIME=ON"
+                arguments += "-DLLAMA_AGENT_SANDBOX=OFF"
+                arguments += "-DLLAMA_AGENT_BUILD_POCS=OFF"
+                arguments += "-DLLAMA_MEMORY=ON"
+                arguments += "-DLLAMA_PLAN=ON"
+                arguments += "-DLLAMA_AGENT_STORAGE_SQLITE=ON"
 
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_BACKEND_DL=ON"
+                // Keep the portable ARM64/NEON CPU backend and package the
+                // optional Vulkan GPU backend in the same dev AAR/APK.
+                arguments += "-DGGML_VULKAN=ON"
                 arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
                 arguments += "-DGGML_LLAMAFILE=OFF"
             }
@@ -52,8 +69,8 @@ android {
     kotlin {
         jvmToolchain(17)
 
-        compileOptions {
-            targetCompatibility = JavaVersion.VERSION_17
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
         }
     }
 
@@ -76,4 +93,5 @@ dependencies {
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }

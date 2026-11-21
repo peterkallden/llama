@@ -1141,6 +1141,44 @@ float * llama_context::get_logits_ith(int32_t i) {
     }
 }
 
+float llama_context::get_teacher_forced_logprob_ith(int32_t i) {
+    output_reorder();
+    try {
+        if (teacher_logprobs.data == nullptr)
+            throw std::runtime_error("teacher-forced score output is unavailable");
+        return teacher_logprobs.data[output_resolve_row(i)];
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid teacher score id %d, reason: %s\n", __func__, i, err.what());
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+}
+
+bool llama_context::get_teacher_forced_logprob_is_device(int32_t i) {
+    output_reorder();
+    try {
+        const auto row = output_resolve_row(i);
+        return row >= 0 && static_cast<size_t>(row) < teacher_score_device.size() &&
+            teacher_score_device[row] != 0;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+void llama_context::set_teacher_forced_targets(
+        const llama_seq_id * seq_ids, const llama_token * target_tokens, size_t n_targets) {
+    teacher_score_targets.clear();
+    if (n_targets == 0) return;
+    if (seq_ids == nullptr || target_tokens == nullptr)
+        throw std::invalid_argument("teacher-forced score targets are null");
+    for (size_t i = 0; i < n_targets; ++i) {
+        if (seq_ids[i] < 0 || target_tokens[i] < 0 ||
+                static_cast<size_t>(target_tokens[i]) >= model.vocab.n_tokens()) {
+            throw std::invalid_argument("teacher-forced score target is out of range");
+        }
+        teacher_score_targets[seq_ids[i]] = target_tokens[i];
+    }
+}
+
 float * llama_context::get_embeddings() {
     output_reorder();
 
@@ -1220,7 +1258,9 @@ float * llama_context::get_embeddings_nextn_ith(int32_t i) {
 float * llama_context::get_embeddings_layer_inp(uint32_t lid) {
     output_reorder();
 
-    GGML_ASSERT(lid < embd_layer_inp.size() && embd_layer_inp[lid].has_data());
+    if (lid >= embd_layer_inp.size() || !embd_layer_inp[lid].has_data()) {
+        return nullptr;
+    }
 
     return embd_layer_inp[lid].data;
 }
@@ -1801,11 +1841,37 @@ bool llama_context::set_adapter_cvec(
                 int32_t   il_end) {
     LLAMA_LOG_DEBUG("%s: il_start = %d, il_end = %d\n", __func__, il_start, il_end);
 
+    cvec_batch = nullptr;
+
     bool res = cvec->apply(model, data, len, n_embd, il_start, il_end);
 
     sched_need_reserve = true;
 
     return res;
+}
+
+void llama_context::set_adapter_cvec_batch(const llama_adapter_cvec_batch_ref * ref) {
+    cvec_batch = ref;
+    sched_need_reserve = true;
+}
+
+void llama_context::set_residual_patch(const llama_residual_patch_ref * ref) {
+    // The server clears this request-scoped hook before every batch.  A
+    // normal request has no patch, so an unchanged nullptr must not force a
+    // graph re-reservation or otherwise perturb the ordinary generation path.
+    if (residual_patch == ref) {
+        return;
+    }
+    residual_patch = ref;
+    sched_need_reserve = true;
+}
+
+void llama_context::set_layer_reductions(llama_layer_reduction_ref * ref) {
+    if (layer_reductions == ref) {
+        return;
+    }
+    layer_reductions = ref;
+    sched_need_reserve = true;
 }
 
 llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
@@ -1877,6 +1943,8 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         ret = status;
         return nullptr;
     }
+
+    extract_layer_reductions(res);
 
     ret = GGML_STATUS_SUCCESS;
 
@@ -2118,24 +2186,21 @@ static void copy_tensor_async_rows(
     }
 }
 
-static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_seq_id, llama_sampler *> & samplers) {
-    for (uint32_t i = 0; i < ubatch.n_tokens; i++) {
-        if (!ubatch.output[i]) {
-            continue;
-        }
-
-        // Check if the output token has at least one sequence without a backend sampler.
-        for (int32_t j = 0; j < ubatch.n_seq_id[i]; ++j) {
-            llama_seq_id seq_id = ubatch.seq_id[i][j];
-            if (samplers.find(seq_id) == samplers.end()) {
-                return true;
-            }
-        }
+static bool needs_raw_logits_for_output(
+        const llama_ubatch & ubatch, uint32_t token_index,
+        const std::map<llama_seq_id, llama_sampler *> & samplers,
+        const std::map<llama_seq_id, llama_token> & teacher_targets) {
+    for (int32_t j = 0; j < ubatch.n_seq_id[token_index]; ++j) {
+        const llama_seq_id seq_id = ubatch.seq_id[token_index][j];
+        if (samplers.find(seq_id) != samplers.end()) continue;
+        if (teacher_targets.find(seq_id) != teacher_targets.end()) continue;
+        return true;
     }
-    return false; // all sequences use backend sampling
+    return false;
 }
 
 int llama_context::decode(const llama_batch_ext & batch_inp) {
+    embd_layer_inp_rows.clear();
     if (!memory) {
         LLAMA_LOG_DEBUG("%s: cannot decode batches with this context (calling encode() instead)\n", __func__);
         return encode(batch_inp);
@@ -2409,17 +2474,48 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
         }
 
         // extract logits
-        if (logits.data && t_logits && n_outputs > 0 && needs_raw_logits(ubatch, sampling.samplers)) {
+        if (logits.data && t_logits && n_outputs > 0) {
             ggml_backend_t backend_res = ggml_backend_sched_get_tensor_backend(sched.get(), t_logits);
             GGML_ASSERT(backend_res != nullptr);
             GGML_ASSERT(logits.data != nullptr);
+            int64_t output_row = 0;
+            for (uint32_t token_row = 0; token_row < ubatch.n_tokens; ++token_row) {
+                if (ubatch.output != nullptr && !ubatch.output[token_row]) continue;
+                if (needs_raw_logits_for_output(
+                        ubatch, token_row, sampling.samplers, teacher_score_targets)) {
+                    GGML_ASSERT(n_outputs_prev + output_row < n_outputs_all);
+                    GGML_ASSERT((n_outputs_prev + output_row + 1)*n_vocab <=
+                        static_cast<int64_t>(logits.size));
+                    ggml_backend_tensor_get_async(backend_res, t_logits,
+                        logits.data + (n_outputs_prev + output_row)*n_vocab,
+                        static_cast<size_t>(output_row)*t_logits->nb[1],
+                        n_vocab*sizeof(float));
+                }
+                ++output_row;
+            }
+            GGML_ASSERT(output_row == n_outputs);
+        }
 
-            float * logits_out = logits.data + n_outputs_prev*n_vocab;
-
-            if (n_outputs) {
-                GGML_ASSERT( n_outputs_prev + n_outputs <= n_outputs_all);
-                GGML_ASSERT((n_outputs_prev + n_outputs)*n_vocab <= (int64_t) logits.size);
-                ggml_backend_tensor_get_async(backend_res, t_logits, logits_out, 0, n_outputs*n_vocab*sizeof(float));
+        if (teacher_logprobs.data && n_outputs > 0) {
+            const auto & scores = res->get_teacher_logprobs();
+            if (scores.size() != static_cast<size_t>(n_outputs)) {
+                LLAMA_LOG_ERROR("%s: teacher score graph returned %zu scores for %d outputs\n",
+                    __func__, scores.size(), n_outputs);
+                return -3;
+            }
+            if (teacher_score_device.size() < static_cast<size_t>(n_outputs_all)) {
+                teacher_score_device.resize(n_outputs_all, 0);
+            }
+            std::fill(teacher_score_device.begin() + n_outputs_prev,
+                teacher_score_device.begin() + n_outputs_prev + n_outputs, 0);
+            for (size_t i = 0; i < scores.size(); ++i) {
+                ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(sched.get(), scores[i]);
+                if (backend == nullptr) return -3;
+                const auto device = ggml_backend_get_device(backend);
+                teacher_score_device[n_outputs_prev + i] = device != nullptr &&
+                    ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_CPU;
+                ggml_backend_tensor_get_async(backend, scores[i],
+                    teacher_logprobs.data + n_outputs_prev + i, 0, sizeof(float));
             }
         }
 
@@ -2484,7 +2580,7 @@ int llama_context::decode(const llama_batch_ext & batch_inp) {
         }
 
         // [TAG_EXTRACT_TARGET_EMBEDDINGS]
-        bool extract_all_idxs = extract_layer_inputs(res, n_tokens_prev, ubatch.n_tokens);
+        bool extract_all_idxs = extract_layer_inputs(res, n_tokens_prev, ubatch);
 
         // extract nextn embeddings before
         // only meaningful in LLAMA_POOLING_TYPE_NONE (per-token); other pooling modes are ignored.
@@ -2638,6 +2734,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     size_t embd_layer_inp_float_count = 0;
 
     logits.size     = has_logits     ? n_vocab*n_outputs_max     : 0;
+    teacher_logprobs.size = teacher_score_targets.empty() ? 0 : n_outputs_max;
     embd.size       = has_embd       ? n_embd_out*n_outputs_max  : 0;
     embd_nextn.size = has_embd_nextn ? n_embd_out*n_outputs_max  : 0;
 
@@ -2667,7 +2764,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
 
     const size_t prev_size = buf_output ? ggml_backend_buffer_get_size(buf_output.get()) : 0;
     const size_t new_size  =
-        (logits.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + backend_float_count) * sizeof(float) +
+        (logits.size + teacher_logprobs.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + backend_float_count) * sizeof(float) +
         (                                                                         backend_token_count) * sizeof(llama_token);
 
     // alloc only when more than the current capacity is required
@@ -2683,6 +2780,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
             // TODO: not needed?
             buf_output = nullptr;
             logits.data = nullptr;
+            teacher_logprobs.data = nullptr;
             embd.data = nullptr;
             embd_nextn.data = nullptr;
             for (auto & layer_inp : embd_layer_inp) {
@@ -2712,6 +2810,11 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
 
     logits = has_logits ? buffer_view<float>{output_base, logits.size} : buffer_view<float>{nullptr, 0};
     offset += logits.size * sizeof(float);
+
+    teacher_logprobs = teacher_score_targets.empty()
+        ? buffer_view<float>{nullptr, 0}
+        : buffer_view<float>{(float *) (base + offset), teacher_logprobs.size};
+    offset += teacher_logprobs.size * sizeof(float);
 
     embd = has_embd ? buffer_view<float>{(float *) (base + offset), embd.size} : buffer_view<float>{nullptr, 0};
     offset += embd.size * sizeof(float);
@@ -2774,8 +2877,19 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     return n_outputs_max;
 }
 
-bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens) {
+bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t token_offset, const llama_ubatch & ubatch) {
+    const size_t n_tokens = ubatch.n_tokens;
     bool extracted = false;
+    if (std::any_of(embd_layer_inp.begin(), embd_layer_inp.end(), [](const buffer_view<float> & view) {
+            return view.has_data();
+        })) {
+        embd_layer_inp_rows.resize(token_offset + n_tokens);
+        for (size_t i = 0; i < n_tokens; ++i) {
+            auto & row = embd_layer_inp_rows[token_offset + i];
+            row.pos = ubatch.pos[i];
+            row.seq_ids.assign(ubatch.seq_id[i], ubatch.seq_id[i] + ubatch.n_seq_id[i]);
+        }
+    }
     if (cparams.embeddings_layer_inp_dev) {
         return extracted;
     }
@@ -2784,11 +2898,21 @@ bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
             continue;
         }
         if (!embd_layer_inp[il].has_data()) {
-            GGML_ABORT("output layer input buffer not allocated");
+            // Layer-input capture is an optional diagnostic seam. Some model
+            // graphs do not expose the requested input buffer; report an
+            // empty capture to the caller instead of aborting the whole
+            // server-context request. The agent/FlyDelta seam will then
+            // fail closed with a capture error.
+            embd_layer_inp[il] = {nullptr, 0};
+            continue;
         }
         ggml_tensor * t = res->get_layer_inp((int) il);
         if (!t) {
-            GGML_ABORT("layer input tensor not found");
+            // The graph may not expose this optional diagnostic seam for the
+            // selected architecture. Leave the output empty so callers get a
+            // controlled capture failure instead of a process assertion.
+            embd_layer_inp[il] = {nullptr, 0};
+            continue;
         }
 
         const size_t nbytes = ggml_nbytes(t);
@@ -2810,6 +2934,60 @@ bool llama_context::extract_layer_inputs(const llm_graph_result * res, size_t to
     return extracted;
 }
 
+void llama_context::extract_layer_reductions(const llm_graph_result * res) {
+    if (layer_reductions == nullptr || res->layer_reduction_outputs.empty()) {
+        return;
+    }
+    // The graph is submitted asynchronously. Buffer-level scalar reads do
+    // not wait for its producing backend, so finish the diagnostic graph
+    // before reading these four reductions. Ordinary decode is unaffected.
+    ggml_backend_sched_synchronize(sched.get());
+    for (const auto & output : res->layer_reduction_outputs) {
+        if (output.entry == nullptr || output.dot_shift_delta == nullptr ||
+                output.shift_squared == nullptr || output.delta_squared == nullptr ||
+                output.residual_squared == nullptr) {
+            continue;
+        }
+        ggml_backend_t backend = ggml_backend_sched_get_tensor_backend(
+            sched.get(), output.dot_shift_delta);
+        if (backend == nullptr) {
+            output.entry->failure_reason = "layer reduction has no backend";
+            continue;
+        }
+        ggml_tensor * reduction_tensors[] = {
+            output.dot_shift_delta,
+            output.shift_squared,
+            output.delta_squared,
+            output.residual_squared,
+        };
+        bool device_reduction = true;
+        for (ggml_tensor * tensor : reduction_tensors) {
+            ggml_backend_t tensor_backend = ggml_backend_sched_get_tensor_backend(
+                sched.get(), tensor);
+            ggml_backend_dev_t tensor_device = tensor_backend
+                ? ggml_backend_get_device(tensor_backend) : nullptr;
+            if (tensor_device == nullptr ||
+                    ggml_backend_dev_type(tensor_device) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+                device_reduction = false;
+                break;
+            }
+        }
+        if (!device_reduction) {
+            output.entry->failure_reason = "layer reduction executed on CPU backend";
+            continue;
+        }
+        ggml_backend_tensor_get(output.dot_shift_delta,
+            &output.entry->dot_shift_delta, 0, sizeof(float));
+        ggml_backend_tensor_get(output.shift_squared,
+            &output.entry->shift_squared, 0, sizeof(float));
+        ggml_backend_tensor_get(output.delta_squared,
+            &output.entry->delta_squared, 0, sizeof(float));
+        ggml_backend_tensor_get(output.residual_squared,
+            &output.entry->residual_squared, 0, sizeof(float));
+        output.entry->available = true;
+    }
+}
+
 void llama_context::output_reorder() {
     const uint64_t n_vocab     = model.vocab.n_tokens();
     const uint64_t n_embd      = model.hparams.n_embd;
@@ -2824,6 +3002,12 @@ void llama_context::output_reorder() {
                 std::swap(logits.data[i0*n_vocab + k], logits.data[i1*n_vocab + k]);
             }
         }
+        if (teacher_logprobs.size > 0) {
+            std::swap(teacher_logprobs.data[i0], teacher_logprobs.data[i1]);
+        }
+        if (i0 < teacher_score_device.size() && i1 < teacher_score_device.size()) {
+            std::swap(teacher_score_device[i0], teacher_score_device[i1]);
+        }
 
         if (embd.size > 0) {
             for (uint64_t k = 0; k < n_embd_out; k++) {
@@ -2837,6 +3021,18 @@ void llama_context::output_reorder() {
             }
         }
 
+        if (embd_layer_inp.size() > 0) {
+            if (i0 < embd_layer_inp_rows.size() && i1 < embd_layer_inp_rows.size()) {
+                std::swap(embd_layer_inp_rows[i0], embd_layer_inp_rows[i1]);
+            }
+            for (int lid = 0; lid < (int) embd_layer_inp.size(); ++lid) {
+                if (embd_layer_inp[lid].size > 0) {
+                    for (uint64_t k = 0; k < n_embd; ++k) {
+                        std::swap(embd_layer_inp[lid].data[i0*n_embd + k], embd_layer_inp[lid].data[i1*n_embd + k]);
+                    }
+                }
+            }
+        }
         if (!sampling.samplers.empty()) {
             assert(sampling.logits.size > 0);
             assert(sampling.probs.size > 0);
@@ -3059,6 +3255,9 @@ llm_graph_params llama_context::graph_params(
         /*.sched       =*/ sched.get(),
         /*.backend_cpu =*/ backend_cpu,
         /*.cvec        =*/ cvec.get(),
+        /*.cvec_batch  =*/ cvec_batch,
+        /*.residual_patch =*/ residual_patch,
+        /*.layer_reductions =*/ layer_reductions,
         /*.loras       =*/ loras.get(),
         /*.mctx        =*/ mctx,
         /*.cross       =*/ &cross,
@@ -3068,6 +3267,7 @@ llm_graph_params llama_context::graph_params(
         /*.h_nextn_dev   =*/ cparams.embeddings_nextn_dev ? h_nextn_dev : nullptr,
         /*.h_nextn_src   =*/ supports_state_row() ? cparams.ctx_state_src->get_h_nextn_dev() : nullptr,
         /*.samplers    =*/ sampling.samplers,
+        /*.teacher_score_targets =*/ teacher_score_targets.empty() ? nullptr : &teacher_score_targets,
         /*.n_outputs   =*/ n_outputs,
         /*.cb          =*/ graph_get_cb(),
         /*.res         =*/ res,
@@ -4672,6 +4872,20 @@ float * llama_get_logits_ith(llama_context * ctx, int32_t i) {
     return res;
 }
 
+void llama_set_teacher_forced_targets(
+        llama_context * ctx, const llama_seq_id * seq_ids,
+        const llama_token * target_tokens, size_t n_targets) {
+    ctx->set_teacher_forced_targets(seq_ids, target_tokens, n_targets);
+}
+
+float llama_get_teacher_forced_logprob_ith(llama_context * ctx, int32_t i) {
+    return ctx->get_teacher_forced_logprob_ith(i);
+}
+
+bool llama_get_teacher_forced_logprob_is_device(llama_context * ctx, int32_t i) {
+    return ctx->get_teacher_forced_logprob_is_device(i);
+}
+
 float * llama_get_embeddings(llama_context * ctx) {
     ctx->synchronize();
 
@@ -4750,6 +4964,35 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
     ctx->synchronize();
 
     return ctx->get_embeddings_layer_inp(lid);
+}
+
+float * llama_context::get_embeddings_layer_inp_row(uint32_t lid, llama_seq_id seq_id, llama_pos pos) {
+    float * values = get_embeddings_layer_inp(lid);
+    if (!values) {
+        return nullptr;
+    }
+    const size_t width = model.hparams.n_embd;
+    for (size_t i = 0; i < embd_layer_inp_rows.size(); ++i) {
+        const auto & row = embd_layer_inp_rows[i];
+        if (row.pos == pos && std::find(row.seq_ids.begin(), row.seq_ids.end(), seq_id) != row.seq_ids.end() &&
+                (i + 1) * width <= embd_layer_inp[lid].size) {
+            return values + i * width;
+        }
+    }
+    return nullptr;
+}
+
+float * llama_get_embeddings_layer_inp_row(llama_context * ctx, uint32_t lid, llama_seq_id seq_id, llama_pos pos) {
+    ctx->synchronize();
+    return ctx->get_embeddings_layer_inp_row(lid, seq_id, pos);
+}
+
+void llama_set_residual_patch(llama_context * ctx, const llama_residual_patch_ref * ref) {
+    ctx->set_residual_patch(ref);
+}
+
+void llama_set_layer_reductions(llama_context * ctx, llama_layer_reduction_ref * ref) {
+    ctx->set_layer_reductions(ref);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {
@@ -4861,6 +5104,18 @@ bool llama_memory_seq_rm(
     }
 
     return mem->seq_rm(seq_id, p0, p1);
+}
+
+bool llama_memory_supports_rewind_last(llama_memory_t mem) {
+    return mem && mem->supports_rewind_last();
+}
+
+bool llama_memory_can_rewind_last(llama_memory_t mem, llama_seq_id seq_id, llama_pos pos) {
+    return mem && mem->can_rewind_last(seq_id, pos);
+}
+
+bool llama_memory_rewind_last(llama_memory_t mem, llama_seq_id seq_id, llama_pos pos) {
+    return mem && mem->rewind_last(seq_id, pos);
 }
 
 void llama_memory_seq_cp(

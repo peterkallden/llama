@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "model": {
+    "backend": "server-context"
+  },
+  "stores": {
+    "memory": {
+      "backend": "cozo",
+      "path": "var/codex-mcp-tool-audit/memory.cozo"
+    },
+    "data": {
+      "backend": "cozo",
+      "path": "var/codex-mcp-tool-audit/structured.cozo"
+    }
+  },
+  "resources": {
+    "blob_backend": "fs",
+    "blob_root": "var/codex-mcp-tool-audit/resources",
+    "metadata_backend": "cozo",
+    "metadata_db": "var/codex-mcp-tool-audit/resources.cozo",
+    "processor_policies": {
+      "pdf.page_image": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "mutool",
+        "max_pages": 16
+      },
+      "ocr.tesseract": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "tesseract"
+      },
+      "docx.text": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "pandoc"
+      },
+      "xlsx.workbook": {
+        "execution": "local_preferred",
+        "backend": "auto",
+        "executable": "python",
+        "script": "scripts/agent-xlsx-to-json.py"
+      }
+    }
+  },
+  "sandbox": {
+    "defaults": {
+      "timeout_ms": 180000
+    },
+    "classes": {
+      "resource.processor.pdf.page_image": {
+        "timeout_ms": 180000,
+        "max_output_bytes": 4194304,
+        "filesystem": "artifact_write"
+      },
+      "resource.processor.ocr.tesseract": {
+        "timeout_ms": 180000,
+        "max_output_bytes": 4194304,
+        "filesystem": "artifact_write"
+      }
+    },
+    "workspace": {
+      "root": "var/codex-mcp-tool-audit/workspaces"
+    }
+  },
+  "tools": {
+    "profile": "codex-tools-audit",
+    "repository_root": "../..",
+    "include_dir": "openalex-provider.d",
+    "families": {
+      "openalex": {
+        "description": "Search OpenAlex works and entities, inspect metadata and open-access full-text locations"
+      },
+      "eurostat": {
+        "description": "Discover Eurostat datasets and query bounded JSON-stat observations after resolving dataset codes and dimensions"
+      },
+      "eurostat_sdmx": {
+        "description": "Resolve Eurostat dataflows, structures, dimensions, code lists and constraints from SDMX metadata"
+      }
+    },
+    "providers": [
+      {
+        "type": "openapi",
+        "id": "eurostat-statistics",
+        "additional_families": ["research"],
+        "enabled": true,
+        "required": true,
+        "spec_path": "eurostat-statistics-openapi.json",
+        "base_url": "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0",
+        "prefix": "eurostat",
+        "policy": {"access": "read_only", "exposure": "auto"},
+        "auth": {"type": "none"}
+      },
+      {
+        "type": "openapi",
+        "id": "eurostat-sdmx-structure",
+        "additional_families": ["research"],
+        "enabled": true,
+        "required": true,
+        "spec_path": "eurostat-sdmx-openapi.json",
+        "base_url": "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1",
+        "prefix": "eurostat_sdmx",
+        "policy": {"access": "read_only", "exposure": "auto"},
+        "auth": {"type": "none"}
+      }
+    ],
+    "capabilities": {
+      "codex.audit.tools": [
+        "math.calculate",
+        "time.now",
+        "memory.search",
+        "memory.get",
+        "memory.inspect",
+        "memory.conflict_check",
+        "memory.remember",
+        "plan.get",
+        "repository.list",
+        "repository.search",
+        "repository.read",
+        "repository.diff",
+        "repository.log",
+        "repository.status",
+        "repository.changed_files",
+        "workspace.list",
+        "workspace.read",
+        "workspace.search",
+        "code.inspect",
+        "code.refresh",
+        "code.symbols",
+        "code.references",
+        "code.calls",
+        "code.impact",
+        "graph.find",
+        "graph.get",
+        "graph.expand",
+        "graph.search",
+        "graph.source",
+        "graph.link.propose",
+        "graph.describe.propose",
+        "graph.retract.propose",
+        "diagnostics.compile",
+        "diagnostics.test_failures",
+        "diagnostics.format",
+        "diagnostics.include_graph",
+        "diagnostics.native_crash",
+        "dataset.list",
+        "dataset.select",
+        "dataset.inspect",
+        "dataset.schema",
+        "dataset.sample",
+        "dataset.validate",
+        "data.query",
+        "data.filter",
+        "data.aggregate",
+        "data.join",
+        "data.transform",
+        "statistics.describe",
+        "statistics.outliers",
+        "statistics.value_counts",
+        "resource.inspect",
+        "resource.read",
+        "document.tables",
+        "document.table",
+        "web.search",
+        "web.fetch",
+        "openapi.connect"
+      ]
+    },
+    "profiles": {
+      "codex-tools-audit": {
+        "include_capabilities": ["codex.audit.tools"],
+        "allow_network": true,
+        "allow_policy_gated_writes": true
+      }
+    }
+  },
+  "diagnostics": {
+    "semantic_backend": "clangd",
+    "clang_executable": "clang",
+    "clangd_executable": "clangd",
+    "compile_commands": "var/codex-mcp-tool-audit/clangd",
+    "compile_commands_source": "build-agent-vulkan-cozo/compile_commands.json",
+    "compile_commands_destination": "var/codex-mcp-tool-audit/clangd/compile_commands.json"
+  },
+  "limits": {
+    "worker_count": 2,
+    "inference_max_active": 1,
+    "tool_timeout_ms": 180000,
+    "mcp_request_timeout_ms": 180000,
+    "max_continuations": 4
+  }
+}

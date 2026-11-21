@@ -1,0 +1,38 @@
+#pragma once
+
+#include "agent/adaptation/semi-oracle-store.h"
+
+#include <cstdint>
+#include <mutex>
+
+class agent_semi_oracle_cozo_store final : public common_semi_oracle_store {
+public:
+    ~agent_semi_oracle_cozo_store() override;
+    bool open(const std::string & path, std::string & error);
+    void close();
+    bool put_revision(const common_semi_oracle_ruleset &, std::string &) override;
+    bool get_revision(const std::string &, uint64_t, common_semi_oracle_ruleset &, bool &, std::string &) const override;
+    bool promote_to_host(const std::string &, uint64_t, std::string &) override;
+    bool bind_session(const std::string &, const std::string &, uint64_t, std::string &) override;
+    bool get_session_binding(const std::string &, std::string &, uint64_t &, bool &, std::string &) const override;
+    bool get_session_game_state(const std::string &, const std::string &, uint64_t,
+            std::string &, bool &, std::string &) const override;
+    bool put_session_game_state(const std::string &, const std::string &, uint64_t,
+            const std::string &, std::string &) override;
+    bool append_evaluation(const std::string &, const common_semi_oracle_result &, std::string &) override;
+    bool get_evaluation_payload(const std::string &, std::string &, bool &, std::string &) const override;
+    bool list_search_history(const std::string &, uint64_t, size_t,
+            std::vector<common_semi_oracle_search_history_record> &, std::string &) const override;
+    bool get_search_history_revision(const std::string &, uint64_t, uint64_t &,
+            bool &, std::string &) const override;
+    bool read_search_history_snapshot(const std::string &, uint64_t, size_t,
+            std::vector<common_semi_oracle_search_history_record> &, uint64_t &,
+            bool &, std::string &) const override;
+    bool put_interaction(const common_semi_oracle_interaction &, std::string &) override;
+    bool get_interaction(const std::string &, common_semi_oracle_interaction &, bool &, std::string &) const override;
+    std::vector<std::string> list_host_rulesets(std::string &) const override;
+private:
+    std::mutex evaluation_append_mutex_;
+    bool run(const std::string &, const std::string &, std::string &, std::string &) const;
+    int32_t db_id_ = -1;
+};

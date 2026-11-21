@@ -1,0 +1,3886 @@
+{
+  "schema_version": 2,
+  "name": "agent-workflows-starter",
+  "version": "v49",
+  "procedures": [
+    {
+      "id": "code-orientation-v1",
+      "summary": "code orientation",
+      "content": "Before modifying repository code, identify the relevant contract, implementation, direct callers, tests and execution seam. Prefer code.symbols, code.references, code.calls and code.impact when the host reports semantic support; otherwise use bounded repository search and reads, and label text matches as non-semantic. code.impact is a bounded multi-hop static call neighborhood, not proof of feasible execution or complete change impact.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "code-analysis-evidence-v1",
+      "summary": "code analysis evidence",
+      "content": "Use code.inspect before semantic analysis to confirm host capabilities. Use code.symbols and code.references to navigate declarations; use code.calls for one-hop and code.impact for bounded multi-hop semantic call neighborhoods. Preserve the returned source locations, depth, analysis method and coverage. Text fallback results are text matches only. Static call relations are not proof that a path is feasible, was executed, or captures every dependency of a change. Report missing provider support and incomplete results explicitly.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-source-evidence-v1",
+      "summary": "source identity and verification evidence",
+      "content": "Before a code change, capture the current repository revision and bounded workspace snapshot with repository.snapshot when available. Use repository.read SHA-256 values as freshness guards and pass source_snapshot_ref to workspace.patch so the host verifies the changed file against that baseline. After applying the complete change, capture a new complete repository.snapshot and pass that post-change source_snapshot_ref to development.build or development.test; retain the pre-change snapshot for baseline comparison; incomplete snapshots cannot be staged. After changes, inspect repository.diff and retain the patch receipt, configured execution receipt and output resources. A successful build is evidence only for its source snapshot and target; test outcomes and acceptance criteria remain separate. Keep compiler-resolved relations, text matches, model proposals and runtime observations distinct.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "small-coherent-change-v1",
+      "summary": "small coherent change",
+      "content": "Prefer one coherent behavioral change at a time. Separate unrelated refactoring from behavior changes, preserve existing abstractions when they already express the needed contract, and verify the change in the same sweep.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "verification-ladder-v1",
+      "summary": "verification ladder",
+      "content": "Verify at the narrowest authoritative level first: contract or unit test, then functional smoke, then broader affected tests. Do not claim model-backed verification unless that run completed.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "data-understanding-v1",
+      "summary": "data understanding",
+      "content": "Before analysing an unfamiliar dataset, establish its identity and the fields needed by the question. Inspect schema or sample only as far as necessary; a host-trusted schema may satisfy this requirement.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "choose-data-operation-v1",
+      "summary": "choose data operation",
+      "content": "Use aggregation for measures such as sum, count, average, minimum or maximum. Use describe for numeric properties, filter for row selection, query for bounded projection or retrieval, value counts for category frequency, and outliers only when anomaly detection is part of the question.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "analysis-evidence-v1",
+      "summary": "analysis evidence",
+      "content": "Distinguish dataset facts from interpretation. A successful tool operation is evidence about the selected dataset; conclusions beyond that result must be identified as inference rather than directly observed data.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "document-table-analysis-v1",
+      "summary": "document table analysis",
+      "content": "Resolve the host resource first, enumerate exposed tables, select a table by its unique host identity, and use the returned dataset handle for bounded analysis. Do not invent resource URIs, table node IDs or dataset references.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "web-source-evidence-v1",
+      "summary": "web source evidence",
+      "content": "Use search results for discovery, then fetch the source that directly supports each material claim. Prefer primary sources, check publication or update dates when relevant, and separate retrieved facts from inference.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "openapi-resource-onboarding-v1",
+      "summary": "connect to a public API from its OpenAPI document",
+      "content": "Use web.fetch to retrieve the official JSON OpenAPI document as a host resource, then pass its returned resource_ref to openapi.connect. The host admits only anonymous read-only HTTPS operations. The provider is available on the next turn: wait for the updated tool view, choose an operation from its exposed schema, and keep arguments and results within the host's bounds. Never invent a server URL, operation name, credentials, or raw HTTP request. If the user provided an API base URL but no spec URL, search for the official OpenAPI document first and fetch that document.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "scholarly-search-evidence-v1",
+      "summary": "scholarly search evidence",
+      "content": "For a scholarly search, state the question, search terms and material limits before querying. Keep the returned record identity, title, publication year and source provenance separate from interpretation. Treat a bounded OpenAlex result as discovery evidence, not proof that the literature is exhaustive.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "bibliographic-record-validation-v1",
+      "summary": "bibliographic record validation",
+      "content": "When identifying a scholarly work, use a host-returned OpenAlex work identifier or a user-provided DOI. Verify title, authorship and publication metadata from the retrieved record before citing it. Do not merge similarly named works or infer unavailable full text, citation context or study conclusions from metadata alone.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "literature-review-boundaries-v1",
+      "summary": "literature review boundaries",
+      "content": "For a literature overview, make the search scope, query terms, date limits, returned page size and selection criteria visible. Use a bounded candidate set, distinguish search ranking from research quality, and preserve the returned records as a resource or exported artifact when the user needs to continue the analysis.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-entity-resolution-v1",
+      "summary": "OpenAlex entity resolution",
+      "content": "When a request names an author, institution or research topic, search the corresponding configured OpenAlex collection first. Compare bounded returned candidates and retain only an ID from a returned record. For a topic, use the Topic collection; work records carry up to three assigned topics and a primary_topic. Use a topic ID in the works filter, then present the returned title and year separately from interpretation.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-filtered-work-retrieval-v1",
+      "summary": "bounded OpenAlex filtered work retrieval",
+      "content": "Use works search for text across titles, abstracts and other text fields. Use filter for structured constraints such as publication_year:2024, author.id:A…, institutions.id:I… and topics.id:T…. The topics filter matches assigned topics; primary_topic is the top-ranked topic. Request a bounded page and include display_name, publication_year and relevant topic metadata in the projection. A bounded result set is not exhaustive coverage or a quality judgment.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "openalex-full-text-evidence-v1",
+      "summary": "OpenAlex abstract and full-text evidence",
+      "content": "First verify the OpenAlex work record and interpret its abstract when available. Treat the abstract as author-supplied summary evidence, not a substitute for methods, results or limitations. Only when the question requires more, use a host-returned open-access content URL or best_oa_location URL with web.fetch. The returned resource_ref is the authoritative fetched body: inspect/read it before making claims. For a PDF, request its text representation through resource.read; report when the body is truncated, text extraction is unavailable, or only metadata/abstract is available. If access fails, state which source was unavailable and do not claim to have read it. If the question and budget justify it, look for another accessible version or a relevant independent article; distinguish the same work from another work and never attribute another article's findings to the original. Read conclusions for the authors' stated claim, then results and methods to assess support; use discussion for interpretation and limitations.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "statistical-intent-and-measure-v1",
+      "summary": "statistical intent and measure",
+      "content": "Before selecting a statistical table, clarify the measure, population, geography, period, unit and intended comparison. Keep these concepts separate; do not treat a table title or code as proof that its definitions match the request.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "eurostat-catalog-discovery-v1",
+      "summary": "Eurostat catalogue discovery",
+      "content": "Use the host-fetched Eurostat table-of-contents resource to discover candidate table codes. Convert it through dataset.inspect or dataset.sample when available, preserve code, title, category path and update/coverage metadata, and select only a code returned by that source. Catalogue presence does not establish dimension or unit compatibility.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "eurostat-catalog-discovery-v2",
+      "summary": "Eurostat catalogue discovery and query scope",
+      "content": "Use the host-fetched Eurostat table-of-contents resource and its materialized schema to find candidate codes. For the catalogue query, use one case-insensitive title contains predicate for the core statistical concept only; omit geography, period, unit, category guesses, extra predicates, sorting and distinct unless the workflow explicitly requires them. Geography, period, unit and availability are verified later from SDMX metadata. Select a dataset code only from returned catalogue rows; catalogue presence is not proof of compatibility.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "eurostat-sdmx-metadata-resolution-v1",
+      "summary": "Eurostat SDMX metadata resolution",
+      "content": "Use the configured read-only Eurostat SDMX provider to inspect the selected dataflow, data structure, dimensions, code lists and content constraints. Match the dataflow title and scope to every requested geography and period; reject regional or country-group tables unless they match. In SDMX XML, dimension values are short codes under KeyValue/Value (for example geo=SE, TIME_PERIOD=2020), not URLs, labels or metadata links. Bind dataset and dimension codes only from returned metadata; verify labels, allowed values, units and availability before the Statistics API request. If a requested value is absent from a content constraint, do not call the Statistics API; report that this candidate cannot answer the request and continue with another catalogue candidate when available. If metadata is incomplete or no compatible candidate remains, stop and report the unresolved field instead of guessing.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "eurostat-sdmx-metadata-resolution-v2",
+      "summary": "Eurostat metadata and actual dimension coverage",
+      "content": "Inspect the selected dataflow, dimensions and dataset-specific ContentConstraint using the read-only SDMX provider. Catalogue titles are discovery hints: a regional table can contain national aggregates, so decide coverage from returned geography and time codes and labels, not the title alone. Read actual dimension values under KeyValue/Value, verify the requested measure, unit and period, and bind only returned codes. If a required code is absent or a definition is unresolved, stop for clarification or another candidate. After retrieval, check the returned JSON-stat codes, labels, units, values and status against the question; retain source references and distinguish metadata materialization from semantic verification.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "json-stat-dataset-interpretation-v1",
+      "summary": "JSON-stat dataset interpretation",
+      "content": "Treat JSON-stat dimension codes, labels, observation values and status as distinct fields. Preserve source and query provenance when converting to a dataset; explain units, missing/status-marked observations, selected dimensions and time coverage before interpreting values. Continue with the ordinary dataset analysis workflow after host materialization.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "structured-resource-dataset-v1",
+      "summary": "structured resource to dataset",
+      "content": "When a host resource contains JSON records, JSON-stat, a recognized catalogue XML, SDMX structural XML or simple repeated-record XML, use the host dataset importer rather than manually reconstructing rows. Keep the original resource and derived dataset provenance; use only bounded, host-normalized records and report unsupported structures or truncation explicitly.",
+      "importance": 0.85,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-knowledge-gap-v1",
+      "summary": "evidence-led development knowledge gaps",
+      "content": "After examining the task and relevant local code, identify only questions that materially affect implementation or diagnosis. Reuse sufficient local code, resources and documentation for the relevant version. When a question remains unresolved and policy permits, search for primary documentation or upstream source, then use secondary sources where helpful. Keep each finding linked to its source, version, applicability and unresolved limitations. Search results alone are leads; do not claim an external contract was verified without inspecting its source. The model interprets the task and chooses useful authorized sources; provider names and keywords do not automatically route the task.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-diagnosis-v1",
+      "summary": "evidence-led development diagnosis",
+      "content": "Preserve the observed failure, source state, environment and diagnostic outputs. Compare expected and observed behavior, distinguish facts from hypotheses, trace the relevant callers and boundaries, and choose a bounded observation or reproduction that discriminates plausible causes. Inspect local declarations, configuration and existing usage before researching an unresolved external contract. Do not claim a confirmed cause from a superficial error match. Follow related failures within the authorized scope; report what remains uncertain.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-verification-authority-v1",
+      "summary": "development execution authority and evidence",
+      "content": "Use only operations, targets and environments authorized by the host and the user. Treat a denied or unavailable operation as a limitation rather than inventing a command or claiming success. Keep baseline and post-change source identities, patch receipts, execution outputs and provenance where available. A build verifies only its recorded source and target; test results and behavioral evidence are separate. Preserve unrelated work. Graph lookup and proposals are optional; verify consequential graph claims against current evidence and propose durable relations only when useful and permitted.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "code-phase-handoff-v1",
+      "summary": "bounded code phase handoff",
+      "content": "Carry forward the current question, acceptance criteria and invariants, selected code locations, source snapshot or revision, evidence references and unresolved limits. Reuse returned paths and positions exactly; ask for clarification when the entry point is ambiguous. Choose the smallest supported operation needed for the current phase; optional capabilities are not a checklist. Reuse sufficient evidence from the same source state. Report Findings, Evidence, Limitations and Next step when relevant. Inspection stays read-only unless the user authorizes a change.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "document-phase-handoff-v1",
+      "summary": "Bounded document evidence handoff.",
+      "content": "Carry forward the selected resource version, representation, question, verified text or table references, inspected coverage and extraction limits. Reuse adequate evidence from that version. Read text for narrative questions and use structured tables only when needed; no tables is a valid outcome, not a failed phase. Keep quoted text, interpretation and OCR limitations distinct. Do not infer a forensic investigation or external research from upload alone.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "graph-investigation-v1",
+      "summary": "project graph investigation",
+      "content": "Search the scoped graph for relevant entities or relations. Browse only useful neighbors and verify consequential proposals or old observations against their sources. When graph.find reports truncated, tell the user that more matching nodes exist beyond the five shown. Missing graph data is not evidence of absence. Continue with other available sources if the graph is unavailable.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "graph-maintenance-v1",
+      "summary": "project graph maintenance",
+      "content": "First look for existing entities and relationships. Propose a sourced description, relation, additional assertion or retraction only when it is useful and authorized. Preserve source revision and distinguish proposals from verified facts; do not make updates merely because a graph was read.",
+      "importance": 0.9,
+      "confidence": 1.0
+    },
+    {
+      "id": "hypothesis-evidence-discipline-v1",
+      "summary": "test a hypothesis from different perspectives",
+      "content": "State the hypothesis and scope neutrally. Search for material that could support it and separately for material that could contradict, qualify or offer an alternative explanation. Search results and article metadata are discovery leads, not evidence of what a source concludes. Inspect relevant source content or dataset results before assigning a stance; preserve source references, uncertainty and study or coverage limits. Do not assume that a successful read supports the hypothesis. Report when a perspective could not be searched or evaluated; absence of a contrary result is not proof of absence.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-source-evidence-v2",
+      "summary": "source identity and verification evidence",
+      "content": "Before a code change, capture the current repository revision and bounded workspace snapshot with repository.snapshot when available. Use repository.read SHA-256 values as freshness guards and pass source_snapshot_ref to workspace.patch so the host verifies the changed file against that baseline. After applying the complete change, capture a new complete repository.snapshot and pass that post-change source_snapshot_ref to development.build or development.test; retain the pre-change snapshot for baseline comparison; incomplete snapshots cannot be staged. After changes, inspect repository.diff and retain the patch receipt, configured execution receipt and output resources. A successful build is evidence only for its source snapshot and target; test outcomes and acceptance criteria remain separate. Keep compiler-resolved relations, text matches, model proposals and runtime observations distinct. Preserve these guards through every plan slice and research escalation. Reuse actual host tool receipts and source identities rather than reconstructing IDs. Optional external evidence does not replace local freshness or verification requirements.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-regression-guard-v1",
+      "summary": "regression evidence and focused guard",
+      "content": "Before correcting a regression, identify a focused check that distinguishes the observed failure from expected behavior. Preserve the failing output when available. Add a guard when appropriate and authorized; test execution requires its own authority. After correction, verify the guard and adjacent affected behavior against the changed source state, or disclose exactly which checks remain unrun.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "development-phase-progress-v1",
+      "summary": "bounded development phase continuation",
+      "content": "Follow the host-retained method phases in dependency order. Tool selection remains model-owned through the normal family, tool and argument stages. A phase may need no tool: explain why, rather than inventing an operation. Use existing research escalation for a material knowledge gap, then continue the same method using its retained observations. Keep findings linked to sources and applicable versions. Distinguish phase satisfaction, remaining feasible work and a real authority or input limitation. Do not accept the whole task just because one bounded inspection slice finished. Compiler and runtime failures call for the shared diagnosis procedures; reconsider the correction before another authorized verification attempt. Never turn an unavailable build into a passed check. Optional durable graph proposals belong after useful knowledge has been established.",
+      "importance": 0.95,
+      "confidence": 1.0
+    },
+    {
+      "id": "comprehension-refresh-v1",
+      "summary": "bounded reusable understanding",
+      "content": "Inspect at most 10 candidate entities from the requested area and at most one-hop neighbors. Select at most 3 useful subjects. Read current evidence and existing graph descriptions. Propose a compact note with Purpose, Invariant, Dependencies and Change hazard; state unknown where unsupported. Code, research, documents and investigations may supply evidence. Preserve source revision and evidence references. Semantic misses do not prove absence. Reuse research artifacts rather than copying investigations. Use graph.describe.propose with an existing id or a standalone node descriptor; never invent relations to create nodes. Reuse adequate notes; reconsider notes whose evidence changed. Stay within authorized scope and budget. Conflicts require rereading current graph revision before retry.",
+      "importance": 0.9,
+      "confidence": 1.0
+    }
+  ],
+  "workflows": [
+    {
+      "id": "dataset-analysis-path-v4",
+      "source_revision": "agent-workflows-starter@v37",
+      "workflow_ref": "workflow://dataset/analysis",
+      "workflow_revision": "v4",
+      "family": "dataset",
+      "graph_revision": "dataset-analysis-graph@v4",
+      "required_capabilities": [
+        "dataset.resolve",
+        "dataset.inspect",
+        "data.query",
+        "data.filter",
+        "data.aggregate",
+        "data.transform",
+        "statistics.describe",
+        "statistics.outliers",
+        "statistics.value_counts"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.dataset.available"
+      ],
+      "declared_claim_tools": [
+        "statistics.describe"
+      ],
+      "verification_checks": [
+        {
+          "id": "described-columns-established",
+          "tool": "statistics.describe",
+          "phase": "after_tool",
+          "operation": "required",
+          "left": {
+            "source": "result",
+            "pointer": "/result/selected_columns"
+          },
+          "required": true
+        }
+      ],
+      "result_contracts": {
+        "statistics.describe": "statistics.describe.v1"
+      }
+    },
+    {
+      "id": "dataset-quality-path-v4",
+      "source_revision": "agent-workflows-starter@v37",
+      "workflow_ref": "workflow://dataset/quality",
+      "workflow_revision": "v4",
+      "family": "dataset",
+      "graph_revision": "dataset-quality-graph@v4",
+      "required_capabilities": [
+        "dataset.resolve",
+        "dataset.inspect",
+        "dataset.schema",
+        "dataset.validate",
+        "data.aggregate",
+        "data.filter",
+        "statistics.describe",
+        "statistics.outliers",
+        "statistics.value_counts"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.dataset.available"
+      ],
+      "declared_claim_tools": [
+        "statistics.describe"
+      ],
+      "verification_checks": [
+        {
+          "id": "described-columns-established",
+          "tool": "statistics.describe",
+          "phase": "after_tool",
+          "operation": "required",
+          "left": {
+            "source": "result",
+            "pointer": "/result/selected_columns"
+          },
+          "required": true
+        }
+      ],
+      "result_contracts": {
+        "statistics.describe": "statistics.describe.v1"
+      }
+    },
+    {
+      "id": "dataset-join-path-v2",
+      "source_revision": "agent-workflows-starter@v3",
+      "workflow_ref": "workflow://dataset/join",
+      "workflow_revision": "v2",
+      "family": "dataset",
+      "graph_revision": "dataset-join-graph@v2",
+      "required_capabilities": [
+        "dataset.resolve",
+        "dataset.inspect",
+        "data.join"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.dataset.multiple_available"
+      ]
+    },
+    {
+      "id": "code-overview-path-v1",
+      "source_revision": "agent-workflows-starter@v31",
+      "workflow_ref": "workflow://code/overview",
+      "workflow_revision": "v1",
+      "family": "code",
+      "graph_revision": "code-overview-graph@v1",
+      "required_capabilities": [
+        "code.inspect",
+        "repository.list",
+        "repository.read"
+      ],
+      "optional_capabilities": [
+        "code.symbols",
+        "code.references",
+        "code.calls",
+        "code.impact",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.repository.available"
+      ]
+    },
+    {
+      "id": "code-entry-point-investigation-path-v1",
+      "source_revision": "agent-workflows-starter@v38",
+      "workflow_ref": "workflow://code/entry-point-investigation",
+      "workflow_revision": "v1",
+      "family": "code",
+      "graph_revision": "code-entry-point-graph@v1",
+      "required_capabilities": [
+        "code.inspect",
+        "code.symbols",
+        "code.calls",
+        "repository.read"
+      ],
+      "optional_capabilities": [
+        "code.references",
+        "code.impact",
+        "visualize.create",
+        "visualize.snapshot",
+        "investigate.case.items",
+        "investigate.report.compose",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.repository.available"
+      ]
+    },
+    {
+      "id": "resource-document-analysis-path-v8",
+      "source_revision": "agent-workflows-starter@v29",
+      "workflow_ref": "workflow://resource/document-analysis",
+      "workflow_revision": "v7",
+      "family": "resource",
+      "graph_revision": "resource-document-analysis-graph@v7",
+      "resource_read_policy": "chunked",
+      "required_capabilities": [
+        "resource.read"
+      ],
+      "optional_capabilities": [
+        "resource.inspect",
+        "document.inspect",
+        "dataset.inspect",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.resource.available"
+      ]
+    },
+    {
+      "id": "web-research-path-v4",
+      "source_revision": "agent-workflows-starter@v24",
+      "workflow_ref": "workflow://web/research",
+      "workflow_revision": "v5",
+      "preferred_thinking_mode": "research",
+      "family": "web",
+      "graph_revision": "web-research-graph@v5",
+      "resource_read_policy": "chunked",
+      "required_capabilities": [
+        "web.search",
+        "web.fetch"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "dataset.inspect",
+        "artifact.export"
+      ],
+      "continuation_workflow_targets": [
+        "workflow://dataset/analysis",
+        "workflow://dataset/quality",
+        "workflow://dataset/join"
+      ],
+      "required_context": [
+        "context.network.allowed"
+      ]
+    },
+    {
+      "id": "openapi-resource-onboarding-path-v1",
+      "source_revision": "agent-workflows-starter@v4",
+      "workflow_ref": "workflow://openapi/resource-onboarding",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openapi-resource-onboarding-graph@v1",
+      "required_capabilities": [
+        "web.fetch",
+        "openapi.connect"
+      ],
+      "optional_capabilities": [
+        "web.search",
+        "openapi.read",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.network.allowed"
+      ]
+    },
+    {
+      "id": "openalex-work-search-path-v4",
+      "source_revision": "agent-workflows-starter@v47",
+      "workflow_ref": "workflow://openalex/work-search",
+      "workflow_revision": "v7",
+      "family": "openapi",
+      "graph_revision": "openalex-work-search-graph@v7",
+      "resource_read_policy": "chunked",
+      "required_capabilities": [
+        "openapi.read"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "artifact.export"
+      ],
+      "continuation_workflow_targets": [
+        "workflow://dataset/analysis",
+        "workflow://dataset/quality",
+        "workflow://dataset/join"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "search-works",
+          "from_terminal_state": "works_retrieved",
+          "workflow_ref": "workflow://openalex/full-text-evidence",
+          "workflow_revision": "v7",
+          "optional": true,
+          "bindings": [
+            {
+              "transition": "get-work",
+              "tool": "openalex.getWork",
+              "target": "/id",
+              "source": "/result/host_item_candidates",
+              "candidate_id": "/id"
+            }
+          ]
+        }
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
+      "start_state": "search_pending",
+      "terminal_states": [
+        "works_retrieved"
+      ],
+      "transitions": [
+        {
+          "id": "search-works",
+          "from": "search_pending",
+          "to": "works_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use the user's topic or explicit filters to scope the search. Supply search, filter, or both; never issue an unscoped collection request. Return a bounded first page. Additional cursor pages require host-configured OpenAlex authentication; do not assume they are available."
+        }
+      ]
+    },
+    {
+      "id": "openalex-work-lookup-path-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "workflow_ref": "workflow://openalex/work-lookup",
+      "workflow_revision": "v1",
+      "family": "openapi",
+      "graph_revision": "openalex-work-lookup-graph@v1",
+      "required_capabilities": [
+        "openapi.read"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "artifact.export"
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
+      "start_state": "identifier_pending",
+      "terminal_states": [
+        "work_retrieved"
+      ],
+      "transitions": [
+        {
+          "id": "get-work",
+          "from": "identifier_pending",
+          "to": "work_retrieved",
+          "tool": "openalex.getWork",
+          "arguments": "{}"
+        }
+      ]
+    },
+    {
+      "id": "openalex-literature-review-path-v3",
+      "source_revision": "agent-workflows-starter@v47",
+      "workflow_ref": "workflow://openalex/literature-review",
+      "workflow_revision": "v6",
+      "family": "openapi",
+      "graph_revision": "openalex-literature-review-graph@v6",
+      "resource_read_policy": "chunked",
+      "required_capabilities": [
+        "openapi.read"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "artifact.export"
+      ],
+      "continuation_workflow_targets": [
+        "workflow://dataset/analysis",
+        "workflow://dataset/quality",
+        "workflow://dataset/join"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "retrieve-candidates",
+          "from_terminal_state": "candidates_retrieved",
+          "workflow_ref": "workflow://openalex/full-text-evidence",
+          "workflow_revision": "v7",
+          "optional": true,
+          "bindings": [
+            {
+              "transition": "get-work",
+              "tool": "openalex.getWork",
+              "target": "/id",
+              "source": "/result/host_item_candidates",
+              "candidate_id": "/id"
+            }
+          ]
+        }
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
+      "start_state": "review_pending",
+      "terminal_states": [
+        "candidates_retrieved"
+      ],
+      "transitions": [
+        {
+          "id": "retrieve-candidates",
+          "from": "review_pending",
+          "to": "candidates_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{}",
+          "model_instruction": "Return a bounded first page. Additional cursor pages require host-configured OpenAlex authentication; do not assume they are available."
+        }
+      ]
+    },
+    {
+      "id": "openalex-entity-filtered-search-path-v2",
+      "source_revision": "agent-workflows-starter@v11",
+      "workflow_ref": "workflow://openalex/entity-filtered-work-search",
+      "workflow_revision": "v2",
+      "family": "openapi",
+      "graph_revision": "openalex-entity-filtered-work-search-graph@v2",
+      "required_capabilities": [
+        "openapi.read"
+      ],
+      "optional_capabilities": [
+        "resource.read",
+        "artifact.export"
+      ],
+      "continuation_workflow_targets": [
+        "workflow://dataset/analysis",
+        "workflow://dataset/quality",
+        "workflow://dataset/join"
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
+      "start_state": "entity_pending",
+      "terminal_states": [
+        "works_retrieved"
+      ],
+      "transitions": [
+        {
+          "id": "resolve-author",
+          "from": "entity_pending",
+          "to": "author_candidates",
+          "tool": "openalex.listAuthors",
+          "arguments": "{}"
+        },
+        {
+          "id": "resolve-institution",
+          "from": "entity_pending",
+          "to": "institution_candidates",
+          "tool": "openalex.listInstitutions",
+          "arguments": "{}"
+        },
+        {
+          "id": "resolve-topic",
+          "from": "entity_pending",
+          "to": "topic_candidates",
+          "tool": "openalex.listTopics",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-author",
+          "from": "author_candidates",
+          "to": "author_selected",
+          "kind": "model_choice",
+          "candidates": "/results"
+        },
+        {
+          "id": "choose-institution",
+          "from": "institution_candidates",
+          "to": "institution_selected",
+          "kind": "model_choice",
+          "candidates": "/results"
+        },
+        {
+          "id": "choose-topic",
+          "from": "topic_candidates",
+          "to": "topic_selected",
+          "kind": "model_choice",
+          "candidates": "/results"
+        },
+        {
+          "id": "retrieve-author-works",
+          "from": "author_selected",
+          "to": "works_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{\"filter\":\"author.id:$choice\"}"
+        },
+        {
+          "id": "retrieve-institution-works",
+          "from": "institution_selected",
+          "to": "works_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{\"filter\":\"institutions.id:$choice\"}"
+        },
+        {
+          "id": "retrieve-topic-works",
+          "from": "topic_selected",
+          "to": "works_retrieved",
+          "tool": "openalex.listWorks",
+          "arguments": "{\"filter\":\"topics.id:$choice\"}"
+        }
+      ]
+    },
+    {
+      "id": "openalex-full-text-evidence-path-v2",
+      "source_revision": "agent-workflows-starter@v47",
+      "workflow_ref": "workflow://openalex/full-text-evidence",
+      "workflow_revision": "v7",
+      "family": "openapi",
+      "preferred_thinking_mode": "research",
+      "graph_revision": "openalex-full-text-evidence-graph@v7",
+      "resource_read_policy": "chunked",
+      "required_capabilities": [
+        "openapi.read",
+        "web.fetch",
+        "resource.inspect",
+        "resource.read"
+      ],
+      "optional_capabilities": [
+        "artifact.export",
+        "web.search"
+      ],
+      "required_context": [
+        "context.openapi.available",
+        "context.network.allowed"
+      ],
+      "continuation_links": [
+        {
+          "from_terminal_state": "full_text_unavailable",
+          "max_uses": 1,
+          "workflow_ref": "workflow://openalex/full-text-evidence",
+          "workflow_revision": "v7",
+          "bindings": [
+            {
+              "transition": "get-work",
+              "tool": "openalex.getWork",
+              "target": "/id",
+              "source": "/handoff/value/result/host_item_candidates",
+              "candidate_id": "/id"
+            }
+          ]
+        }
+      ],
+      "start_state": "identifier_pending",
+      "terminal_states": [
+        "abstract_complete",
+        "full_text_unavailable",
+        "text_read"
+      ],
+      "transitions": [
+        {
+          "id": "get-work",
+          "from": "identifier_pending",
+          "to": "work_retrieved",
+          "tool": "openalex.getWork",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-evidence-depth",
+          "from": "work_retrieved",
+          "to": "full_text_pending",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "answer_from_abstract",
+              "description": "Use only for an abstract-only request that does not ask to fetch or inspect the full text.",
+              "to": "abstract_complete"
+            },
+            {
+              "id": "fetch_full_text",
+              "description": "Choose when the user asks to fetch or inspect full text, or asks about methods, results, conclusions or limitations beyond the abstract. The host prefers the returned PDF URL and otherwise uses an available content URL.",
+              "to": "full_text_pending",
+              "requires": [
+                "/result/full_text_url"
+              ]
+            },
+            {
+              "id": "try_another_candidate",
+              "description": "Choose when full text is required but this record has no usable full-text URL, or its offered location is unsuitable. Retain its abstract and reference as shallow evidence and request the declared bounded alternative candidate attempt. Do not claim an HTTP error when no request was made.",
+              "to": "full_text_unavailable"
+            }
+          ]
+        },
+        {
+          "id": "fetch-full-text",
+          "from": "full_text_pending",
+          "to": "full_text_fetched",
+          "tool": "web.fetch",
+          "arguments": "{\"max_bytes\":10485760}",
+          "failure_terminal_state": "full_text_unavailable",
+          "handled_http_statuses": [
+            401,
+            403,
+            404,
+            410
+          ],
+          "bindings": [
+            {
+              "target": "/url",
+              "from": "get-work",
+              "source": "/result/full_text_url"
+            }
+          ]
+        },
+        {
+          "id": "inspect-full-text",
+          "from": "full_text_fetched",
+          "to": "resource_inspected",
+          "tool": "resource.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "fetch-full-text",
+              "source": "/resources/0/uri"
+            }
+          ]
+        },
+        {
+          "id": "read-full-text",
+          "from": "resource_inspected",
+          "to": "text_read",
+          "tool": "resource.read",
+          "arguments": "{\"representation\":\"text\",\"max_bytes\":8192}",
+          "optional": true,
+          "bindings": [
+            {
+              "target": "/uri",
+              "from": "fetch-full-text",
+              "source": "/resources/0/uri"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eurostat-catalog-discovery-path-v3",
+      "source_revision": "agent-workflows-starter@v24",
+      "workflow_ref": "workflow://eurostat/catalog-discovery",
+      "workflow_revision": "v7",
+      "preferred_thinking_mode": "deliberate",
+      "family": "dataset",
+      "graph_revision": "eurostat-catalog-discovery-graph@v7",
+      "required_capabilities": [
+        "web.fetch",
+        "dataset.inspect",
+        "dataset.schema",
+        "dataset.sample"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "inspect-toc-schema",
+          "from_terminal_state": "catalog_schema_ready",
+          "workflow_ref": "workflow://eurostat/metadata-resolution",
+          "workflow_revision": "v9",
+          "bindings": [
+            {
+              "transition": "search-catalogue",
+              "tool": "data.query",
+              "target": "/dataset",
+              "source": "/result/dataset"
+            }
+          ]
+        }
+      ],
+      "required_context": [
+        "context.network.allowed"
+      ],
+      "start_state": "catalog_pending",
+      "terminal_states": [
+        "catalog_schema_ready"
+      ],
+      "transitions": [
+        {
+          "id": "fetch-toc",
+          "from": "catalog_pending",
+          "to": "catalog_fetched",
+          "tool": "web.fetch",
+          "arguments": "{\"url\":\"https://ec.europa.eu/eurostat/api/dissemination/catalogue/toc/txt?lang=en\",\"accept\":\"text/plain\",\"max_bytes\":4194304}"
+        },
+        {
+          "id": "materialize-toc",
+          "from": "catalog_fetched",
+          "to": "catalog_dataset_ready",
+          "tool": "dataset.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/resource",
+              "from": "fetch-toc",
+              "source": "/resources/0/uri"
+            }
+          ]
+        },
+        {
+          "id": "inspect-toc-schema",
+          "from": "catalog_dataset_ready",
+          "to": "catalog_schema_ready",
+          "tool": "dataset.schema",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/dataset",
+              "from": "materialize-toc",
+              "source": "/result/dataset"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eurostat-metadata-resolution-path-v2",
+      "source_revision": "agent-workflows-starter@v24",
+      "workflow_ref": "workflow://eurostat/metadata-resolution",
+      "workflow_revision": "v9",
+      "preferred_thinking_mode": "deliberate",
+      "family": "openapi",
+      "graph_revision": "eurostat-metadata-resolution-graph@v9",
+      "allowed_tools": [
+        "eurostat_sdmx.getStructure",
+        "dataset.inspect",
+        "dataset.sample",
+        "data.query"
+      ],
+      "required_capabilities": [
+        "openapi.read",
+        "dataset.inspect",
+        "dataset.sample",
+        "data.query"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "inspect-content-constraint",
+          "from_terminal_state": "metadata_materialized",
+          "workflow_ref": "workflow://eurostat/data-retrieval",
+          "workflow_revision": "v8",
+          "bindings": [
+            {
+              "transition": "request-observations",
+              "tool": "eurostat.getData",
+              "target": "/datasetCode",
+              "source": "/choice",
+              "from_transition": "choose-dataflow"
+            }
+          ]
+        }
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
+      "start_state": "dataflow_candidate_selected",
+      "terminal_states": [
+        "metadata_materialized"
+      ],
+      "transitions": [
+        {
+          "id": "search-catalogue",
+          "from": "dataflow_candidate_selected",
+          "to": "catalogue_searched",
+          "tool": "data.query",
+          "arguments": "{\"select\":[\"code\",\"title\",\"type\",\"data start\",\"data end\"],\"limit\":64,\"max_result_rows\":64}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Search only for the core statistical concept in the catalogue title. Use one case-insensitive title contains predicate. Do not add geography, period, unit, category or availability filters, sorting, or distinct; verify those later from SDMX metadata."
+        },
+        {
+          "id": "choose-dataflow",
+          "from": "catalogue_searched",
+          "to": "dataflow_code_selected",
+          "kind": "model_choice",
+          "candidates": "/result/rows",
+          "candidate_id": "/code",
+          "model_instruction": "Choose a returned candidate matching the statistical measure for metadata inspection. Titles are discovery hints; regional tables may also contain national aggregates. Verify the requested geography, period, measure and unit from SDMX dimensions and ContentConstraint before treating the candidate as suitable. If no candidate plausibly matches, report the gap rather than guessing."
+        },
+        {
+          "id": "get-dataflow-structure",
+          "from": "dataflow_code_selected",
+          "to": "dataflow_structure_resource",
+          "tool": "eurostat_sdmx.getStructure",
+          "arguments": "{\"artifactType\":\"dataflow\",\"agencyID\":\"ESTAT\",\"resourceID\":\"$choice\",\"version\":\"1.0\",\"references\":\"children\",\"detail\":\"full\"}"
+        },
+        {
+          "id": "inspect-dataflow-structure",
+          "from": "dataflow_structure_resource",
+          "to": "dataflow_structure_resolved",
+          "tool": "dataset.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/resource",
+              "from": "get-dataflow-structure",
+              "source": "/resources/0/uri"
+            }
+          ]
+        },
+        {
+          "id": "get-content-constraint",
+          "from": "dataflow_structure_resolved",
+          "to": "content_constraint_resource",
+          "tool": "eurostat_sdmx.getStructure",
+          "arguments": "{\"artifactType\":\"contentconstraint\",\"agencyID\":\"ESTAT\",\"version\":\"1.0\"}",
+          "bindings": [
+            {
+              "target": "/resourceID",
+              "from": "choose-dataflow",
+              "source": "/choice"
+            }
+          ]
+        },
+        {
+          "id": "inspect-content-constraint",
+          "from": "content_constraint_resource",
+          "to": "metadata_materialized",
+          "tool": "dataset.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/resource",
+              "from": "get-content-constraint",
+              "source": "/resources/0/uri"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eurostat-data-retrieval-path-v2",
+      "source_revision": "agent-workflows-starter@v24",
+      "workflow_ref": "workflow://eurostat/data-retrieval",
+      "workflow_revision": "v8",
+      "preferred_thinking_mode": "deliberate",
+      "require_declared_claims": true,
+      "family": "openapi",
+      "graph_revision": "eurostat-data-retrieval-graph@v8",
+      "allowed_tools": [
+        "eurostat.getData",
+        "dataset.inspect",
+        "dataset.sample"
+      ],
+      "required_capabilities": [
+        "openapi.read",
+        "dataset.inspect",
+        "dataset.sample"
+      ],
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "continuation_links": [
+        {
+          "from_transition": "materialize-json-stat",
+          "from_terminal_state": "json_stat_dataset_ready",
+          "workflow_ref": "workflow://dataset/analysis",
+          "workflow_revision": "v2"
+        },
+        {
+          "from_transition": "materialize-json-stat",
+          "from_terminal_state": "json_stat_dataset_ready",
+          "workflow_ref": "workflow://dataset/quality",
+          "workflow_revision": "v2"
+        },
+        {
+          "from_transition": "materialize-json-stat",
+          "from_terminal_state": "json_stat_dataset_ready",
+          "workflow_ref": "workflow://dataset/join",
+          "workflow_revision": "v2"
+        }
+      ],
+      "required_context": [
+        "context.openapi.available"
+      ],
+      "start_state": "query_parameters_pending",
+      "verification_checks": [
+        {
+          "id": "geography-defined",
+          "transition": "request-observations",
+          "phase": "before_tool",
+          "operation": "required",
+          "left": {
+            "source": "arguments",
+            "pointer": "/geo"
+          },
+          "clarification_question": "Which geographic area should the statistics cover?"
+        },
+        {
+          "id": "period-defined",
+          "transition": "request-observations",
+          "phase": "before_tool",
+          "operation": "required",
+          "left": {
+            "source": "arguments",
+            "pointer": "/time"
+          },
+          "clarification_question": "Which year or period should be used?"
+        },
+        {
+          "id": "metadata-supports-query",
+          "transition": "request-observations",
+          "phase": "before_tool",
+          "operation": "dimension_membership",
+          "left": {
+            "source": "arguments"
+          },
+          "right": {
+            "source": "handoff",
+            "pointer": "/value/result/dataset",
+            "dataset_rows": true
+          },
+          "dimension_mapping": {
+            "geo": "geo",
+            "time": "TIME_PERIOD"
+          }
+        },
+        {
+          "id": "returned-dimensions-match",
+          "transition": "materialize-json-stat",
+          "phase": "after_tool",
+          "operation": "coverage",
+          "left": {
+            "source": "result",
+            "pointer": "/result/dataset",
+            "dataset_rows": true
+          },
+          "right": {
+            "source": "transition_arguments",
+            "transition": "request-observations",
+            "pointer": "/arguments"
+          },
+          "dimension_mapping": {
+            "geo": "geo",
+            "time": "time"
+          }
+        },
+        {
+          "id": "observation-status-usable",
+          "transition": "materialize-json-stat",
+          "phase": "after_tool",
+          "operation": "status",
+          "left": {
+            "source": "result",
+            "pointer": "/result/dataset",
+            "dataset_rows": true
+          },
+          "right": {
+            "value": [
+              null,
+              ""
+            ]
+          }
+        },
+        {
+          "id": "returned-codes-supported",
+          "transition": "materialize-json-stat",
+          "phase": "after_tool",
+          "operation": "dimension_membership",
+          "left": {
+            "source": "result",
+            "pointer": "/result/dataset",
+            "dataset_rows": true
+          },
+          "right": {
+            "source": "handoff",
+            "pointer": "/value/result/dataset",
+            "dataset_rows": true
+          },
+          "dimension_mapping": {
+            "geo": "geo",
+            "time": "TIME_PERIOD",
+            "unit": "unit",
+            "freq": "freq"
+          }
+        }
+      ],
+      "terminal_states": [
+        "json_stat_dataset_ready"
+      ],
+      "transitions": [
+        {
+          "id": "request-observations",
+          "from": "query_parameters_pending",
+          "to": "observations_retrieved",
+          "tool": "eurostat.getData",
+          "arguments": "{\"format\":\"JSON\",\"lang\":\"en\"}",
+          "model_supplies_arguments": true
+        },
+        {
+          "id": "materialize-json-stat",
+          "from": "observations_retrieved",
+          "to": "json_stat_dataset_ready",
+          "tool": "dataset.inspect",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/resource",
+              "from": "request-observations",
+              "source": "/resources/0/uri"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "research-report-composition-v1",
+      "source_revision": "agent-workflows-starter@v26",
+      "workflow_ref": "workflow://artifact/research-report",
+      "workflow_revision": "v2",
+      "family": "artifact",
+      "graph_revision": "artifact-report-graph@v1",
+      "optional_capabilities": [
+        "artifact.export"
+      ],
+      "start_state": "ready",
+      "terminal_states": [
+        "complete"
+      ],
+      "transitions": [
+        {
+          "id": "compose-findings",
+          "from": "ready",
+          "to": "findings",
+          "kind": "artifact_compose",
+          "artifact_profile_ref": "research",
+          "artifact_profile_revision": "v2",
+          "artifact_section_id": "findings"
+        },
+        {
+          "id": "compose-limitations",
+          "from": "findings",
+          "to": "render",
+          "kind": "artifact_compose",
+          "artifact_profile_ref": "research",
+          "artifact_profile_revision": "v2",
+          "artifact_section_id": "limitations"
+        },
+        {
+          "id": "publish-report",
+          "from": "render",
+          "to": "complete",
+          "kind": "tool",
+          "tool": "artifact.export",
+          "arguments": "{\"format\":\"markdown\",\"name\":\"research-report\"}"
+        }
+      ]
+    },
+    {
+      "id": "project-graph-investigation-path-v1",
+      "source_revision": "agent-workflows-starter@v40",
+      "workflow_ref": "workflow://graph/investigate",
+      "workflow_revision": "v2",
+      "family": "graph",
+      "graph_revision": "graph-investigation@v2",
+      "required_capabilities": [
+        "graph.find",
+        "graph.expand"
+      ],
+      "optional_capabilities": [
+        "graph.get",
+        "graph.search",
+        "graph.source"
+      ],
+      "required_context": [
+        "context.graph.project"
+      ],
+      "start_state": "search",
+      "terminal_states": [
+        "complete"
+      ],
+      "transitions": [
+        {
+          "id": "find-nodes",
+          "from": "search",
+          "to": "found",
+          "tool": "graph.find",
+          "arguments": "{\"limit\":5}"
+        },
+        {
+          "id": "choose-expansion",
+          "from": "found",
+          "to": "expand-1",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "Finish without expansion.",
+              "to": "complete"
+            },
+            {
+              "id": "result_1",
+              "description": "Expand search result 1 from the observed node list.",
+              "to": "expand-1",
+              "requires": [
+                "/result/nodes/0/id"
+              ]
+            },
+            {
+              "id": "result_2",
+              "description": "Expand search result 2 from the observed node list.",
+              "to": "expand-2",
+              "requires": [
+                "/result/nodes/1/id"
+              ]
+            },
+            {
+              "id": "result_3",
+              "description": "Expand search result 3 from the observed node list.",
+              "to": "expand-3",
+              "requires": [
+                "/result/nodes/2/id"
+              ]
+            },
+            {
+              "id": "result_4",
+              "description": "Expand search result 4 from the observed node list.",
+              "to": "expand-4",
+              "requires": [
+                "/result/nodes/3/id"
+              ]
+            },
+            {
+              "id": "result_5",
+              "description": "Expand search result 5 from the observed node list.",
+              "to": "expand-5",
+              "requires": [
+                "/result/nodes/4/id"
+              ]
+            }
+          ],
+          "model_instruction": "Choose the best numbered result for the task or finish. The observed nodes are in the same order as the numbered choices. If truncated is true, more matches exist than the five shown; select only a displayed result or finish."
+        },
+        {
+          "id": "expand-node-1",
+          "from": "expand-1",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/0/id"
+            }
+          ]
+        },
+        {
+          "id": "expand-node-2",
+          "from": "expand-2",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/1/id"
+            }
+          ]
+        },
+        {
+          "id": "expand-node-3",
+          "from": "expand-3",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/2/id"
+            }
+          ]
+        },
+        {
+          "id": "expand-node-4",
+          "from": "expand-4",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/3/id"
+            }
+          ]
+        },
+        {
+          "id": "expand-node-5",
+          "from": "expand-5",
+          "to": "complete",
+          "tool": "graph.expand",
+          "arguments": "{}",
+          "bindings": [
+            {
+              "target": "/id",
+              "from": "$previous",
+              "source": "/result/nodes/4/id"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "project-graph-maintenance-path-v1",
+      "source_revision": "agent-workflows-starter@v39",
+      "workflow_ref": "workflow://graph/maintain",
+      "workflow_revision": "v1",
+      "family": "graph",
+      "graph_revision": "graph-maintenance@v1",
+      "required_capabilities": [
+        "graph.find",
+        "graph.link.propose",
+        "graph.describe.propose",
+        "graph.retract.propose",
+        "graph.search"
+      ],
+      "optional_capabilities": [
+        "graph.get",
+        "graph.expand"
+      ],
+      "required_context": [
+        "context.graph.project"
+      ],
+      "start_state": "search",
+      "terminal_states": [
+        "complete"
+      ],
+      "transitions": [
+        {
+          "id": "find-existing",
+          "from": "search",
+          "to": "found",
+          "tool": "graph.find",
+          "arguments": "{}"
+        },
+        {
+          "id": "choose-action",
+          "from": "found",
+          "to": "describe",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "Finish without a proposal when no supported update is needed.",
+              "to": "complete"
+            },
+            {
+              "id": "describe",
+              "description": "Propose a sourced description for a returned node.",
+              "to": "describe",
+              "requires": [
+                "/result/nodes/0/id"
+              ]
+            },
+            {
+              "id": "link",
+              "description": "Propose a supported relationship or an additional assertion.",
+              "to": "link"
+            },
+            {
+              "id": "retract",
+              "description": "Search existing relations before proposing a withdrawal.",
+              "to": "search-edges"
+            }
+          ]
+        },
+        {
+          "id": "describe-node",
+          "from": "describe",
+          "to": "complete",
+          "tool": "graph.describe.propose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use a returned node ID and a source-grounded description. Do not invent evidence.",
+          "bindings": [
+            {
+              "target": "/expected_revision",
+              "from": "$previous",
+              "source": "/result/revision"
+            }
+          ]
+        },
+        {
+          "id": "link-nodes",
+          "from": "link",
+          "to": "complete",
+          "tool": "graph.link.propose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use existing entities where possible and include supported rationale and evidence."
+        },
+        {
+          "id": "find-edges",
+          "from": "search-edges",
+          "to": "edges-found",
+          "tool": "graph.search",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Search saved edges relevant to the proposed withdrawal using at least one supported filter."
+        },
+        {
+          "id": "choose-withdrawal",
+          "from": "edges-found",
+          "to": "retract",
+          "kind": "model_choice",
+          "choices": [
+            {
+              "id": "finish",
+              "description": "Finish when no supported withdrawal is needed.",
+              "to": "complete"
+            },
+            {
+              "id": "retract",
+              "description": "Propose withdrawal of an edge in the search result.",
+              "to": "retract",
+              "requires": [
+                "/result/edges/0/id"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "retract-edge",
+          "from": "retract",
+          "to": "complete",
+          "tool": "graph.retract.propose",
+          "arguments": "{}",
+          "model_supplies_arguments": true,
+          "model_instruction": "Use an edge ID and its version from the preceding graph.search result; do not invent either."
+        }
+      ]
+    },
+    {
+      "id": "hypothesis-inquiry-path-v1",
+      "source_revision": "agent-workflows-starter@v41",
+      "workflow_ref": "workflow://research/hypothesis-inquiry",
+      "workflow_revision": "v1",
+      "family": "research",
+      "graph_revision": "hypothesis-inquiry@v1",
+      "preferred_thinking_mode": "research",
+      "optional_capabilities": [
+        "web.search",
+        "web.fetch",
+        "resource.read",
+        "dataset.sample",
+        "data.query",
+        "openapi.read",
+        "artifact.export"
+      ],
+      "start_state": "investigate",
+      "terminal_states": [
+        "searched"
+      ],
+      "transitions": [
+        {
+          "id": "support-web",
+          "from": "investigate",
+          "to": "web-challenge",
+          "tool": "web.search",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-web",
+          "from": "web-challenge",
+          "to": "searched",
+          "tool": "web.search",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-document",
+          "from": "investigate",
+          "to": "document-challenge",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-document",
+          "from": "document-challenge",
+          "to": "searched",
+          "tool": "resource.read",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-dataset",
+          "from": "investigate",
+          "to": "dataset-challenge",
+          "tool": "dataset.sample",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-dataset",
+          "from": "dataset-challenge",
+          "to": "searched",
+          "tool": "dataset.sample",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-query",
+          "from": "investigate",
+          "to": "query-challenge",
+          "tool": "data.query",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-query",
+          "from": "query-challenge",
+          "to": "searched",
+          "tool": "data.query",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-openalex",
+          "from": "investigate",
+          "to": "openalex-challenge",
+          "tool": "openalex.listWorks",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-openalex",
+          "from": "openalex-challenge",
+          "to": "searched",
+          "tool": "openalex.listWorks",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        },
+        {
+          "id": "support-eurostat",
+          "from": "investigate",
+          "to": "eurostat-challenge",
+          "tool": "eurostat.getData",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Find or inspect a relevant source or dataset for the hypothesis and evidence that may support it. Use only available source identifiers and preserve query scope. Search results and metadata are leads, not proof."
+        },
+        {
+          "id": "challenge-eurostat",
+          "from": "eurostat-challenge",
+          "to": "searched",
+          "tool": "eurostat.getData",
+          "arguments": "{}",
+          "optional_availability": true,
+          "model_supplies_arguments": true,
+          "model_instruction": "Search or inspect the same available source type for evidence that might contradict or qualify the hypothesis, or support an alternative explanation. Do not assume contrary evidence exists; retain scope and limitations."
+        }
+      ]
+    }
+  ],
+  "artifact_profiles": [
+    {
+      "id": "research",
+      "revision": "v2",
+      "title": "Research report",
+      "purpose": "A source-grounded synthesis that distinguishes observations, conclusions and unresolved limitations.",
+      "sections": [
+        {
+          "id": "findings",
+          "title": "Findings",
+          "purpose": "Summarize the findings supported by the provided research and plan observations.",
+          "required": true,
+          "evidence_relations": [
+            "supports",
+            "contradicts",
+            "qualifies"
+          ],
+          "allowed_block_kinds": [
+            "observation",
+            "conclusion"
+          ]
+        },
+        {
+          "id": "limitations",
+          "title": "Limitations and open questions",
+          "purpose": "Record contradictions, incomplete coverage, unsupported claims and unresolved questions.",
+          "required": false,
+          "evidence_relations": [
+            "contradicts",
+            "qualifies",
+            "inconclusive"
+          ],
+          "allowed_block_kinds": [
+            "observation",
+            "conclusion",
+            "recommendation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "technical_analysis",
+      "revision": "v1",
+      "title": "Technical analysis",
+      "purpose": "Compare verified observations and explain bounded conclusions and tradeoffs.",
+      "sections": [
+        {
+          "id": "observations",
+          "title": "Observed facts",
+          "purpose": "Present directly observed tool and source results.",
+          "allowed_block_kinds": [
+            "observation"
+          ]
+        },
+        {
+          "id": "analysis",
+          "title": "Analysis and limitations",
+          "purpose": "Draw bounded conclusions and preserve uncertainty and conflicting evidence.",
+          "allowed_block_kinds": [
+            "observation",
+            "conclusion",
+            "recommendation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dataset_analysis",
+      "revision": "v1",
+      "title": "Dataset analysis",
+      "purpose": "Summarize a dataset analysis with source identity, method, results and limitations.",
+      "sections": [
+        {
+          "id": "method",
+          "title": "Dataset and method",
+          "purpose": "Identify the dataset, relevant schema and transformations from host observations.",
+          "allowed_block_kinds": [
+            "observation"
+          ]
+        },
+        {
+          "id": "results",
+          "title": "Results and limitations",
+          "purpose": "Report calculated findings and coverage limits grounded in structured results.",
+          "allowed_block_kinds": [
+            "observation",
+            "conclusion",
+            "recommendation"
+          ]
+        }
+      ]
+    }
+  ],
+  "blueprints": [
+    {
+      "id": "code-overview-v2",
+      "source_revision": "agent-workflows-starter@v35",
+      "selection_description": "Build a bounded, evidence-linked overview of an authorized source repository.",
+      "purpose": "Orient the user in a codebase using host-provided structure and analysis capabilities.",
+      "goal": "Describe the relevant repository structure and available semantic analysis without inventing relationships.",
+      "success_criteria": "The overview distinguishes semantic results from text matches and records coverage and provider limitations.",
+      "required_capabilities": [
+        "tool.repository",
+        "code.inspect"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v1",
+        "verification-ladder-v1",
+        "code-analysis-evidence-v1",
+        "code-phase-handoff-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://code/overview",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "inspect-capabilities",
+      "constraints": [
+        {
+          "id": "read-only",
+          "description": "Inspect repository content without modifying it.",
+          "hard": true
+        },
+        {
+          "id": "semantic-provenance",
+          "description": "Label the method and limits of every code relationship.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "repository",
+          "statement": "The host has bound an authorized repository root.",
+          "confidence": 1.0
+        }
+      ],
+      "steps": [
+        {
+          "id": "inspect-capabilities",
+          "title": "Inspect capabilities",
+          "objective": "Inspect available repository analysis support, reusing a current capability result when present. Result: supported operations and provider limitations; do not call every listed operation."
+        },
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "List and read only the repository areas needed for the question. Result: a bounded module map with inspected paths.",
+          "depends_on": [
+            "inspect-capabilities"
+          ]
+        },
+        {
+          "id": "map-symbols",
+          "title": "Map symbols",
+          "objective": "Resolve only symbols needed to explain that map. Result: returned definitions and references, or explicitly non-semantic text matches when semantic support is absent.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "report",
+          "title": "Report overview",
+          "objective": "Report Findings, Evidence and Limitations for the inspected structure. Include Next step only for unresolved work; no code changes.",
+          "depends_on": [
+            "map-symbols"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "code-entry-point-investigation-v2",
+      "source_revision": "agent-workflows-starter@v35",
+      "selection_description": "Trace an explicitly selected source symbol through its immediate call relationships.",
+      "purpose": "Investigate what a source entry point may call while preserving code anchors and uncertainty.",
+      "goal": "Return a bounded semantic call neighborhood and explain what the analysis cannot establish.",
+      "success_criteria": "Every returned edge comes from the configured semantic provider, includes code locations, and is described as a possible static relationship rather than observed execution.",
+      "required_capabilities": [
+        "tool.repository",
+        "code.inspect",
+        "code.symbols",
+        "code.calls"
+      ],
+      "workflow_policy": "preferred",
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://code/entry-point-investigation",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "check-provider",
+      "constraints": [
+        {
+          "id": "explicit-entry",
+          "description": "Start only from a symbol and source location selected from host-returned code results or supplied by the user.",
+          "hard": true
+        },
+        {
+          "id": "no-execution-claim",
+          "description": "Do not describe static call relationships as an executed or feasible path.",
+          "hard": true
+        },
+        {
+          "id": "bounded-analysis",
+          "description": "Respect the provider's one-hop depth, result count and timeout limits.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "semantic-provider",
+          "statement": "Semantic call analysis may be unavailable; if so, report the limitation and do not replace it with guessed call edges.",
+          "confidence": 1.0
+        }
+      ],
+      "steps": [
+        {
+          "id": "check-provider",
+          "title": "Check provider",
+          "objective": "Inspect or reuse current semantic call capabilities. Result: supported call analysis and limits; if unavailable, report the limitation without inventing edges."
+        },
+        {
+          "id": "select-entry",
+          "title": "Select entry point",
+          "objective": "Resolve the requested entry point from returned definitions or a user-supplied location. Result: symbol, path, line and column when available; clarify ambiguous candidates before expansion.",
+          "depends_on": [
+            "check-provider"
+          ]
+        },
+        {
+          "id": "expand-calls",
+          "title": "Expand calls",
+          "objective": "Use the selected definition location for one bounded callers or callees query. Result: provider-returned edges, code anchors and coverage; expand further only if the question requires it.",
+          "depends_on": [
+            "select-entry"
+          ]
+        },
+        {
+          "id": "inspect-code",
+          "title": "Inspect code",
+          "objective": "Read the bounded source ranges needed to explain returned edges. Result: source observations, conditions and unresolved calls, kept separate from interpretation.",
+          "depends_on": [
+            "expand-calls"
+          ]
+        },
+        {
+          "id": "summarize",
+          "title": "Summarize",
+          "objective": "Report Findings, Evidence, Limitations and any needed Next step. Static calls describe possible relationships, not observed execution or a proven feasible path.",
+          "depends_on": [
+            "inspect-code"
+          ]
+        }
+      ],
+      "procedure_refs": [
+        "code-analysis-evidence-v1",
+        "code-phase-handoff-v1"
+      ]
+    },
+    {
+      "id": "dataset-analysis-v2",
+      "source_revision": "agent-workflows-starter@v37",
+      "selection_description": "Analyse a dataset through a host-resolved workflow and verified result.",
+      "purpose": "Answer a bounded analytical question without guessing dataset identity or tool arguments.",
+      "goal": "Analyse a resolved dataset and explain the verified result.",
+      "success_criteria": "Dataset identity, sufficient data understanding, semantic operation and result verification are established before answering.",
+      "required_capabilities": [
+        "tool.dataset",
+        "workflow.dataset"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "data-understanding-v1",
+        "choose-data-operation-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://dataset/analysis",
+          "workflow_revision": "v4"
+        },
+        {
+          "workflow_ref": "workflow://dataset/quality",
+          "workflow_revision": "v4"
+        },
+        {
+          "workflow_ref": "workflow://dataset/join",
+          "workflow_revision": "v2"
+        }
+      ],
+      "next_action": "resolve-dataset",
+      "constraints": [
+        {
+          "id": "host-tool-contract",
+          "description": "Use host-resolved dataset contracts; do not invent tool names or arguments.",
+          "hard": true
+        },
+        {
+          "id": "evidence-before-answer",
+          "description": "Do not present an unverified tool result as a completed answer.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "dataset-access",
+          "statement": "The host exposes an applicable dataset operation.",
+          "confidence": 0.8
+        }
+      ],
+      "steps": [
+        {
+          "id": "resolve-dataset",
+          "title": "Resolve dataset",
+          "objective": "Resolve the dataset through host-owned resource and dataset authority."
+        },
+        {
+          "id": "understand-data",
+          "title": "Establish data understanding",
+          "objective": "Establish the fields needed by the question, using trusted schema or bounded inspection.",
+          "depends_on": [
+            "resolve-dataset"
+          ]
+        },
+        {
+          "id": "choose-operation",
+          "title": "Choose operation",
+          "objective": "Choose the smallest semantic operation that answers the question.",
+          "depends_on": [
+            "understand-data"
+          ]
+        },
+        {
+          "id": "execute-analysis",
+          "title": "Execute analysis",
+          "objective": "Execute the host-validated operation and retain its result as evidence.",
+          "depends_on": [
+            "choose-operation"
+          ]
+        },
+        {
+          "id": "verify-result",
+          "title": "Verify result",
+          "objective": "Check that the result matches the requested dataset and operation.",
+          "depends_on": [
+            "execute-analysis"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Explain the verified result and its material limitations.",
+          "depends_on": [
+            "verify-result"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dataset-quality-v2",
+      "source_revision": "agent-workflows-starter@v37",
+      "selection_description": "Assess dataset quality through bounded validation, profiling and anomaly evidence.",
+      "purpose": "Separate declared data-quality violations from descriptive observations.",
+      "goal": "Assess relevant quality properties of a resolved dataset.",
+      "success_criteria": "Schema, explicit validation rules, bounded profile checks and relevant anomaly observations are evaluated before findings are summarized.",
+      "required_capabilities": [
+        "tool.dataset",
+        "workflow.dataset"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "data-understanding-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://dataset/quality",
+          "workflow_revision": "v4"
+        },
+        {
+          "workflow_ref": "workflow://dataset/analysis",
+          "workflow_revision": "v4"
+        }
+      ],
+      "next_action": "resolve-dataset",
+      "constraints": [
+        {
+          "id": "violations-versus-observations",
+          "description": "Do not present an outlier or descriptive observation as a data-quality violation without an explicit rule.",
+          "hard": true
+        },
+        {
+          "id": "bounded-analysis",
+          "description": "Keep validation, profiling and anomaly checks within host-provided bounds.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "dataset-access",
+          "statement": "The host exposes applicable dataset validation or profiling operations.",
+          "confidence": 0.8
+        }
+      ],
+      "steps": [
+        {
+          "id": "resolve-dataset",
+          "title": "Resolve dataset",
+          "objective": "Resolve the dataset through host-owned authority."
+        },
+        {
+          "id": "establish-schema",
+          "title": "Establish schema",
+          "objective": "Establish the relevant schema and field semantics.",
+          "depends_on": [
+            "resolve-dataset"
+          ]
+        },
+        {
+          "id": "validate-rules",
+          "title": "Validate rules",
+          "objective": "Evaluate explicit data-quality rules when available.",
+          "depends_on": [
+            "establish-schema"
+          ]
+        },
+        {
+          "id": "profile-data",
+          "title": "Profile data",
+          "objective": "Profile relevant missingness, distributions or cardinality within bounds.",
+          "depends_on": [
+            "validate-rules"
+          ]
+        },
+        {
+          "id": "inspect-anomalies",
+          "title": "Inspect anomalies",
+          "objective": "Inspect relevant anomalies without treating them as violations by default.",
+          "depends_on": [
+            "profile-data"
+          ]
+        },
+        {
+          "id": "verify-findings",
+          "title": "Verify findings",
+          "objective": "Separate verified violations from descriptive observations.",
+          "depends_on": [
+            "inspect-anomalies"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Summarize verified quality findings and limitations.",
+          "depends_on": [
+            "verify-findings"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "resource-document-analysis-v9",
+      "source_revision": "agent-workflows-starter@v36",
+      "selection_description": "Give an initial orientation to an uploaded document or answer an explicit question about a supplied resource, using host-resolved representations.",
+      "purpose": "Orient the user to a supplied resource or answer their explicit document question from bounded content and structured tables.",
+      "goal": "Establish a concise, source-grounded understanding of the supplied resource and identify what the user may want to do next.",
+      "success_criteria": "Resource identity is host-resolved, relevant text or table evidence is inspected, extraction limits are stated, no unsupported research or edits are introduced, and the user is asked what they want next when intent is still open.",
+      "required_capabilities": [
+        "resource.read"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "document-table-analysis-v1",
+        "data-understanding-v1",
+        "analysis-evidence-v1",
+        "document-phase-handoff-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://resource/document-analysis",
+          "workflow_revision": "v7"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "resource-identity",
+          "description": "Use only host-provided resource references and representations.",
+          "hard": true
+        },
+        {
+          "id": "bounded-inspection",
+          "description": "Keep resource reads and table analysis within host-provided bounds; host controls chunking and read cursors.",
+          "hard": true
+        },
+        {
+          "id": "no-unsolicited-research",
+          "description": "For an initial orientation, do not perform external research or edit the document; later workflows are selected only after the user states the next goal.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "resolve-resource",
+          "title": "Resolve resource",
+          "objective": "Resolve the selected host resource and version, and the user question when given. Result: authorized reference and explicit analysis scope; an upload alone does not request forensic analysis."
+        },
+        {
+          "id": "inspect-resource",
+          "title": "Inspect resource",
+          "objective": "Inspect available representations and relevant structure, reusing prepared results for the selected version. Result: selected representation, inspected coverage and extraction limits.",
+          "depends_on": [
+            "resolve-resource"
+          ]
+        },
+        {
+          "id": "inspect-tables",
+          "title": "Inspect tables",
+          "objective": "If the question needs exposed tables, select one by its host identity and use its dataset handle. Otherwise record not needed or unavailable and continue with text. Result: bounded table evidence or an explicit non-applicability outcome.",
+          "depends_on": [
+            "inspect-resource"
+          ]
+        },
+        {
+          "id": "establish-evidence",
+          "title": "Establish evidence",
+          "objective": "Inspect only text ranges or table results needed for the question. Result: evidence references, supported findings, unknowns and coverage; a partial read does not establish document-wide absence.",
+          "depends_on": [
+            "inspect-resource",
+            "inspect-tables"
+          ]
+        },
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Answer the explicit question or provide a concise initial orientation. Report findings, evidence and extraction limits; ask the next goal only when it remains open. Do not introduce unrequested editing or external research.",
+          "depends_on": [
+            "establish-evidence"
+          ]
+        }
+      ],
+      "next_action": "resolve-resource"
+    },
+    {
+      "id": "web-research-v4",
+      "source_revision": "agent-workflows-starter@v24",
+      "selection_description": "Research a question using bounded search and source retrieval.",
+      "purpose": "Build a traceable answer from sources that directly support its claims.",
+      "goal": "Answer the research question from retrieved source evidence.",
+      "success_criteria": "Material claims are supported by fetched sources, time-sensitive details are checked, and inference is distinguished from retrieved fact.",
+      "required_capabilities": [
+        "web.search",
+        "web.fetch"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "web-source-evidence-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://web/research",
+          "workflow_revision": "v5"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "source-grounding",
+          "description": "Do not state material web claims without retrieved source evidence.",
+          "hard": true
+        },
+        {
+          "id": "safe-fetch",
+          "description": "Use only host-authorized safe HTTPS search and fetch tools.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "scope-question",
+          "title": "Scope question",
+          "objective": "Identify what evidence would answer the request."
+        },
+        {
+          "id": "discover-sources",
+          "title": "Discover sources",
+          "objective": "Search for relevant sources, favoring primary authorities.",
+          "depends_on": [
+            "scope-question"
+          ]
+        },
+        {
+          "id": "retrieve-evidence",
+          "title": "Retrieve evidence",
+          "objective": "Fetch candidate sources and inspect the supporting content.",
+          "depends_on": [
+            "discover-sources"
+          ]
+        },
+        {
+          "id": "verify-claims",
+          "title": "Verify claims",
+          "objective": "Match material claims to retrieved evidence and note dates or uncertainty.",
+          "depends_on": [
+            "retrieve-evidence"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Provide a sourced answer and distinguish any inference.",
+          "depends_on": [
+            "verify-claims"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openapi-resource-onboarding-v1",
+      "source_revision": "agent-workflows-starter@v4",
+      "selection_description": "Connect to a public read-only API from its OpenAPI document and use a permitted operation.",
+      "purpose": "Turn a user-provided API or documentation URL into bounded, host-validated API tools.",
+      "goal": "Answer the API request using an admitted OpenAPI operation and its verified response.",
+      "success_criteria": "The OpenAPI document is fetched into a host resource, admitted by openapi.connect, and a permitted operation is used with bounded arguments and response evidence.",
+      "required_capabilities": [
+        "workflow.openapi"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "openapi-resource-onboarding-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://openapi/resource-onboarding",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "locate-specification",
+      "constraints": [
+        {
+          "id": "admitted-spec-only",
+          "description": "Use only operations exposed from the admitted OpenAPI document; do not issue raw HTTP requests.",
+          "hard": true
+        },
+        {
+          "id": "anonymous-read-only",
+          "description": "Use only anonymous read-only HTTPS operations permitted by the host.",
+          "hard": true
+        },
+        {
+          "id": "host-resource-identity",
+          "description": "Pass only the host-returned resource_ref to openapi.connect.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "network-authorized",
+          "statement": "The host has enabled public HTTPS access for this request.",
+          "confidence": 0.9
+        }
+      ],
+      "steps": [
+        {
+          "id": "locate-specification",
+          "title": "Locate specification",
+          "objective": "Use the provided spec URL, or find the official JSON OpenAPI document for the requested API."
+        },
+        {
+          "id": "fetch-specification",
+          "title": "Fetch specification",
+          "objective": "Fetch the OpenAPI document with web.fetch and retain its host resource_ref.",
+          "depends_on": [
+            "locate-specification"
+          ]
+        },
+        {
+          "id": "admit-provider",
+          "title": "Admit provider",
+          "objective": "Pass the returned resource_ref to openapi.connect and use its admission result.",
+          "depends_on": [
+            "fetch-specification"
+          ]
+        },
+        {
+          "id": "invoke-operation",
+          "title": "Invoke operation",
+          "objective": "On the next turn, select an exposed read-only operation and call it using its schema and bounds.",
+          "depends_on": [
+            "admit-provider"
+          ]
+        },
+        {
+          "id": "verify-response",
+          "title": "Verify response",
+          "objective": "Ground the answer in the bounded API response and report relevant limitations.",
+          "depends_on": [
+            "invoke-operation"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Answer the user from the verified API result.",
+          "depends_on": [
+            "verify-response"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openalex-work-search-v4",
+      "source_revision": "agent-workflows-starter@v47",
+      "selection_description": "Find bounded scholarly-work candidates from a configured OpenAlex provider.",
+      "purpose": "Turn a research question into a traceable, bounded set of scholarly records.",
+      "goal": "Return relevant OpenAlex work candidates with their retrieved bibliographic metadata.",
+      "success_criteria": "The search terms, bounded result set, record identities and material limitations are explicit before presenting candidates.",
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "scholarly-search-evidence-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://openalex/work-search",
+          "workflow_revision": "v7"
+        }
+      ],
+      "next_action": "scope-search",
+      "constraints": [
+        {
+          "id": "configured-provider-only",
+          "description": "Use only OpenAlex operations already exposed by the host provider.",
+          "hard": true
+        },
+        {
+          "id": "bounded-result-set",
+          "description": "Keep each API request within the host page and projection bounds.",
+          "hard": true
+        },
+        {
+          "id": "ranking-is-not-quality",
+          "description": "Do not present OpenAlex search ranking as a quality or relevance judgement without separate evidence.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "scope-search",
+          "title": "Scope search",
+          "objective": "Make the scholarly question and material search terms explicit."
+        },
+        {
+          "id": "search-works",
+          "title": "Search works",
+          "objective": "Use the configured OpenAlex works search with bounded projection and page size.",
+          "depends_on": [
+            "scope-search"
+          ]
+        },
+        {
+          "id": "inspect-records",
+          "title": "Inspect records",
+          "objective": "Retain returned work identities and inspect the metadata needed for the answer.",
+          "depends_on": [
+            "search-works"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Present retrieved candidates, search boundaries and any inference separately.",
+          "depends_on": [
+            "inspect-records"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openalex-work-lookup-v1",
+      "source_revision": "agent-workflows-starter@v5",
+      "selection_description": "Verify a known scholarly work from an OpenAlex ID or DOI through the configured provider.",
+      "purpose": "Establish bibliographic metadata for one identified scholarly work without relying on guessed citations.",
+      "goal": "Retrieve and verify the requested OpenAlex work record.",
+      "success_criteria": "A host-validated identifier is used and the returned title, authorship and publication metadata are distinguished from unavailable content or interpretation.",
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "bibliographic-record-validation-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://openalex/work-lookup",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "resolve-identifier",
+      "constraints": [
+        {
+          "id": "identifier-evidence",
+          "description": "Use a user-provided identifier or one returned by an earlier host operation; do not invent work identities.",
+          "hard": true
+        },
+        {
+          "id": "metadata-boundary",
+          "description": "Do not infer full-text claims, study conclusions or citation context from bibliographic metadata alone.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "resolve-identifier",
+          "title": "Resolve identifier",
+          "objective": "Use the supplied DOI/OpenAlex identifier or a host-returned candidate identity."
+        },
+        {
+          "id": "retrieve-work",
+          "title": "Retrieve work",
+          "objective": "Call the configured OpenAlex work lookup operation with its validated identifier.",
+          "depends_on": [
+            "resolve-identifier"
+          ]
+        },
+        {
+          "id": "verify-metadata",
+          "title": "Verify metadata",
+          "objective": "Verify the requested bibliographic fields against the returned record.",
+          "depends_on": [
+            "retrieve-work"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Return verified metadata and state what the record does not establish.",
+          "depends_on": [
+            "verify-metadata"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openalex-literature-review-v3",
+      "source_revision": "agent-workflows-starter@v47",
+      "selection_description": "Build a bounded, reproducible literature-review candidate set from configured OpenAlex search.",
+      "purpose": "Support a student or researcher who needs a transparent starting set for further reading or analysis.",
+      "goal": "Produce a bounded literature-review artifact or resource with explicit scope and selection limits.",
+      "success_criteria": "Search scope, returned record identities, coverage limits and any exported artifact are grounded in the configured provider response.",
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "scholarly-search-evidence-v1",
+        "literature-review-boundaries-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://openalex/literature-review",
+          "workflow_revision": "v6"
+        }
+      ],
+      "next_action": "define-review-scope",
+      "constraints": [
+        {
+          "id": "bounded-review",
+          "description": "A single bounded OpenAlex retrieval is a candidate set, not a claim of exhaustive coverage.",
+          "hard": true
+        },
+        {
+          "id": "preserve-provenance",
+          "description": "Retain the returned provider resource or a user-requested exported artifact for follow-up work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "define-review-scope",
+          "title": "Define review scope",
+          "objective": "State the question, search terms and intended limits for the candidate set."
+        },
+        {
+          "id": "retrieve-candidates",
+          "title": "Retrieve candidates",
+          "objective": "Use configured OpenAlex search with a bounded page and the smallest useful field projection.",
+          "depends_on": [
+            "define-review-scope"
+          ]
+        },
+        {
+          "id": "preserve-results",
+          "title": "Preserve results",
+          "objective": "Keep the host-materialized response available for reading, analysis or a requested artifact export.",
+          "depends_on": [
+            "retrieve-candidates"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Summarize the candidate set and make the review boundary explicit.",
+          "depends_on": [
+            "preserve-results"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openalex-entity-filtered-work-search-v2",
+      "source_revision": "agent-workflows-starter@v11",
+      "selection_description": "Search OpenAlex works by title or text, author, institution, research topic and publication year.",
+      "purpose": "Turn a research question into a traceable, bounded set of works using text and structured metadata.",
+      "goal": "Return works grounded in explicit search terms, host-returned entity identities and OpenAlex filters.",
+      "success_criteria": "Search terms, entity identity where used, applied filters, returned title/year/topic metadata and coverage limits are explicit.",
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "openalex-entity-resolution-v1",
+        "openalex-filtered-work-retrieval-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://openalex/entity-filtered-work-search",
+          "workflow_revision": "v2"
+        }
+      ],
+      "next_action": "resolve-entity",
+      "constraints": [
+        {
+          "id": "returned-entity-only",
+          "description": "Use only an author, institution or topic ID returned by the configured provider.",
+          "hard": true
+        },
+        {
+          "id": "explicit-filter-boundary",
+          "description": "Keep year and entity filters explicit and within the configured API contract.",
+          "hard": true
+        },
+        {
+          "id": "text-search-boundary",
+          "description": "Use works search for title and full-text discovery; use the returned metadata to verify title, year and topic.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "scope-search",
+          "title": "Scope search",
+          "objective": "Identify title/text terms and any author, institution, topic or year constraints."
+        },
+        {
+          "id": "resolve-entity",
+          "title": "Resolve entity",
+          "objective": "When a named author, institution or research topic is requested, search its configured collection and retain a returned identity.",
+          "depends_on": [
+            "scope-search"
+          ]
+        },
+        {
+          "id": "bind-filters",
+          "title": "Bind filters",
+          "objective": "Combine any returned entity identity with explicit year and other requested works filters.",
+          "depends_on": [
+            "resolve-entity"
+          ]
+        },
+        {
+          "id": "retrieve-works",
+          "title": "Retrieve works",
+          "objective": "Call works search with title/text terms and/or structured filters, a bounded page, and title/year/topic fields.",
+          "depends_on": [
+            "bind-filters"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Present returned titles, years, topic metadata, applied filters and coverage limits.",
+          "depends_on": [
+            "retrieve-works"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openalex-full-text-evidence-v2",
+      "source_revision": "agent-workflows-starter@v47",
+      "selection_description": "Verify a scholarly record from OpenAlex, interpret its abstract, and retrieve open full text only when needed.",
+      "purpose": "Ground a scholarly answer in the smallest available evidence layer while preserving the distinction between metadata, abstract and full text.",
+      "goal": "Answer a question about a scholarly work from verified OpenAlex metadata, abstract evidence and, when necessary, a host-materialized open full-text resource.",
+      "success_criteria": "The work identity is verified; abstract limits are explicit; any full-text resource is fetched from a returned open-access location and inspected before its claims are used.",
+      "required_capabilities": [
+        "tool.openapi",
+        "workflow.openapi"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "bibliographic-record-validation-v1",
+        "openalex-full-text-evidence-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://openalex/full-text-evidence",
+          "workflow_revision": "v7"
+        }
+      ],
+      "next_action": "resolve-work",
+      "constraints": [
+        {
+          "id": "abstract-first",
+          "description": "Use verified metadata and the returned abstract before acquiring full text; do not imply that an abstract establishes unobserved methods, results or limitations.",
+          "hard": true
+        },
+        {
+          "id": "returned-open-location-only",
+          "description": "Fetch only a content URL or open-access location returned by the verified work record, using host-authorized web.fetch.",
+          "hard": true
+        },
+        {
+          "id": "full-text-provenance",
+          "description": "Ground full-text claims in the returned host resource and disclose truncation or unavailable text representation.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "resolve-work",
+          "title": "Resolve work",
+          "objective": "Use a user-provided DOI/OpenAlex ID or a host-returned work identity."
+        },
+        {
+          "id": "retrieve-record",
+          "title": "Retrieve record",
+          "objective": "Retrieve the configured OpenAlex work record including abstract and declared open-access locations.",
+          "depends_on": [
+            "resolve-work"
+          ]
+        },
+        {
+          "id": "interpret-abstract",
+          "title": "Interpret abstract",
+          "objective": "Establish what the metadata and abstract directly support, and whether that answers the question.",
+          "depends_on": [
+            "retrieve-record"
+          ]
+        },
+        {
+          "id": "acquire-full-text",
+          "title": "Acquire full text when needed",
+          "objective": "If abstract evidence is insufficient and an open location is returned, fetch that exact URL into a host resource.",
+          "depends_on": [
+            "interpret-abstract"
+          ]
+        },
+        {
+          "id": "inspect-full-text",
+          "title": "Inspect full text",
+          "objective": "Read the host-materialized text representation; assess conclusions against results and methods, using discussion for interpretation and limitations.",
+          "depends_on": [
+            "acquire-full-text"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "State which claims come from metadata, abstract or full text, and disclose unavailable or truncated evidence.",
+          "depends_on": [
+            "interpret-abstract",
+            "inspect-full-text"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eurostat-catalog-discovery-v3",
+      "source_revision": "agent-workflows-starter@v24",
+      "selection_description": "Find candidate Eurostat tables by statistical concept and inspect the host-materialized catalogue rows.",
+      "purpose": "Resolve a user's statistical measure and coverage into candidate Eurostat table codes without guessing codes.",
+      "goal": "Select a table whose returned title, category and coverage plausibly match the requested measure.",
+      "success_criteria": "The statistical intent is explicit and every candidate code comes from the fetched Eurostat catalogue resource.",
+      "required_capabilities": [
+        "tool.web",
+        "tool.dataset",
+        "workflow.dataset"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "statistical-intent-and-measure-v1",
+        "eurostat-catalog-discovery-v2",
+        "structured-resource-dataset-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://eurostat/catalog-discovery",
+          "workflow_revision": "v7"
+        }
+      ],
+      "next_action": "clarify-statistical-intent",
+      "constraints": [
+        {
+          "id": "returned-code-only",
+          "description": "Use only a table code returned by the host-materialized Eurostat catalogue.",
+          "hard": true
+        },
+        {
+          "id": "catalogue-is-not-definition",
+          "description": "A catalogue title is a candidate description, not a substitute for SDMX dimension, unit or availability validation.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "clarify-statistical-intent",
+          "title": "Clarify statistical intent",
+          "objective": "Establish measure, population, geography, period, unit and comparison before searching."
+        },
+        {
+          "id": "fetch-catalogue",
+          "title": "Fetch catalogue",
+          "objective": "Fetch the bounded English Eurostat table-of-contents TSV through web.fetch.",
+          "depends_on": [
+            "clarify-statistical-intent"
+          ]
+        },
+        {
+          "id": "materialize-catalogue",
+          "title": "Materialize catalogue",
+          "objective": "Pass the returned resource reference to dataset.inspect or dataset.sample; do not parse or invent rows manually.",
+          "depends_on": [
+            "fetch-catalogue"
+          ]
+        },
+        {
+          "id": "select-candidate",
+          "title": "Select candidate",
+          "objective": "Compare returned table codes, titles, category paths and coverage against the request.",
+          "depends_on": [
+            "materialize-catalogue"
+          ]
+        },
+        {
+          "id": "validate-metadata",
+          "title": "Validate metadata",
+          "objective": "Continue to the SDMX metadata workflow before constructing a Statistics API query.",
+          "depends_on": [
+            "select-candidate"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eurostat-metadata-resolution-v2",
+      "source_revision": "agent-workflows-starter@v24",
+      "selection_description": "Resolve a returned Eurostat dataflow against its SDMX structure, dimensions, code lists and constraints.",
+      "purpose": "Validate candidate identifiers and dimension codes before requesting observations.",
+      "goal": "Establish a metadata-backed Eurostat query with compatible measure, geography, time and unit.",
+      "success_criteria": "Dataflow/DSD references and every selected code come from returned SDMX metadata; unresolved dimensions remain explicit.",
+      "required_capabilities": [
+        "tool.openapi",
+        "tool.dataset",
+        "workflow.openapi"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "eurostat-sdmx-metadata-resolution-v2",
+        "statistical-intent-and-measure-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://eurostat/metadata-resolution",
+          "workflow_revision": "v9"
+        }
+      ],
+      "next_action": "resolve-dataflow-structure",
+      "constraints": [
+        {
+          "id": "metadata-grounded-parameters",
+          "description": "Do not invent dataflow, dimension, code-list, unit or time identifiers.",
+          "hard": true
+        },
+        {
+          "id": "availability-before-query",
+          "description": "Check content constraints and returned availability before requesting observations.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "resolve-dataflow-structure",
+          "title": "Resolve dataflow and structure",
+          "objective": "Use eurostat_sdmx.getStructure and the returned Dataflow structure reference to inspect the corresponding DSD."
+        },
+        {
+          "id": "inspect-dimensions",
+          "title": "Inspect dimensions",
+          "objective": "Materialize SDMX-ML as a host dataset and identify ordered dimensions, time dimension and measure.",
+          "depends_on": [
+            "resolve-dataflow-structure"
+          ]
+        },
+        {
+          "id": "resolve-code-lists",
+          "title": "Resolve code lists",
+          "objective": "Retrieve and inspect the code lists referenced by requested dimensions; retain only returned codes and labels.",
+          "depends_on": [
+            "inspect-dimensions"
+          ]
+        },
+        {
+          "id": "check-availability",
+          "title": "Check availability",
+          "objective": "Inspect content constraints and verify requested dimension combinations and periods.",
+          "depends_on": [
+            "resolve-code-lists"
+          ]
+        },
+        {
+          "id": "prepare-query",
+          "title": "Prepare query",
+          "objective": "Build the Statistics API arguments from the validated dataset and dimension codes.",
+          "depends_on": [
+            "check-availability"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eurostat-data-retrieval-v2",
+      "source_revision": "agent-workflows-starter@v24",
+      "selection_description": "Fetch a metadata-validated Eurostat JSON-stat response and continue with standard dataset analysis.",
+      "purpose": "Retrieve bounded observations while preserving Eurostat query provenance and status metadata.",
+      "goal": "Create a host dataset from JSON-stat and answer the statistical question using the ordinary dataset workflows.",
+      "success_criteria": "The API request uses metadata-returned codes; the JSON-stat response is converted to long-form rows and retains source, dimensions, labels, values and status.",
+      "required_capabilities": [
+        "tool.openapi",
+        "tool.dataset",
+        "workflow.openapi"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "json-stat-dataset-interpretation-v1",
+        "structured-resource-dataset-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://eurostat/data-retrieval",
+          "workflow_revision": "v8"
+        }
+      ],
+      "next_action": "request-observations",
+      "constraints": [
+        {
+          "id": "validated-query-only",
+          "description": "Use only dataset and dimension codes validated by the SDMX metadata workflow.",
+          "hard": true
+        },
+        {
+          "id": "preserve-status",
+          "description": "Do not discard JSON-stat status or confuse codes with labels.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "request-observations",
+          "title": "Request observations",
+          "objective": "Call eurostat.getData with the validated dataset code and repeated geo and time code fields."
+        },
+        {
+          "id": "materialize-json-stat",
+          "title": "Materialize JSON-stat",
+          "objective": "Use the host dataset importer to convert JSON-stat cells to bounded long-form rows with code, label, value and status columns.",
+          "depends_on": [
+            "request-observations"
+          ]
+        },
+        {
+          "id": "inspect-dataset",
+          "title": "Inspect dataset",
+          "objective": "Inspect the created dataset and preserve the source resource and exact query provenance.",
+          "depends_on": [
+            "materialize-json-stat"
+          ]
+        },
+        {
+          "id": "continue-analysis",
+          "title": "Continue analysis",
+          "objective": "Continue through workflow://dataset/analysis or workflow://dataset/quality for follow-up questions.",
+          "depends_on": [
+            "inspect-dataset"
+          ]
+        },
+        {
+          "id": "report",
+          "title": "Report",
+          "objective": "Explain values with units, labels, time coverage, status and selection limits.",
+          "depends_on": [
+            "continue-analysis"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "research-report-composition-v1",
+      "source_revision": "agent-workflows-starter@v26",
+      "selection_description": "Compose a report from already collected research, workflow and tool observations, preserving evidence links and gaps.",
+      "purpose": "Turn structured host observations into a revisioned, source-grounded report.",
+      "goal": "Compose and publish a grounded research report",
+      "success_criteria": "Each section is independently generated, references resolve against the plan snapshot, gaps remain visible, and the report resource retains provenance.",
+      "workflow_policy": "required",
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://artifact/research-report",
+          "workflow_revision": "v2"
+        }
+      ],
+      "next_action": "compose",
+      "steps": [
+        {
+          "id": "compose",
+          "title": "Compose report",
+          "objective": "Compose report sections from the host-frozen evidence snapshot."
+        }
+      ]
+    },
+    {
+      "id": "project-graph-investigation-v1",
+      "source_revision": "agent-workflows-starter@v40",
+      "selection_description": "Investigate entities and relations in the project context graph.",
+      "purpose": "Investigate entities and relations in the project context graph.",
+      "goal": "Use graph knowledge to support a question, checking sources as needed.",
+      "success_criteria": "Report the result and its source, status and limitations without inventing information.",
+      "required_capabilities": [
+        "graph.find"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "graph-investigation-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://graph/investigate",
+          "workflow_revision": "v2"
+        }
+      ],
+      "next_action": "inspect",
+      "steps": [
+        {
+          "id": "inspect",
+          "title": "Inspect",
+          "objective": "Find relevant scoped graph entities and determine the next justified action."
+        },
+        {
+          "id": "finish",
+          "title": "Finish",
+          "objective": "Report supported results and limitations.",
+          "depends_on": [
+            "inspect"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "project-graph-maintenance-v1",
+      "source_revision": "agent-workflows-starter@v39",
+      "selection_description": "Propose a sourced update to the project context graph.",
+      "purpose": "Propose a sourced update to the project context graph.",
+      "goal": "Find existing graph knowledge and propose only a supported, authorized update.",
+      "success_criteria": "Report the result and its source, status and limitations without inventing information.",
+      "required_capabilities": [
+        "graph.find"
+      ],
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "graph-maintenance-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://graph/maintain",
+          "workflow_revision": "v1"
+        }
+      ],
+      "next_action": "inspect",
+      "steps": [
+        {
+          "id": "inspect",
+          "title": "Inspect",
+          "objective": "Find relevant scoped graph entities and determine the next justified action."
+        },
+        {
+          "id": "finish",
+          "title": "Finish",
+          "objective": "Report supported results and limitations.",
+          "depends_on": [
+            "inspect"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hypothesis-inquiry-v1",
+      "source_revision": "agent-workflows-starter@v41",
+      "selection_description": "Test a user hypothesis using available sources, looking for support and alternative or conflicting evidence.",
+      "purpose": "Assess a testable hypothesis fairly using the source types available to the host.",
+      "goal": "Investigate the hypothesis using both supporting and challenging searches, then explain the evidence and remaining uncertainty.",
+      "success_criteria": "The two searches are accounted for; conclusions are tied to inspected sources and any missing perspectives, unavailable sources or incomplete coverage are explicit.",
+      "workflow_policy": "required",
+      "procedure_refs": [
+        "hypothesis-evidence-discipline-v1",
+        "analysis-evidence-v1"
+      ],
+      "workflow_bindings": [
+        {
+          "workflow_ref": "workflow://research/hypothesis-inquiry",
+          "workflow_revision": "v1"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "source-content",
+          "description": "Discovery hits and metadata are not proof of a source conclusion. Identify what has actually been read or measured.",
+          "hard": true
+        },
+        {
+          "id": "alternative-perspective",
+          "description": "Search for material that could challenge or qualify the hypothesis, and disclose unavailable checks or incomplete coverage.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "frame",
+          "title": "Frame the hypothesis",
+          "objective": "State the hypothesis, scope, alternative explanations and what evidence could distinguish them."
+        },
+        {
+          "id": "support",
+          "title": "Search for support",
+          "objective": "Search or inspect available material that might support the hypothesis.",
+          "depends_on": [
+            "frame"
+          ]
+        },
+        {
+          "id": "challenge",
+          "title": "Search for challenges",
+          "objective": "Search or inspect material that might contradict or qualify it or support an alternative.",
+          "depends_on": [
+            "support"
+          ]
+        },
+        {
+          "id": "compare",
+          "title": "Compare the evidence",
+          "objective": "Compare inspected sources and results, source independence and limitations without treating successful retrieval as proof.",
+          "depends_on": [
+            "challenge"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Report the assessment",
+          "objective": "Explain support, challenges and unresolved gaps with source references.",
+          "depends_on": [
+            "compare"
+          ]
+        }
+      ],
+      "next_action": "frame"
+    },
+    {
+      "id": "repository-change-v5",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed.",
+      "purpose": "Implement the requested repository change.",
+      "goal": "Implement the requested repository change.",
+      "success_criteria": "The requested change is implemented and reviewed, or explicitly blocked; verification is tied to the post-change source state and unrun checks are disclosed. An inspection alone does not establish implementation.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-phase-progress-v1",
+        "development-diagnosis-v1"
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Inspect the task, affected contracts, callers, local patterns and relevant tests; preserve source identity and unresolved questions."
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve knowledge gaps",
+          "objective": "Identify material uncertainties. Use available local evidence first; inspect external primary sources only when useful and authorized. Carry applicable findings and source references forward.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "design",
+          "title": "Design",
+          "objective": "Choose a coherent change and acceptance criteria using inspected evidence; retain unresolved assumptions.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "implement",
+          "title": "Implement",
+          "objective": "Apply the authorized change using available host freshness guards; preserve unrelated work and retain change evidence.",
+          "depends_on": [
+            "design"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify",
+          "objective": "When permitted and available, verify against the post-change source state with relevant configured targets; otherwise record the limitation. Distinguish build, tests and behavioral evidence.",
+          "depends_on": [
+            "implement"
+          ]
+        },
+        {
+          "id": "review",
+          "title": "Review and answer",
+          "objective": "Inspect the diff where available, report the result and evidence and optionally propose durable graph knowledge when supported.",
+          "depends_on": [
+            "verify"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "regression-repair-v5",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses.",
+      "purpose": "Diagnose the reported regression and repair it when warranted.",
+      "goal": "Diagnose the reported regression and repair it when warranted.",
+      "success_criteria": "The observed failure, supporting evidence, uncertainty, authorized correction and verification or limitations are explicit.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-diagnosis-v1",
+        "development-regression-guard-v1",
+        "development-phase-progress-v1"
+      ],
+      "next_action": "reproduce",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "reproduce",
+          "title": "Establish failure",
+          "objective": "Preserve the reported symptom, relevant source identity, environment and available outputs; reproduce only when authorized and useful."
+        },
+        {
+          "id": "diagnose",
+          "title": "Investigate cause",
+          "objective": "Compare expected and observed behavior, trace the relevant seams, and discriminate competing hypotheses before selecting a correction.",
+          "depends_on": [
+            "reproduce"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve knowledge gaps",
+          "objective": "Use local source and documentation first; consult authorized primary sources if a material version-specific question remains unresolved.",
+          "depends_on": [
+            "diagnose"
+          ]
+        },
+        {
+          "id": "guard",
+          "title": "Establish regression guard",
+          "objective": "Identify or add a focused check tied to the observed failure. Preserve baseline evidence and distinguish an unrun guard from a reproduced failure.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair or report diagnosis",
+          "objective": "Make a scoped correction only when requested and supported; otherwise explain the evidence and unresolved cause.",
+          "depends_on": [
+            "guard"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify and report",
+          "objective": "Use appropriate authorized checks on the relevant source state and report passed, failed and unrun work.",
+          "depends_on": [
+            "repair"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "development-compile-diagnosis-v2",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate a compiler or linker failure and repair it when requested.",
+      "purpose": "Diagnose the reported build failure.",
+      "goal": "Diagnose the reported build failure.",
+      "success_criteria": "The diagnostic, source and configuration are associated with a supported cause or explicitly unresolved; any authorized correction and verification are reported.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-diagnosis-v1",
+        "development-phase-progress-v1"
+      ],
+      "next_action": "evidence",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "evidence",
+          "title": "Collect build evidence",
+          "objective": "Preserve the failing diagnostic, build target, configuration and source identity; use available compiler diagnostic tools when useful."
+        },
+        {
+          "id": "local",
+          "title": "Inspect local cause",
+          "objective": "Inspect relevant declarations, call sites, includes, configuration and project history; distinguish competing explanations.",
+          "depends_on": [
+            "evidence"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve external uncertainty",
+          "objective": "Only when necessary, consult authorized documentation or upstream source for the actual dependency version and compare its applicability.",
+          "depends_on": [
+            "local"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair or report",
+          "objective": "Correct the established cause only within the requested authority, or explain the remaining uncertainty.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify and report",
+          "objective": "If authorized, rerun the relevant configured build and checks against the changed source state; report outputs and any unrun checks.",
+          "depends_on": [
+            "repair"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "development-runtime-diagnosis-v2",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate a runtime failure or unexpected behavior and repair it when requested.",
+      "purpose": "Diagnose the reported runtime behavior.",
+      "goal": "Diagnose the reported runtime behavior.",
+      "success_criteria": "Observed symptoms, competing explanations, discriminating evidence, and any authorized correction and verification are explicit.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-diagnosis-v1",
+        "development-phase-progress-v1"
+      ],
+      "next_action": "evidence",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        }
+      ],
+      "steps": [
+        {
+          "id": "evidence",
+          "title": "Collect observations",
+          "objective": "Preserve symptom, logs, trace, test output, runtime state and source identity where available; reproduce only when appropriate and authorized."
+        },
+        {
+          "id": "hypotheses",
+          "title": "Investigate hypotheses",
+          "objective": "Trace the execution and data flow, propose plausible explanations, and use bounded observations to distinguish evidence for and against them.",
+          "depends_on": [
+            "evidence"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve external uncertainty",
+          "objective": "Consult local usage and version-specific documentation; use external sources only for a material unresolved question and check applicability.",
+          "depends_on": [
+            "hypotheses"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair or report",
+          "objective": "Correct the responsible seam when requested and supported, or report the strongest evidence and uncertainty.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify and report",
+          "objective": "If authorized, rerun the relevant scenario and checks on the changed source state; distinguish observed behavior from untested claims.",
+          "depends_on": [
+            "repair"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "repository-investigation-v3",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate a code or architecture question without changing files; inspect local evidence and authorized primary documentation when needed.",
+      "purpose": "Establish repository evidence before proposing a change.",
+      "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
+      "success_criteria": "Relevant implementation, dependencies and evidence are identified without modifying the workspace.",
+      "required_capabilities": [
+        "tool.repository"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "small-coherent-change-v1",
+        "development-source-evidence-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "development-phase-progress-v1"
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {
+          "id": "read-only",
+          "description": "Do not modify the workspace during investigation.",
+          "hard": true
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "workspace",
+          "statement": "A controlled repository workspace is available.",
+          "confidence": 0.9
+        }
+      ],
+      "steps": [
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Identify the bounded question and relevant repository area. Result: inspected paths and source revision when available."
+        },
+        {
+          "id": "trace",
+          "title": "Trace contract",
+          "objective": "Follow contract, implementation, direct callers and relevant tests using available tools. Result: exact code locations and evidence references; distinguish semantic results from text matches.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve material knowledge gaps",
+          "objective": "Use local evidence first. If a material external contract remains unresolved, inspect authorized primary sources; otherwise record why no lookup is needed.",
+          "depends_on": [
+            "trace"
+          ]
+        },
+        {
+          "id": "establish-evidence",
+          "title": "Establish evidence",
+          "objective": "Check whether the inspected evidence answers the question. Result: supported findings and explicit unknowns; request a missing selection or report unavailable support instead of guessing.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "answer",
+          "title": "Answer",
+          "objective": "Answer the question with Findings, Evidence and Limitations; offer a Next step only when needed. Keep proposed changes separate from this read-only investigation.",
+          "depends_on": [
+            "establish-evidence"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "comprehension-refresh-v1",
+      "source_revision": "comprehension-refresh@v1",
+      "selection_description": "Preserve a bounded reusable understanding of a requested code area, research subject, document or investigation.",
+      "purpose": "Save sourced reusable understanding.",
+      "goal": "Inspect existing knowledge and propose at most three compact descriptions.",
+      "success_criteria": "Useful notes are saved as proposals with source references, or limitations are reported.",
+      "required_capabilities": [
+        "graph.find",
+        "graph.describe.propose"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "graph-maintenance-v1",
+        "comprehension-refresh-v1",
+        "development-knowledge-gap-v1"
+      ],
+      "next_action": "inspect",
+      "steps": [
+        {
+          "id": "inspect",
+          "title": "Inspect current evidence",
+          "objective": "Inspect the requested change or subject, current source identity, verification receipts where present and existing graph descriptions. Retain source references and unresolved questions in plan observations. Inspect at most ten candidate subjects and one-hop neighbors."
+        },
+        {
+          "id": "analyse",
+          "title": "Choose reusable understanding",
+          "objective": "Select at most three useful subjects or clusters. Reuse sufficient evidence; use existing research escalation only for material gaps. Preserve research artifact references. State uncertainty rather than inventing invariants or dependencies.",
+          "depends_on": [
+            "inspect"
+          ]
+        },
+        {
+          "id": "propose",
+          "title": "Publish sourced notes",
+          "objective": "Compare existing notes with current evidence. Save only useful changes through graph.describe.propose, using expected_revision and evidence_refs. Read current graph revision after a conflict before reconsidering a proposal. Standalone nodes need no relation.",
+          "depends_on": [
+            "analyse"
+          ]
+        },
+        {
+          "id": "report",
+          "title": "Report coverage and limitations",
+          "objective": "Report actual publication receipts, reused notes, uncertainty, incomplete coverage and unrun verification. Preserve unfinished work in the existing plan for resume.",
+          "depends_on": [
+            "propose"
+          ]
+        }
+      ],
+      "phase_review_required": true,
+      "constraints": [
+        {
+          "id": "execution.tool_limits.v1",
+          "hard": true,
+          "description": "{\"graph.describe.propose\":3,\"graph.find\":10}"
+        }
+      ]
+    },
+    {
+      "id": "repository-change-v5-with-comprehension",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed. Includes explicitly requested bounded comprehension maintenance after verification.",
+      "purpose": "Implement the requested repository change. Preserve reusable project understanding after verification.",
+      "goal": "Implement the requested repository change.",
+      "success_criteria": "The requested change is implemented and reviewed, or explicitly blocked; verification is tied to the post-change source state and unrun checks are disclosed. An inspection alone does not establish implementation.",
+      "required_capabilities": [
+        "tool.repository",
+        "graph.find",
+        "graph.describe.propose"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-phase-progress-v1",
+        "development-diagnosis-v1",
+        "graph-maintenance-v1",
+        "comprehension-refresh-v1"
+      ],
+      "next_action": "orient",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        },
+        {
+          "id": "execution.tool_limits.v1",
+          "hard": true,
+          "description": "{\"graph.describe.propose\":3,\"graph.find\":10}"
+        }
+      ],
+      "steps": [
+        {
+          "id": "orient",
+          "title": "Orient",
+          "objective": "Inspect the task, affected contracts, callers, local patterns and relevant tests; preserve source identity and unresolved questions."
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve knowledge gaps",
+          "objective": "Identify material uncertainties. Use available local evidence first; inspect external primary sources only when useful and authorized. Carry applicable findings and source references forward.",
+          "depends_on": [
+            "orient"
+          ]
+        },
+        {
+          "id": "design",
+          "title": "Design",
+          "objective": "Choose a coherent change and acceptance criteria using inspected evidence; retain unresolved assumptions.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "implement",
+          "title": "Implement",
+          "objective": "Apply the authorized change using available host freshness guards; preserve unrelated work and retain change evidence.",
+          "depends_on": [
+            "design"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify",
+          "objective": "When permitted and available, verify against the post-change source state with relevant configured targets; otherwise record the limitation. Distinguish build, tests and behavioral evidence.",
+          "depends_on": [
+            "implement"
+          ]
+        },
+        {
+          "id": "review",
+          "title": "Review and answer",
+          "objective": "Inspect the diff where available, report the result and evidence and optionally propose durable graph knowledge when supported.",
+          "depends_on": [
+            "verify"
+          ]
+        },
+        {
+          "id": "comprehension-inspect",
+          "title": "Inspect current evidence",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Inspect the requested change or subject, current source identity, verification receipts where present and existing graph descriptions. Retain source references and unresolved questions in plan observations. Inspect at most ten candidate subjects and one-hop neighbors.",
+          "depends_on": [
+            "review"
+          ]
+        },
+        {
+          "id": "comprehension-analyse",
+          "title": "Choose reusable understanding",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Select at most three useful subjects or clusters. Reuse sufficient evidence; use existing research escalation only for material gaps. Preserve research artifact references. State uncertainty rather than inventing invariants or dependencies.",
+          "depends_on": [
+            "comprehension-inspect"
+          ]
+        },
+        {
+          "id": "comprehension-propose",
+          "title": "Publish sourced notes",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Compare existing notes with current evidence. Save only useful changes through graph.describe.propose, using expected_revision and evidence_refs. Read current graph revision after a conflict before reconsidering a proposal. Standalone nodes need no relation.",
+          "depends_on": [
+            "comprehension-analyse"
+          ]
+        },
+        {
+          "id": "comprehension-report",
+          "title": "Report coverage and limitations",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Report actual publication receipts, reused notes, uncertainty, incomplete coverage and unrun verification. Preserve unfinished work in the existing plan for resume.",
+          "depends_on": [
+            "comprehension-propose"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    },
+    {
+      "id": "regression-repair-v5-with-comprehension",
+      "source_revision": "agent-workflows-starter@v49",
+      "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses. Includes explicitly requested bounded comprehension maintenance after verification.",
+      "purpose": "Diagnose the reported regression and repair it when warranted. Preserve reusable project understanding after verification.",
+      "goal": "Diagnose the reported regression and repair it when warranted.",
+      "success_criteria": "The observed failure, supporting evidence, uncertainty, authorized correction and verification or limitations are explicit.",
+      "required_capabilities": [
+        "tool.repository",
+        "graph.find",
+        "graph.describe.propose"
+      ],
+      "workflow_policy": "preferred",
+      "procedure_refs": [
+        "code-orientation-v1",
+        "development-source-evidence-v2",
+        "development-knowledge-gap-v1",
+        "development-verification-authority-v1",
+        "verification-ladder-v1",
+        "code-phase-handoff-v1",
+        "development-diagnosis-v1",
+        "development-regression-guard-v1",
+        "development-phase-progress-v1",
+        "graph-maintenance-v1",
+        "comprehension-refresh-v1"
+      ],
+      "next_action": "reproduce",
+      "constraints": [
+        {
+          "id": "authority",
+          "description": "Stay within the user request and the current host tool and execution policy.",
+          "hard": true
+        },
+        {
+          "id": "evidence",
+          "description": "Distinguish observed evidence, model inference and unverified or unrun work.",
+          "hard": true
+        },
+        {
+          "id": "execution.tool_limits.v1",
+          "hard": true,
+          "description": "{\"graph.describe.propose\":3,\"graph.find\":10}"
+        }
+      ],
+      "steps": [
+        {
+          "id": "reproduce",
+          "title": "Establish failure",
+          "objective": "Preserve the reported symptom, relevant source identity, environment and available outputs; reproduce only when authorized and useful."
+        },
+        {
+          "id": "diagnose",
+          "title": "Investigate cause",
+          "objective": "Compare expected and observed behavior, trace the relevant seams, and discriminate competing hypotheses before selecting a correction.",
+          "depends_on": [
+            "reproduce"
+          ]
+        },
+        {
+          "id": "knowledge",
+          "title": "Resolve knowledge gaps",
+          "objective": "Use local source and documentation first; consult authorized primary sources if a material version-specific question remains unresolved.",
+          "depends_on": [
+            "diagnose"
+          ]
+        },
+        {
+          "id": "guard",
+          "title": "Establish regression guard",
+          "objective": "Identify or add a focused check tied to the observed failure. Preserve baseline evidence and distinguish an unrun guard from a reproduced failure.",
+          "depends_on": [
+            "knowledge"
+          ]
+        },
+        {
+          "id": "repair",
+          "title": "Repair or report diagnosis",
+          "objective": "Make a scoped correction only when requested and supported; otherwise explain the evidence and unresolved cause.",
+          "depends_on": [
+            "guard"
+          ]
+        },
+        {
+          "id": "verify",
+          "title": "Verify and report",
+          "objective": "Use appropriate authorized checks on the relevant source state and report passed, failed and unrun work.",
+          "depends_on": [
+            "repair"
+          ]
+        },
+        {
+          "id": "comprehension-inspect",
+          "title": "Inspect current evidence",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Inspect the requested change or subject, current source identity, verification receipts where present and existing graph descriptions. Retain source references and unresolved questions in plan observations. Inspect at most ten candidate subjects and one-hop neighbors.",
+          "depends_on": [
+            "verify"
+          ]
+        },
+        {
+          "id": "comprehension-analyse",
+          "title": "Choose reusable understanding",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Select at most three useful subjects or clusters. Reuse sufficient evidence; use existing research escalation only for material gaps. Preserve research artifact references. State uncertainty rather than inventing invariants or dependencies.",
+          "depends_on": [
+            "comprehension-inspect"
+          ]
+        },
+        {
+          "id": "comprehension-propose",
+          "title": "Publish sourced notes",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Compare existing notes with current evidence. Save only useful changes through graph.describe.propose, using expected_revision and evidence_refs. Read current graph revision after a conflict before reconsidering a proposal. Standalone nodes need no relation.",
+          "depends_on": [
+            "comprehension-analyse"
+          ]
+        },
+        {
+          "id": "comprehension-report",
+          "title": "Report coverage and limitations",
+          "objective": "Use only retained post-change source identity and actual verification receipts. If verification is blocked or failed, report maintenance as blocked. Report actual publication receipts, reused notes, uncertainty, incomplete coverage and unrun verification. Preserve unfinished work in the existing plan for resume.",
+          "depends_on": [
+            "comprehension-propose"
+          ]
+        }
+      ],
+      "phase_review_required": true
+    }
+  ]
+}

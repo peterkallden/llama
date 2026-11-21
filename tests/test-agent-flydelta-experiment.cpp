@@ -1,0 +1,203 @@
+#include "agent/adaptation/flydelta/flydelta-experiment.h"
+#include "agent/adaptation/flydelta/flydelta-progress.h"
+
+#include <algorithm>
+
+#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
+
+static common_flydelta_experiment_fixture fixture() {
+    common_flydelta_experiment_fixture value;
+    value.id = "flydelta://fixture/1";
+    value.task_fingerprint = "sha256:task";
+    value.model_profile_fingerprint = "sha256:model";
+    value.tokenizer_fingerprint = "sha256:tokenizer";
+    value.template_fingerprint = "sha256:template";
+    value.execution_context_fingerprint = "sha256:execution-context";
+    value.verifier_revision = "verifier:v1";
+    return value;
+}
+
+static common_flydelta_counterfactual_trial trial(bool passed, bool overlay, const char * evidence) {
+    common_flydelta_counterfactual_trial value;
+    value.executed = true;
+    value.host_evaluated = true;
+    value.verifier_known = true;
+    value.passed = passed;
+    value.quality = passed ? 1.0f : 0.25f;
+    value.overlay_applied = overlay;
+    value.intervention_count = overlay ? 1 : 0;
+    value.evidence_ref = evidence;
+    return value;
+}
+
+int main() {
+    std::string error;
+    const auto experiment_fixture = fixture();
+    CHECK(common_flydelta_experiment_fixture_validate(experiment_fixture, error));
+
+    common_flydelta_counterfactual_report report;
+    int calls = 0;
+    CHECK(common_flydelta_run_counterfactual(
+        "flydelta://experiment/1", "flydelta://candidate/1", "base", "overlay",
+        experiment_fixture,
+        [&](const auto & received, bool apply_overlay, auto & result, auto &) {
+            if (received.id != experiment_fixture.id) return false;
+            ++calls;
+            result = trial(apply_overlay, apply_overlay, apply_overlay ? "evidence:candidate" : "evidence:baseline");
+            return true;
+        }, report, error));
+    CHECK(calls == 2);
+    CHECK(report.outcome == common_flydelta_counterfactual_outcome::helped);
+    CHECK(report.quality_delta > 0.0f);
+
+    common_flydelta_canary_evaluation_context canary_context;
+    canary_context.canary_event_id = "canary:event-1";
+    canary_context.observation_id = "canary:event-1:observation:1";
+    canary_context.binding_key = "binding:tool";
+    canary_context.candidate_revision_id = "revision:candidate";
+    canary_context.allocation_id = "session:test";
+    canary_context.scope_step_id = "scope:small";
+    canary_context.baseline_deployment_fingerprint = "sha256:baseline";
+    canary_context.candidate_deployment_fingerprint = "sha256:candidate";
+    canary_context.oracle_ref = "oracle:dataset";
+    canary_context.oracle_revision = "oracle:dataset:v1";
+    common_flydelta_counterfactual_report canary_report;
+    CHECK(common_flydelta_run_counterfactual(
+        "flydelta://experiment/canary", "flydelta://candidate/1", "base", "overlay",
+        experiment_fixture,
+        [&](const auto &, bool apply_overlay, auto & result, auto &) {
+            result = trial(apply_overlay, apply_overlay, apply_overlay ? "evidence:candidate" : "evidence:baseline");
+            return true;
+        }, canary_report, error, &canary_context));
+    CHECK(canary_report.has_canary_context);
+    CHECK(canary_report.canary_context.observation_id == canary_context.observation_id);
+    common_flydelta_counterfactual_report parsed_canary;
+    CHECK(common_flydelta_counterfactual_report_from_json(
+        common_flydelta_counterfactual_report_to_json(canary_report), parsed_canary, error));
+    CHECK(parsed_canary.canary_context.canary_event_id == canary_context.canary_event_id);
+
+    const auto json = common_flydelta_counterfactual_report_to_json(report);
+    common_flydelta_counterfactual_report parsed;
+    CHECK(common_flydelta_counterfactual_report_from_json(json, parsed, error));
+    CHECK(parsed.outcome == common_flydelta_counterfactual_outcome::helped);
+    CHECK(parsed.baseline.host_evaluated && parsed.candidate.host_evaluated);
+    CHECK(!parsed.semantic_progress.regression_known);
+    report.semantic_progress.regression_known = true;
+    report.baseline.semantic_progress_observation.available = true;
+    report.candidate.semantic_progress_observation.available = true;
+    report.baseline.semantic_progress_observation.regression_coverage_complete = true;
+    report.candidate.semantic_progress_observation.regression_coverage_complete = true;
+    for (auto * observation : {&report.baseline.semantic_progress_observation,
+                               &report.candidate.semantic_progress_observation}) {
+        observation->operation_state = common_flydelta_semantic_progress_field_state::matched;
+        observation->dataset_state = common_flydelta_semantic_progress_field_state::matched;
+        observation->grouping_state = common_flydelta_semantic_progress_field_state::matched;
+        observation->measure_state = common_flydelta_semantic_progress_field_state::matched;
+        observation->contract_state = common_flydelta_semantic_progress_field_state::matched;
+    }
+    CHECK(common_flydelta_counterfactual_report_from_json(
+        common_flydelta_counterfactual_report_to_json(report), parsed, error));
+    CHECK(parsed.semantic_progress.regression_known);
+    CHECK(parsed.baseline.semantic_progress_observation.regression_coverage_complete);
+    CHECK(parsed.candidate.semantic_progress_observation.regression_coverage_complete);
+
+    const auto baseline_pass = trial(true, false, "evidence:baseline");
+    const auto candidate_fail = trial(false, true, "evidence:candidate");
+    CHECK(common_flydelta_classify_counterfactual(baseline_pass, candidate_fail) ==
+        common_flydelta_counterfactual_outcome::harmed);
+    auto unknown = candidate_fail;
+    unknown.verifier_known = false;
+    CHECK(common_flydelta_classify_counterfactual(baseline_pass, unknown) ==
+        common_flydelta_counterfactual_outcome::unknown);
+    CHECK(common_flydelta_classify_counterfactual(baseline_pass, baseline_pass) ==
+        common_flydelta_counterfactual_outcome::neutral);
+
+    common_flydelta_semantic_decision expected;
+    expected.operation = "aggregate";
+    expected.dataset = "dataset://local/sales";
+    expected.group_by = {"region"};
+    expected.aggregate_function = "sum";
+    expected.aggregate_field = "amount";
+    common_flydelta_semantic_progress_observation before;
+    common_flydelta_semantic_progress_observation after;
+    CHECK(common_flydelta_observe_semantic_progress(
+        R"({"name":"statistics.describe","arguments":{"dataset":"dataset://local/sales","columns":["amount"]}})",
+        expected, before, error));
+    CHECK(common_flydelta_observe_semantic_progress(
+        R"({"name":"data.aggregate","arguments":{"dataset":"dataset://local/sales","groupby":["region"],"columns":["amount"]}})",
+        expected, after, error));
+    const auto progress = common_flydelta_compare_semantic_progress(before, after, false, false);
+    CHECK(progress.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(progress.candidate_score > progress.baseline_score);
+    CHECK(!progress.residual_dimensions.empty());
+    CHECK(!progress.regression_known);
+    CHECK(!common_flydelta_semantic_progress_is_safe_anchor(progress));
+    auto certified_progress = progress;
+    certified_progress.regression_known = true;
+    CHECK(common_flydelta_semantic_progress_is_safe_anchor(certified_progress));
+    certified_progress.regressed_dimensions.push_back("grouping");
+    CHECK(!common_flydelta_semantic_progress_is_safe_anchor(certified_progress));
+
+    // A larger aggregate score does not excuse losing an incumbent dimension.
+    using state = common_flydelta_semantic_progress_field_state;
+    common_flydelta_semantic_progress_observation incumbent;
+    incumbent.available = true;
+    incumbent.regression_coverage_complete = true;
+    incumbent.operation_state = state::matched;
+    incumbent.dataset_state = state::matched;
+    incumbent.grouping_state = state::matched;
+    incumbent.measure_state = state::missing;
+    incumbent.contract_state = state::partial;
+    incumbent.score = 5;
+    auto challenger = incumbent;
+    challenger.grouping_state = state::missing;
+    challenger.measure_state = state::matched;
+    challenger.score = 6;
+    const auto loses_goal = common_flydelta_compare_semantic_progress(incumbent, challenger, false, false);
+    CHECK(loses_goal.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(!common_flydelta_semantic_progress_is_safe_anchor(loses_goal));
+    challenger.grouping_state = state::matched;
+    const auto keeps_goal = common_flydelta_compare_semantic_progress(incumbent, challenger, false, false);
+    CHECK(common_flydelta_semantic_progress_is_safe_anchor(keeps_goal));
+    challenger.dataset_state = state::unknown;
+    const auto unknown_control = common_flydelta_compare_semantic_progress(incumbent, challenger, false, false);
+    CHECK(!common_flydelta_semantic_progress_is_safe_anchor(unknown_control));
+    CHECK(std::find(unknown_control.residual_dimensions.begin(), unknown_control.residual_dimensions.end(),
+        "dataset") != unknown_control.residual_dimensions.end());
+
+    common_flydelta_progress_assessment anchor;
+    anchor.objective_id = "task:1"; anchor.objective_revision = "rev:1";
+    anchor.verifier_ref = "verifier:1"; anchor.assessment_known = true;
+    anchor.regression_known = true;
+    anchor.satisfied_goals = {"a"}; anchor.remaining_goals = {"b", "c"};
+    auto next = anchor;
+    next.satisfied_goals = {"a", "b"}; next.remaining_goals = {"c"};
+    CHECK(common_flydelta_progress_strictly_dominates(anchor, next));
+    common_flydelta_progress_assessment restored;
+    CHECK(common_flydelta_progress_assessment_from_json(
+        common_flydelta_progress_assessment_to_json(next), restored, error));
+    CHECK(common_flydelta_progress_strictly_dominates(anchor, restored));
+    common_flydelta_semantic_progress_observation objective_before, objective_after;
+    objective_before.available = objective_after.available = true;
+    objective_before.objective = anchor;
+    objective_after.objective = restored;
+    const auto objective_progress = common_flydelta_compare_semantic_progress(objective_before, objective_after, false, false);
+    CHECK(objective_progress.regression_known);
+    CHECK(objective_progress.outcome == common_flydelta_semantic_progress_outcome::improved);
+    CHECK(common_flydelta_semantic_progress_is_safe_anchor(objective_progress));
+    next.satisfied_goals = {"b", "c"}; next.remaining_goals = {"a"};
+    CHECK(!common_flydelta_progress_strictly_dominates(anchor, next));
+    next = anchor; next.satisfied_goals.push_back("b"); next.remaining_goals = {"c"};
+    next.objective_revision = "rev:2";
+    CHECK(!common_flydelta_progress_strictly_dominates(anchor, next));
+    next.objective_revision = anchor.objective_revision; next.regression_known = false;
+    CHECK(!common_flydelta_progress_strictly_dominates(anchor, next));
+    next.regression_known = true; next.remaining_goals = {"b", "c"};
+    CHECK(!common_flydelta_progress_strictly_dominates(anchor, next));
+
+    const auto failed_baseline = trial(false, false, "evidence:baseline-failed");
+    const auto partial_candidate = trial(false, true, "evidence:partial-candidate");
+    CHECK(common_flydelta_classify_counterfactual(failed_baseline, partial_candidate) ==
+        common_flydelta_counterfactual_outcome::unknown);
+    return 0;
+}

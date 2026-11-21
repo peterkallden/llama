@@ -1,0 +1,262 @@
+#pragma once
+#include "agent/synthesis-state.h"
+
+#include "../runtime/agent-runtime-control.h"
+#include "../runtime/agent-runtime-tooling.h"
+#include "../runtime/agent-runtime-turn.h"
+#include "agent/contracts/agent-events.h"
+#include "agent/contracts/agent-failures.h"
+#include "agent/contracts/agent-result.h"
+#include "agent-model-residency.h"
+#include "agent/adaptation/flydelta/flydelta-deployment.h"
+#include "tools/agent/resource/agent-resource-store.h"
+#include "agent/context/conversation-context.h"
+#include "agent/investigation-contracts.h"
+
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+class common_agent_runtime_resident_runtime;
+class agent_openapi_dynamic_registry;
+class agent_session_context_store;
+
+struct common_agent_runtime_session_host_runtime_key {
+    std::string session_id;
+    std::string namespace_id;
+    std::string project_id;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    common_plan_scope plan_scope = common_plan_scope::turn;
+    std::string model_profile_id;
+    std::string flydelta_deployment_fingerprint;
+
+    bool operator==(const common_agent_runtime_session_host_runtime_key & other) const {
+        return session_id == other.session_id &&
+               namespace_id == other.namespace_id &&
+               project_id == other.project_id &&
+               memory_scope == other.memory_scope &&
+               plan_scope == other.plan_scope &&
+               model_profile_id == other.model_profile_id &&
+               flydelta_deployment_fingerprint == other.flydelta_deployment_fingerprint;
+    }
+};
+
+struct common_agent_runtime_session_host_turn_request {
+    common_agent_runtime_host_mode mode = common_agent_runtime_host_mode::chat;
+    std::string prompt;
+    std::string session_id;
+    std::string namespace_id;
+    std::string project_id;
+    std::string turn_id;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    common_plan_scope plan_scope = common_plan_scope::turn;
+    int n_predict = 0;
+    std::optional<common_memory_policy_pack> policy_pack;
+    common_agent_runtime_execution_control execution_control;
+    std::optional<bool> allow_policy_gated_writes;
+    std::vector<std::string> allowed_exposed_tool_names;
+    std::optional<common_agent_deliberation_policy> deliberation_policy_override;
+    std::vector<common_agent_input_resource> input_resources;
+    // Prepared by the daemon from an authorized research draft resource.
+    // Client JSON cannot provide this object directly.
+    std::optional<common_agent_research_draft_ref> research_draft;
+    std::optional<common_agent_research_workspace> research_workspace_seed;
+    // Preferred typed contract. The booleans below remain accepted only as
+    // legacy daemon-wire inputs and are normalized into this binding.
+    std::optional<common_agent_resource_read_binding> resource_read_binding;
+    // A narrowly scoped host workflow intent. When true, the daemon replaces
+    // the caller prompt with a fixed read-only orientation task for one
+    // attached resource and requires at least one successful tool execution.
+    bool attachment_orientation = false;
+    bool require_tool_execution = false;
+    struct document_context_binding {
+        std::string document_uri;
+        uint64_t revision = 0;
+        std::vector<std::string> block_ids;
+        // Optional earlier immutable revision of the same document for review.
+        // The host authorizes and reads it; comparison text is never a prompt argument.
+        std::string base_document_uri;
+    };
+    // Typed editor binding. The daemon validates its shape; the session host
+    // re-authorizes the resource and checks the immutable revision/block IDs.
+    std::optional<document_context_binding> document_context;
+    std::optional<common_investigation_context_binding> investigation_context;
+    common_agent_event_sink event_sink;
+    // Daemon request identity is kept separate from the model turn identity,
+    // but travels with the host-owned turn for checkpoint validation.
+    std::string request_id;
+    std::string model_profile_id;
+    // Host-owned FlyDelta deployment inputs. They are never inferred from
+    // model output; the defaults keep ordinary runtime active-only.
+    common_flydelta_runtime_authority flydelta_runtime_authority =
+        common_flydelta_runtime_authority::active_only;
+    common_flydelta_applicability flydelta_applicability;
+    common_flydelta_gate_config flydelta_gate_config;
+    common_flydelta_gate_request flydelta_gate_request;
+    common_flydelta_sparse_code flydelta_code;
+    std::string flydelta_deployment_fingerprint;
+    // Host-prepared, immutable per-turn FlyDelta activation. The session
+    // host only propagates this snapshot to the runtime request.
+    std::shared_ptr<const common_flydelta_activation_result> flydelta_activation;
+    // Optional host-owned capture request for diagnostic/counterfactual
+    // callers. It is request-scoped and remains disabled by default.
+    std::shared_ptr<const common_flydelta_hidden_state_capture_request> flydelta_capture;
+    // Internal host-owned registry; never deserialized from a client request.
+    std::shared_ptr<agent_openapi_dynamic_registry> dynamic_openapi_registry;
+    std::function<bool(const common_agent_research_workspace &, std::string &)> research_progress_sink;
+};
+
+struct common_agent_runtime_session_host_turn_result {
+    bool ok = false;
+    bool cancelled = false;
+    bool runtime_reused = false;
+    bool limit_reached = false;
+    std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
+    std::optional<common_agent_research_workspace_checkpoint> research_workspace_checkpoint;
+    bool reflected = false;
+    bool revised = false;
+    common_agent_failure_class failure_class = common_agent_failure_class::execution;
+    std::string response;
+    std::string plan_id;
+    int total_decoded_tokens = 0;
+    common_agent_generation_status response_generation_status = common_agent_generation_status::errored;
+    common_agent_generation_stop_reason response_stop_reason = common_agent_generation_stop_reason::error;
+    size_t event_count = 0;
+    size_t trace_count = 0;
+    size_t memory_learning_related_count = 0;
+    std::string memory_learning_summary;
+    common_agent_context_composition context_composition;
+    size_t context_compaction_calls = 0;
+    // Host-owned deployment resolution evidence. This is an audit projection
+    // of the request-scoped FlyDelta factory result; runtime generation still
+    // consumes only the immutable activation snapshot.
+    std::optional<common_flydelta_deployment_result> flydelta_deployment;
+    std::vector<common_agent_event> events;
+    std::vector<common_runtime_trace_entry> trace;
+    std::string error;
+    std::optional<common_agent_unverified_draft> unverified_draft;
+    std::optional<common_agent_review_progress> review_progress;
+};
+
+struct common_agent_runtime_session_host_descriptor {
+    std::string namespace_id;
+    std::string session_id;
+    std::string project_id;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    common_plan_scope plan_scope = common_plan_scope::turn;
+    std::string policy_pack_id;
+};
+
+struct common_agent_runtime_session_host_config {
+    common_memory_store & memory_store;
+    common_plan_store & plan_store;
+    common_agent_runtime_resident_request_config resident_request;
+    common_agent_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    bool memory_enabled = false;
+    std::vector<common_blueprint_candidate> installed_blueprint_candidates;
+    common_agent_runtime_tooling tooling;
+    std::function<bool(
+        const common_agent_runtime_resident_runtime * runtime,
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_tooling & tooling,
+        std::string & error)> tooling_resolver;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_flydelta_deployment_result & result,
+        std::string & error)> flydelta_deployment_resolver;
+    agent_resource_store * context_resource_store = nullptr;
+    bool context_resource_store_persistent = false;
+};
+
+struct common_agent_runtime_session_host_build_config {
+    common_memory_store & memory_store;
+    common_plan_store & plan_store;
+    common_agent_runtime_resident_request_config resident_request;
+    common_agent_runtime_policy policy;
+    common_agent_runtime_config runtime_config;
+    common_agent_orchestration_config orchestration_config;
+    common_memory_scope memory_scope = common_memory_scope::session;
+    bool memory_enabled = false;
+    std::vector<common_blueprint_candidate> installed_blueprint_candidates;
+    common_agent_runtime_tooling tooling;
+    std::function<bool(
+        const common_agent_runtime_resident_runtime * runtime,
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_tooling & tooling,
+        std::string & error)> tooling_resolver;
+    std::shared_ptr<common_agent_runtime_model_residency> model_residency;
+    std::function<bool(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_flydelta_deployment_result & result,
+        std::string & error)> flydelta_deployment_resolver;
+    agent_resource_store * context_resource_store = nullptr;
+    bool context_resource_store_persistent = false;
+};
+
+common_agent_runtime_session_host_config make_agent_runtime_session_host_config(
+    common_agent_runtime_session_host_build_config config);
+
+class common_agent_runtime_session_host {
+public:
+    explicit common_agent_runtime_session_host(common_agent_runtime_session_host_config config);
+    ~common_agent_runtime_session_host();
+
+    bool run_turn(
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_session_host_turn_result & result,
+        std::string & error);
+
+    bool prepare_model(
+        const common_agent_runtime_session_host_turn_request & request,
+        std::string & error);
+
+    void reset(bool begin_new_conversation_epoch = false);
+
+    const common_agent_runtime_session * session() const;
+    common_agent_runtime_session * session();
+    common_agent_runtime_session_host_descriptor describe_session() const;
+
+private:
+    bool ensure_runtime(
+        const common_agent_runtime_session_host_turn_request & request,
+        bool & reused,
+        std::string & error);
+
+    common_agent_runtime_session_host_runtime_key make_runtime_key(
+        const common_agent_runtime_session_host_turn_request & request) const;
+
+    common_agent_runtime_turn_request make_base_turn_request(
+        const common_agent_runtime_session_host_turn_request & request) const;
+
+    std::optional<common_memory_policy_pack> resolve_policy_pack(
+        const common_agent_runtime_session_host_turn_request & request) const;
+
+    void update_session_policy_pack(
+        const common_agent_runtime_session_host_turn_request & request);
+
+    void compact_session_policy_pack_after_reflection(
+        const common_agent_result & agent_result,
+        common_agent_runtime_session_host_turn_result & result);
+
+    bool resolve_tooling(
+        const common_agent_runtime_resident_runtime * runtime,
+        const common_agent_runtime_session_host_turn_request & request,
+        common_agent_runtime_tooling & tooling,
+        std::string & error) const;
+
+    common_agent_runtime_session_host_config config;
+    common_agent_runtime_session_host_runtime_key active_runtime_key;
+    std::optional<common_memory_policy_pack> active_policy_pack;
+    std::unique_ptr<common_agent_runtime_resident_runtime> runtime;
+    uint64_t generated_turn_counter = 0;
+    std::unique_ptr<agent_session_context_store> conversation_context_store;
+    std::string context_store_namespace;
+    std::string context_store_session;
+    std::shared_ptr<agent_openapi_dynamic_registry> dynamic_openapi_registry;
+};

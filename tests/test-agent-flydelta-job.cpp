@@ -1,0 +1,190 @@
+#include "agent/adaptation/flydelta/flydelta-job.h"
+
+#define CHECK(condition) do { if (!(condition)) return __LINE__; } while (false)
+
+static common_flydelta_experiment_seed seed() {
+    common_flydelta_experiment_seed value;
+    value.id = "evidence://repair/1/flydelta";
+    value.behavior_key = "tool_use/diagnostics/missing-argument";
+    value.source = common_adaptation_evidence_source::tool_repair;
+    value.scope.namespace_id = "local";
+    value.scope.project_id = "project";
+    value.scope.session_id = "session";
+    value.task_fingerprint = "sha256:task";
+    value.model_profile_fingerprint = "sha256:model";
+    value.tokenizer_fingerprint = "sha256:tokenizer";
+    value.template_fingerprint = "sha256:template";
+    value.execution_context_fingerprint = "sha256:execution-context";
+    value.baseline_ref = "execution:failed";
+    value.candidate_ref = "execution:repaired";
+    value.verifier_ref = "verifier:v1";
+    value.evidence_ref = "evidence://repair/1";
+    value.transaction_ids = {"learning://failed", "learning://repaired"};
+    return value;
+}
+
+int main() {
+    std::string error;
+    auto job = common_flydelta_experiment_job{};
+    job.id = "flydelta://job/basis-1";
+    job.kind = common_flydelta_experiment_job_kind::basis;
+    job.seed = seed();
+    job.behavior_delta_ids = {"flydelta://delta/1"};
+    job.code_revision = "test:v1";
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job parsed;
+    CHECK(common_flydelta_experiment_job_from_json(text, parsed, error));
+    CHECK(parsed.kind == common_flydelta_experiment_job_kind::basis);
+    CHECK(parsed.whirlpool_global_probes_per_round == 1);
+    CHECK(parsed.seed.behavior_key == job.seed.behavior_key);
+    CHECK(parsed.seed.scope.namespace_id == job.seed.scope.namespace_id);
+    CHECK(parsed.seed.scope.project_id == job.seed.scope.project_id);
+    CHECK(parsed.seed.scope.session_id == job.seed.scope.session_id);
+    CHECK(parsed.seed.scope.turn_id == job.seed.scope.turn_id);
+
+    for (const auto source : {
+            common_adaptation_evidence_source::planning_revision,
+            common_adaptation_evidence_source::research_alternative,
+            common_adaptation_evidence_source::dataset_resource,
+            common_adaptation_evidence_source::workflow_code,
+            common_adaptation_evidence_source::procedure_blueprint,
+            common_adaptation_evidence_source::user_correction}) {
+        job.seed.source = source;
+        const auto source_text = common_flydelta_experiment_job_to_json(job);
+        common_flydelta_experiment_job source_parsed;
+        CHECK(common_flydelta_experiment_job_from_json(source_text, source_parsed, error));
+        CHECK(source_parsed.seed.source == source);
+    }
+
+    job.id = "flydelta://job/direction-1";
+    job.kind = common_flydelta_experiment_job_kind::direction;
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto direction_text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job direction_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(direction_text, direction_parsed, error));
+    CHECK(direction_parsed.kind == common_flydelta_experiment_job_kind::direction);
+
+    job.kind = common_flydelta_experiment_job_kind::counterfactual;
+    job.capture_manifest_ids = {"flydelta://capture/1"};
+    job.alpha_search.candidates = {0.05f, 0.1f};
+    job.alpha_search.max_candidates = 2;
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+
+    job.id = "flydelta://job/search-pipeline-1";
+    job.kind = common_flydelta_experiment_job_kind::search_pipeline;
+    job.behavior_delta_ids = {"flydelta://delta/1"};
+    job.bootstrap_zoom_state_ref = "flydelta://state/bootstrap-zoom/seed";
+    job.search_state_ref = "flydelta://state/search/plateau-1";
+    job.representation_augmentation_state_ref =
+        "flydelta://state/augmentation/plateau-1";
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto pipeline_text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job pipeline_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(pipeline_text, pipeline_parsed, error));
+    CHECK(pipeline_parsed.kind == common_flydelta_experiment_job_kind::search_pipeline);
+    CHECK(pipeline_parsed.whirlpool_global_probes_per_round == 1);
+    // A versioned host admission is experimental context, not fabricated
+    // contrast material. It round-trips without acquiring training authority.
+    auto concept_job = job;
+    concept_job.seed.schema_version = 2;
+    concept_job.seed.source = common_adaptation_evidence_source::user_taught_concept;
+    concept_job.seed.teaching_key = "concept:host";
+    concept_job.seed.admission_ref = "resource:host-admission";
+    concept_job.seed.evidence_ref = concept_job.seed.admission_ref;
+    concept_job.seed.verifier_contract_revision = "verifier:v1";
+    concept_job.seed.transaction_ids.clear();
+    concept_job.capture_manifest_ids.clear();
+    concept_job.behavior_delta_ids.clear();
+    concept_job.teaching_material_group_ref = "material:host";
+    concept_job.concept_synthesis_ref = "resource:synthesis";
+    CHECK(common_flydelta_experiment_job_validate(concept_job, 8, error));
+    common_flydelta_experiment_job concept_restored;
+    CHECK(common_flydelta_experiment_job_from_json(common_flydelta_experiment_job_to_json(concept_job), concept_restored, error));
+    CHECK(concept_restored.seed.schema_version == 2 && concept_restored.seed.admission_ref == concept_job.seed.admission_ref);
+    CHECK(concept_restored.concept_synthesis_ref == concept_job.concept_synthesis_ref);
+    CHECK(concept_restored.seed.transaction_ids.empty() && concept_restored.behavior_delta_ids.empty());
+    auto invalid_concept = concept_job;
+    invalid_concept.seed.transaction_ids = {"fabricated-credit"};
+    CHECK(!common_flydelta_experiment_job_validate(invalid_concept, 8, error));
+    invalid_concept = concept_job;
+    invalid_concept.kind = common_flydelta_experiment_job_kind::evaluation;
+    CHECK(!common_flydelta_experiment_job_validate(invalid_concept, 8, error));
+    auto legacy_job = job;
+    legacy_job.whirlpool_global_probes_per_round = 0;
+    const auto legacy_text = common_flydelta_experiment_job_to_json(legacy_job);
+    CHECK(legacy_text.find("whirlpool_global_probes_per_round") == std::string::npos);
+    common_flydelta_experiment_job legacy_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(legacy_text, legacy_parsed, error));
+    CHECK(legacy_parsed.whirlpool_global_probes_per_round == 0);
+    CHECK(common_flydelta_experiment_job_to_json(legacy_parsed) == legacy_text);
+
+    CHECK(pipeline_parsed.capture_manifest_ids == job.capture_manifest_ids);
+    CHECK(pipeline_parsed.behavior_delta_ids == job.behavior_delta_ids);
+    CHECK(pipeline_parsed.bootstrap_zoom_state_ref == job.bootstrap_zoom_state_ref);
+    CHECK(pipeline_parsed.search_state_ref == job.search_state_ref);
+    CHECK(pipeline_parsed.representation_augmentation_state_ref ==
+        job.representation_augmentation_state_ref);
+
+    job.id = "flydelta://job/donor-capture-1";
+    job.kind = common_flydelta_experiment_job_kind::donor_capture;
+    job.capture_candidate_ids = {"flydelta://capture-candidate/1"};
+    job.capture_manifest_ids.clear();
+    job.behavior_delta_ids.clear();
+    job.training_example_ids.clear();
+    job.bootstrap_zoom_state_ref.clear();
+    job.search_state_ref.clear();
+    job.representation_augmentation_state_ref.clear();
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto donor_text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job donor_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(donor_text, donor_parsed, error));
+    CHECK(donor_parsed.kind == common_flydelta_experiment_job_kind::donor_capture);
+    CHECK(donor_parsed.capture_candidate_ids == job.capture_candidate_ids);
+    job.representation_augmentation_state_ref = "flydelta://state/augmentation/invalid";
+    CHECK(!common_flydelta_experiment_job_validate(job, 8, error));
+    job.representation_augmentation_state_ref.clear();
+    job.capture_manifest_ids = {"flydelta://capture/should-not-be-mixed"};
+    CHECK(!common_flydelta_experiment_job_validate(job, 8, error));
+    job.capture_manifest_ids.clear();
+
+    job.kind = common_flydelta_experiment_job_kind::delta_memory;
+    job.capture_candidate_ids.clear();
+    job.seed.split = common_flydelta_training_split::validation;
+    job.training_example_ids = {"flydelta://training/1"};
+    CHECK(!common_flydelta_experiment_job_validate(job, 8, error));
+
+    job = {};
+    job.id = "flydelta://job/causal-diagnostic-1";
+    job.kind = common_flydelta_experiment_job_kind::causal_diagnostic;
+    job.seed = seed();
+    job.causal_diagnostic_manifest_ref =
+        "flydelta://causal-diagnostic-manifest/1";
+    job.code_revision = "test:v1";
+    CHECK(common_flydelta_experiment_job_validate(job, 8, error));
+    const auto causal_text = common_flydelta_experiment_job_to_json(job);
+    common_flydelta_experiment_job causal_parsed;
+    CHECK(common_flydelta_experiment_job_from_json(causal_text, causal_parsed, error));
+    CHECK(causal_parsed.kind == common_flydelta_experiment_job_kind::causal_diagnostic);
+    CHECK(causal_parsed.causal_diagnostic_manifest_ref ==
+        job.causal_diagnostic_manifest_ref);
+
+    common_flydelta_causal_diagnostic_report causal_report;
+    causal_report.experiment_id = job.id;
+    causal_report.manifest_ref = job.causal_diagnostic_manifest_ref;
+    common_flydelta_causal_diagnostic_arm causal_arm;
+    causal_arm.arm_id = "flydelta://causal-diagnostic-arm/1";
+    causal_arm.absolute_position = 3;
+    causal_arm.executed = true;
+    causal_arm.patch_attempted = true;
+    causal_arm.patch_applied = true;
+    causal_arm.margin_available = true;
+    causal_arm.baseline_margin = -1.0f;
+    causal_arm.candidate_margin = -0.5f;
+    causal_arm.margin_delta = 0.5f;
+    causal_report.arms.push_back(causal_arm);
+    CHECK(common_flydelta_causal_diagnostic_report_validate(causal_report, error));
+    causal_report.learning_eligible = true;
+    CHECK(!common_flydelta_causal_diagnostic_report_validate(causal_report, error));
+    return 0;
+}

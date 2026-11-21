@@ -1,0 +1,3080 @@
+#include "../tooling/agent-result-view.h"
+#include "agent-host-config.h"
+#include "tools/agent/resource/agent-resource-processor-defaults.h"
+#include "tools/agent/resource/dispatch/agent-resource-processor-dispatch.h"
+#include "../daemon/agent-daemon-adapter.h"
+#include "agent/thinking/deliberation-policy.h"
+
+#include <fstream>
+#include <nlohmann/json.hpp>
+
+#include <cstdlib>
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <map>
+#include <unordered_set>
+
+using json = nlohmann::ordered_json;
+
+namespace {
+
+const std::pair<const char *, size_t common_agent_context_budget_config::*> prompt_budget_fields[] = {
+    {"plan_chars", &common_agent_context_budget_config::plan_chars},
+    {"step_chars", &common_agent_context_budget_config::step_chars},
+    {"tool_observation_chars", &common_agent_context_budget_config::tool_observation_chars},
+    {"input_resources_chars", &common_agent_context_budget_config::input_resources_chars},
+    {"deliberate_input_resources_chars", &common_agent_context_budget_config::deliberate_input_resources_chars},
+    {"resource_chunk_max_bytes", &common_agent_context_budget_config::resource_chunk_max_bytes},
+    {"resource_chunk_overlap_bytes", &common_agent_context_budget_config::resource_chunk_overlap_bytes},
+    {"memory_chars", &common_agent_context_budget_config::memory_chars},
+    {"memory_per_item_chars", &common_agent_context_budget_config::memory_per_item_chars},
+    {"overlay_chars", &common_agent_context_budget_config::overlay_chars},
+    {"overlay_per_item_chars", &common_agent_context_budget_config::overlay_per_item_chars},
+    {"deliberate_memory_chars", &common_agent_context_budget_config::deliberate_memory_chars},
+    {"deliberate_memory_per_item_chars", &common_agent_context_budget_config::deliberate_memory_per_item_chars},
+    {"deliberate_overlay_chars", &common_agent_context_budget_config::deliberate_overlay_chars},
+    {"deliberate_overlay_per_item_chars", &common_agent_context_budget_config::deliberate_overlay_per_item_chars},
+};
+
+bool investigation_entity_kind_from_name(const std::string & value,
+        common_investigation_entity_kind & out) {
+    static const std::map<std::string, common_investigation_entity_kind> kinds = {
+        {"user", common_investigation_entity_kind::user}, {"host", common_investigation_entity_kind::host},
+        {"process", common_investigation_entity_kind::process}, {"ip", common_investigation_entity_kind::ip},
+        {"file", common_investigation_entity_kind::file}, {"hash", common_investigation_entity_kind::hash},
+        {"service", common_investigation_entity_kind::service}, {"trace", common_investigation_entity_kind::trace},
+        {"message", common_investigation_entity_kind::message}, {"event", common_investigation_entity_kind::event}};
+    const auto found = kinds.find(value);
+    if (found == kinds.end()) return false;
+    out = found->second;
+    return true;
+}
+
+const char * investigation_entity_kind_name(common_investigation_entity_kind value) {
+    return common_investigation_entity_kind_name(value);
+}
+
+bool investigation_relation_kind_from_name(const std::string & value,
+        common_investigation_relation_kind & out) {
+    for (const auto kind : {common_investigation_relation_kind::authenticated_to,
+            common_investigation_relation_kind::communicated_with, common_investigation_relation_kind::spawned,
+            common_investigation_relation_kind::accessed, common_investigation_relation_kind::modified,
+            common_investigation_relation_kind::participates_in_trace, common_investigation_relation_kind::follows,
+            common_investigation_relation_kind::correlated_with}) {
+        if (value == common_investigation_relation_kind_name(kind)) {
+            out = kind;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string environment_value(const char * name) {
+    const char * value = std::getenv(name);
+    return value != nullptr ? value : std::string();
+}
+
+bool existing_config_path(
+        const std::filesystem::path & candidate,
+        std::string & path) {
+    std::error_code error;
+    if (!candidate.empty() && std::filesystem::is_regular_file(candidate, error)) {
+        path = candidate.lexically_normal().string();
+        return true;
+    }
+    return false;
+}
+
+void append_config_candidate(
+        std::vector<std::filesystem::path> & candidates,
+        const std::filesystem::path & candidate) {
+    if (candidate.empty()) {
+        return;
+    }
+    for (const auto & existing : candidates) {
+        if (existing == candidate) {
+            return;
+        }
+    }
+    candidates.push_back(candidate);
+}
+
+template<typename T>
+void read_optional(
+        const json & value,
+        const char * key,
+        T & target) {
+    if (value.contains(key) && !value[key].is_null()) {
+        target = value[key].get<T>();
+    }
+}
+
+bool read_command_array(
+        const json & value,
+        std::vector<std::string> & command,
+        std::string & error) {
+    if (!value.is_array()) {
+        error = "MCP provider command must be an array of strings";
+        return false;
+    }
+    command.clear();
+    for (const auto & entry : value) {
+        if (!entry.is_string()) {
+            error = "MCP provider command entries must be strings";
+            return false;
+        }
+        command.push_back(entry.get<std::string>());
+    }
+    if (command.empty()) {
+        error = "MCP provider command must not be empty";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool read_string_array(
+        const json & value,
+        std::vector<std::string> & target,
+        const char * field,
+        std::string & error) {
+    if (!value.is_array()) {
+        error = std::string(field) + " must be an array of strings";
+        return false;
+    }
+    target.clear();
+    for (const auto & entry : value) {
+        if (!entry.is_string()) {
+            error = std::string(field) + " entries must be strings";
+            return false;
+        }
+        target.push_back(entry.get<std::string>());
+    }
+    error.clear();
+    return true;
+}
+
+bool read_sandbox_network(
+        const json & value,
+        common_agent_sandbox_network_scope & target,
+        std::string & error) {
+    if (!value.is_string()) { error = "sandbox network must be a string"; return false; }
+    const auto name = value.get<std::string>();
+    if (name == "none") target = common_agent_sandbox_network_scope::none;
+    else if (name == "dns_only") target = common_agent_sandbox_network_scope::dns_only;
+    else if (name == "allowlisted") target = common_agent_sandbox_network_scope::allowlisted;
+    else if (name == "package_registry") target = common_agent_sandbox_network_scope::package_registry;
+    else if (name == "research_web") target = common_agent_sandbox_network_scope::research_web;
+    else { error = "unsupported sandbox network scope: " + name; return false; }
+    return true;
+}
+
+bool read_sandbox_filesystem(
+        const json & value,
+        common_agent_sandbox_filesystem_scope & target,
+        std::string & error) {
+    if (!value.is_string()) { error = "sandbox filesystem must be a string"; return false; }
+    const auto name = value.get<std::string>();
+    if (name == "readonly") target = common_agent_sandbox_filesystem_scope::readonly;
+    else if (name == "workspace_write") target = common_agent_sandbox_filesystem_scope::workspace_write;
+    else if (name == "artifact_write") target = common_agent_sandbox_filesystem_scope::artifact_write;
+    else { error = "unsupported sandbox filesystem scope: " + name; return false; }
+    return true;
+}
+
+json sandbox_class_to_json(const common_agent_sandbox_policy & policy) {
+    return {
+        {"image", policy.image},
+        {"timeout_ms", policy.limits.timeout_ms},
+        {"memory_bytes", policy.limits.memory_bytes},
+        {"cpu_count", policy.limits.cpu_count},
+        {"process_count", policy.limits.process_count},
+        {"max_output_bytes", policy.limits.max_output_bytes},
+        {"network", [&policy]() {
+            switch (policy.network) {
+                case common_agent_sandbox_network_scope::none: return std::string("none");
+                case common_agent_sandbox_network_scope::dns_only: return std::string("dns_only");
+                case common_agent_sandbox_network_scope::allowlisted: return std::string("allowlisted");
+                case common_agent_sandbox_network_scope::package_registry: return std::string("package_registry");
+                case common_agent_sandbox_network_scope::research_web: return std::string("research_web");
+            }
+            return std::string("none");
+        }()},
+        {"filesystem", [&policy]() {
+            switch (policy.filesystem) {
+                case common_agent_sandbox_filesystem_scope::readonly: return std::string("readonly");
+                case common_agent_sandbox_filesystem_scope::workspace_write: return std::string("workspace_write");
+                case common_agent_sandbox_filesystem_scope::artifact_write: return std::string("artifact_write");
+            }
+            return std::string("readonly");
+        }()},
+        {"allow_artifacts", policy.allow_artifacts},
+    };
+}
+
+json sandbox_defaults_to_json(const common_agent_sandbox_policy & policy) {
+    return sandbox_class_to_json(policy);
+}
+
+bool read_mcp_provider(
+        const json & value,
+        agent_host_mcp_provider_config & provider,
+        std::string & error) {
+    if (!value.is_object()) {
+        error = "MCP provider entry must be an object";
+        return false;
+    }
+
+    read_optional(value, "type", provider.type);
+    read_optional(value, "id", provider.id);
+    read_optional(value, "enabled", provider.enabled);
+    read_optional(value, "required", provider.required);
+    read_optional(value, "transport", provider.transport);
+    read_optional(value, "url", provider.url);
+    if (value.contains("auth")) {
+        if (!value["auth"].is_object()) {
+            error = "MCP provider auth must be an object";
+            return false;
+        }
+        read_optional(value["auth"], "type", provider.auth.type);
+        read_optional(value["auth"], "scheme", provider.auth.scheme);
+        read_optional(value["auth"], "token_url", provider.auth.token_url);
+        read_optional(value["auth"], "scopes", provider.auth.scopes);
+        read_optional(value["auth"], "token_env", provider.auth.token_env);
+        read_optional(value["auth"], "username_env", provider.auth.username_env);
+        read_optional(value["auth"], "password_env", provider.auth.password_env);
+        read_optional(value["auth"], "client_id_env", provider.auth.client_id_env);
+        read_optional(value["auth"], "client_secret_env", provider.auth.client_secret_env);
+        read_optional(value["auth"], "client_cert_path_env", provider.auth.client_cert_path_env);
+        read_optional(value["auth"], "client_key_path_env", provider.auth.client_key_path_env);
+        read_optional(value["auth"], "ca_cert_path_env", provider.auth.ca_cert_path_env);
+    }
+    read_optional(value, "connect_timeout_ms", provider.connect_timeout_ms);
+    read_optional(value, "request_timeout_ms", provider.request_timeout_ms);
+    read_optional(value, "shutdown_timeout_ms", provider.shutdown_timeout_ms);
+    read_optional(value, "max_result_bytes", provider.max_result_bytes);
+    read_optional(value, "prefix", provider.prefix);
+    read_optional(value, "server_name", provider.server_name);
+    if (provider.server_name.empty()) {
+        provider.server_name = provider.id;
+    }
+
+    if (value.contains("command") && !read_command_array(value["command"], provider.command, error)) {
+        return false;
+    }
+    if (value.contains("allowed_tools")) {
+        if (!value["allowed_tools"].is_array()) {
+            error = "MCP provider allowed_tools must be an array of strings";
+            return false;
+        }
+        provider.allowed_tools.clear();
+        for (const auto & tool : value["allowed_tools"]) {
+            if (!tool.is_string()) {
+                error = "MCP provider allowed_tools entries must be strings";
+                return false;
+            }
+            provider.allowed_tools.push_back(tool.get<std::string>());
+        }
+    }
+    if (value.contains("read_only_tools")) {
+        if (!value["read_only_tools"].is_array()) {
+            error = "MCP provider read_only_tools must be an array of strings";
+            return false;
+        }
+        provider.read_only_tools.clear();
+        for (const auto & tool : value["read_only_tools"]) {
+            if (!tool.is_string() || tool.get<std::string>().empty()) {
+                error = "MCP provider read_only_tools entries must be non-empty strings";
+                return false;
+            }
+            provider.read_only_tools.push_back(tool.get<std::string>());
+        }
+    }
+
+    if (provider.type.empty()) {
+        provider.type = "mcp";
+    }
+    if (provider.transport.empty()) {
+        provider.transport = "stdio";
+    }
+
+    error.clear();
+    return true;
+}
+
+bool read_openapi_provider(
+        const json & value,
+        agent_host_openapi_provider_config & provider,
+        std::string & error) {
+    if (!value.is_object()) {
+        error = "OpenAPI provider entry must be an object";
+        return false;
+    }
+    read_optional(value, "type", provider.type);
+    read_optional(value, "id", provider.id);
+    read_optional(value, "enabled", provider.enabled);
+    read_optional(value, "required", provider.required);
+    read_optional(value, "spec_path", provider.spec_path);
+    read_optional(value, "base_url", provider.base_url);
+    read_optional(value, "prefix", provider.prefix);
+    if (value.contains("result_adapter")) {
+        error = "result_adapter is no longer supported; configure result_view per operation";
+        return false;
+    }
+    read_optional(value, "additional_families", provider.additional_families);
+    if (provider.additional_families.size() > 32 ||
+            std::any_of(provider.additional_families.begin(), provider.additional_families.end(),
+                [](const auto & family) {
+                    return family.empty() || family.size() > 64 ||
+                        !std::all_of(family.begin(), family.end(), [](unsigned char ch) {
+                            return std::isalnum(ch) || ch == '_' || ch == '-';
+                        });
+                })) {
+        error = "OpenAPI additional_families must contain at most 32 valid family ids";
+        return false;
+    }
+    read_optional(value, "access", provider.access);
+    read_optional(value, "exposure", provider.exposure);
+    read_optional(value, "allow_private_network", provider.allow_private_network);
+    read_optional(value, "connect_timeout_ms", provider.connect_timeout_ms);
+    read_optional(value, "request_timeout_ms", provider.request_timeout_ms);
+    read_optional(value, "max_result_bytes", provider.max_result_bytes);
+
+    if (value.contains("policy")) {
+        if (!value["policy"].is_object()) {
+            error = "OpenAPI provider policy must be an object";
+            return false;
+        }
+        const auto & policy = value["policy"];
+        read_optional(policy, "access", provider.access);
+        read_optional(policy, "exposure", provider.exposure);
+        if (policy.contains("operations")) {
+            if (!policy["operations"].is_object()) {
+                error = "OpenAPI provider policy.operations must be an object";
+                return false;
+            }
+            provider.operations.clear();
+            for (auto it = policy["operations"].begin(); it != policy["operations"].end(); ++it) {
+                if (!it.value().is_object()) {
+                    error = "OpenAPI provider operation policies must be objects";
+                    return false;
+                }
+                agent_host_openapi_operation_policy operation;
+                read_optional(it.value(), "enabled", operation.enabled);
+                read_optional(it.value(), "access", operation.access);
+                read_optional(it.value(), "default_projection", operation.default_projection);
+                if (it.value().contains("parameter_prefixes")) {
+                    if (!it.value()["parameter_prefixes"].is_object() ||
+                            it.value()["parameter_prefixes"].dump().size() > 8192) {
+                        error = "OpenAPI operation parameter_prefixes must be a bounded object";
+                        return false;
+                    }
+                    operation.parameter_prefixes_json = it.value()["parameter_prefixes"].dump();
+                }
+                if (it.value().contains("result_view")) {
+                    if (!it.value()["result_view"].is_object() || it.value()["result_view"].dump().size() > 32768) {
+                        error = "OpenAPI operation result_view must be a bounded object";
+                        return false;
+                    }
+                    operation.result_view_json = it.value()["result_view"].dump();
+                }
+                if (it.value().contains("required_parameters") &&
+                        !read_string_array(it.value()["required_parameters"],
+                            operation.required_parameters,
+                            "OpenAPI operation policy required_parameters", error)) {
+                    return false;
+                }
+                if (it.value().contains("required_any_parameters") &&
+                        !read_string_array(it.value()["required_any_parameters"],
+                            operation.required_any_parameters,
+                            "OpenAPI operation policy required_any_parameters", error)) {
+                    return false;
+                }
+                if (it.value().contains("bound_arguments")) {
+                    if (!it.value()["bound_arguments"].is_object() ||
+                            it.value()["bound_arguments"].dump().size() > 16384) {
+                        error = "OpenAPI operation policy bound_arguments must be a bounded JSON object";
+                        return false;
+                    }
+                    operation.bound_arguments_json = it.value()["bound_arguments"].dump();
+                }
+                provider.operations.emplace(it.key(), std::move(operation));
+            }
+        }
+    }
+    if (value.contains("auth")) {
+        if (!value["auth"].is_object()) {
+            error = "OpenAPI provider auth must be an object";
+            return false;
+        }
+        read_optional(value["auth"], "type", provider.auth.type);
+        read_optional(value["auth"], "scheme", provider.auth.scheme);
+        read_optional(value["auth"], "token_url", provider.auth.token_url);
+        read_optional(value["auth"], "scopes", provider.auth.scopes);
+        read_optional(value["auth"], "token_env", provider.auth.token_env);
+        read_optional(value["auth"], "username_env", provider.auth.username_env);
+        read_optional(value["auth"], "password_env", provider.auth.password_env);
+        read_optional(value["auth"], "client_id_env", provider.auth.client_id_env);
+        read_optional(value["auth"], "client_secret_env", provider.auth.client_secret_env);
+        read_optional(value["auth"], "client_cert_path_env", provider.auth.client_cert_path_env);
+        read_optional(value["auth"], "client_key_path_env", provider.auth.client_key_path_env);
+        read_optional(value["auth"], "ca_cert_path_env", provider.auth.ca_cert_path_env);
+    }
+    if (value.contains("limits")) {
+        if (!value["limits"].is_object()) {
+            error = "OpenAPI provider limits must be an object";
+            return false;
+        }
+        read_optional(value["limits"], "connect_timeout_ms", provider.connect_timeout_ms);
+        read_optional(value["limits"], "request_timeout_ms", provider.request_timeout_ms);
+        read_optional(value["limits"], "max_result_bytes", provider.max_result_bytes);
+        read_optional(value["limits"], "default_page_size", provider.default_page_size);
+        read_optional(value["limits"], "max_page_size", provider.max_page_size);
+    }
+    error.clear();
+    return true;
+}
+
+bool read_provider_fragment(
+        const json & value,
+        agent_host_config & config,
+        std::string & error) {
+    if (!value.is_object()) {
+        error = "provider fragment must be a JSON object";
+        return false;
+    }
+    if (value.contains("type") && !value["type"].is_string()) {
+        error = "provider fragment type must be a string";
+        return false;
+    }
+    const std::string type = value.value("type", "mcp");
+    if (type == "mcp") {
+        agent_host_mcp_provider_config provider;
+        if (!read_mcp_provider(value, provider, error)) return false;
+        config.mcp_providers.push_back(std::move(provider));
+        return true;
+    }
+    if (type == "openapi") {
+        agent_host_openapi_provider_config provider;
+        if (!read_openapi_provider(value, provider, error)) return false;
+        config.openapi_providers.push_back(std::move(provider));
+        return true;
+    }
+    error = "unsupported provider fragment type: " + type;
+    return false;
+}
+
+bool read_inbound_token(
+        const json & value,
+        agent_host_mcp_inbound_token_config & token,
+        std::string & error) {
+    if (!value.is_object()) {
+        error = "MCP inbound token entry must be an object";
+        return false;
+    }
+    read_optional(value, "id", token.id);
+    read_optional(value, "token_env", token.token_env);
+    read_optional(value, "audience", token.audience);
+    read_optional(value, "namespace", token.namespace_id);
+    read_optional(value, "project", token.project_id);
+    read_optional(value, "tool_profile", token.tool_profile);
+    read_optional(value, "allow_writes", token.allow_writes);
+    read_optional(value, "allow_admin", token.allow_admin);
+    if (value.contains("allowed_tools")) {
+        if (!value["allowed_tools"].is_array()) {
+            error = "MCP inbound token allowed_tools must be an array";
+            return false;
+        }
+        token.allowed_tools.clear();
+        for (const auto & tool : value["allowed_tools"]) {
+            if (!tool.is_string()) {
+                error = "MCP inbound token allowed_tools entries must be strings";
+                return false;
+            }
+            token.allowed_tools.push_back(tool.get<std::string>());
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool validate_provider_auth(
+        const agent_host_provider_auth_config & auth,
+        const std::string & provider_kind,
+        bool allow_extended,
+        std::string & error) {
+    if (auth.type != "none" && auth.type != "bearer" &&
+            (!allow_extended || (auth.type != "basic" &&
+             auth.type != "api_key" && auth.type != "mutual_tls" &&
+             auth.type != "oauth2_client_credentials"))) {
+        error = provider_kind + " provider auth type is not supported yet: " + auth.type;
+        return false;
+    }
+    if ((auth.type == "bearer" || auth.type == "api_key") && auth.token_env.empty()) {
+        error = provider_kind + " " + auth.type + " auth requires token_env";
+        return false;
+    }
+    if (auth.type == "basic" && (auth.username_env.empty() || auth.password_env.empty())) {
+        error = provider_kind + " basic auth requires username_env and password_env";
+        return false;
+    }
+    if (auth.type == "mutual_tls" &&
+            (auth.client_cert_path_env.empty() || auth.client_key_path_env.empty())) {
+        error = provider_kind + " mutual_tls auth requires client_cert_path_env and client_key_path_env";
+        return false;
+    }
+    if (auth.type == "oauth2_client_credentials" &&
+            (auth.client_id_env.empty() || auth.client_secret_env.empty())) {
+        error = provider_kind + " oauth2_client_credentials requires client_id_env and client_secret_env";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+} // namespace
+
+bool parse_agent_host_config_json(
+        const json & parsed,
+        agent_host_config & config,
+        std::string & error) {
+    if (!parsed.is_object()) {
+        error = "host config must be a JSON object";
+        return false;
+    }
+
+    config = {};
+    read_optional(parsed, "schema_version", config.schema_version);
+    if (config.schema_version <= 0) {
+        error = "host config schema_version must be a positive integer";
+        return false;
+    }
+    if (config.schema_version != 1) {
+        error = "unsupported host config schema_version: " + std::to_string(config.schema_version);
+        return false;
+    }
+
+    if (parsed.contains("model") && parsed["model"].is_object()) {
+        const auto & model = parsed["model"];
+        read_optional(model, "backend", config.model_backend);
+        read_optional(model, "path", config.model_path);
+        read_optional(model, "mmproj", config.mmproj_path);
+        read_optional(model, "embedding_model", config.embedding_model);
+        read_optional(model, "profile", config.model_profile);
+    }
+    if (parsed.contains("bootstrap")) {
+        if (!parsed["bootstrap"].is_object()) {
+            error = "bootstrap must be an object";
+            return false;
+        }
+        read_optional(parsed["bootstrap"], "package", config.bootstrap_package);
+        if (parsed["bootstrap"].contains("libraries") &&
+                !common_agent_template_library_config_parse(parsed["bootstrap"]["libraries"],
+                    config.bootstrap_libraries, error)) return false;
+    }
+    if (parsed.contains("models")) {
+        if (!parsed["models"].is_object()) {
+            error = "models must be an object";
+            return false;
+        }
+        if (!common_agent_model_catalog_from_json(parsed["models"].dump(), config.model_catalog, error)) {
+            return false;
+        }
+    }
+
+    if (parsed.contains("runtime") && parsed["runtime"].is_object()) {
+        const auto & runtime = parsed["runtime"];
+        read_optional(runtime, "context_size", config.runtime_context_size);
+        read_optional(runtime, "n_predict", config.n_predict);
+        read_optional(runtime, "n_threads", config.n_threads);
+        if (runtime.contains("context_management")) {
+            const auto & managed = runtime["context_management"];
+            if (!managed.is_object()) { error = "runtime.context_management must be an object"; return false; }
+            read_optional(managed, "enabled", config.context_management.enabled);
+            read_optional(managed, "persist_session", config.context_management.persist_session);
+            read_optional(managed, "semantic_compaction", config.context_management.semantic_compaction);
+            read_optional(managed, "recent_turns", config.context_management.recent_turns);
+            read_optional(managed, "summary_max_tokens", config.context_management.summary_max_tokens);
+            read_optional(managed, "max_summary_calls_per_turn", config.context_management.max_summary_calls_per_turn);
+            read_optional(managed, "max_history_chars", config.context_management.max_history_chars);
+        }
+        if (runtime.contains("context_budgets") && runtime["context_budgets"].is_object()) {
+            const auto & budgets = runtime["context_budgets"];
+            for (const auto & field : prompt_budget_fields) {
+                if (budgets.contains(field.first) && !budgets[field.first].is_null())
+                    config.context_budgets.configured_prompt_values.insert(field.first);
+            }
+            read_optional(budgets, "plan_chars", config.context_budgets.plan_chars);
+            read_optional(budgets, "step_chars", config.context_budgets.step_chars);
+            read_optional(budgets, "tool_observation_chars", config.context_budgets.tool_observation_chars);
+            read_optional(budgets, "input_resources_chars", config.context_budgets.input_resources_chars);
+            read_optional(budgets, "deliberate_input_resources_chars", config.context_budgets.deliberate_input_resources_chars);
+            read_optional(budgets, "resource_chunk_max_bytes", config.context_budgets.resource_chunk_max_bytes);
+            read_optional(budgets, "resource_chunk_overlap_bytes", config.context_budgets.resource_chunk_overlap_bytes);
+            read_optional(budgets, "memory_chars", config.context_budgets.memory_chars);
+            read_optional(budgets, "memory_per_item_chars", config.context_budgets.memory_per_item_chars);
+            read_optional(budgets, "overlay_chars", config.context_budgets.overlay_chars);
+            read_optional(budgets, "overlay_per_item_chars", config.context_budgets.overlay_per_item_chars);
+            read_optional(budgets, "deliberate_memory_chars", config.context_budgets.deliberate_memory_chars);
+            read_optional(budgets, "deliberate_memory_per_item_chars", config.context_budgets.deliberate_memory_per_item_chars);
+            read_optional(budgets, "deliberate_overlay_chars", config.context_budgets.deliberate_overlay_chars);
+            read_optional(budgets, "deliberate_overlay_per_item_chars", config.context_budgets.deliberate_overlay_per_item_chars);
+            if (budgets.contains("working_state") && budgets["working_state"].is_object()) {
+                const auto & working_state = budgets["working_state"];
+                read_optional(working_state, "max_total_chars", config.context_budgets.working_state.max_total_chars);
+                read_optional(working_state, "max_value_chars", config.context_budgets.working_state.max_value_chars);
+                read_optional(working_state, "max_completed_steps", config.context_budgets.working_state.max_completed_steps);
+                read_optional(working_state, "max_remaining_steps", config.context_budgets.working_state.max_remaining_steps);
+                read_optional(working_state, "max_constraints", config.context_budgets.working_state.max_constraints);
+                read_optional(working_state, "max_open_questions", config.context_budgets.working_state.max_open_questions);
+                read_optional(working_state, "max_resource_refs", config.context_budgets.working_state.max_resource_refs);
+                read_optional(working_state, "max_chunk_status", config.context_budgets.working_state.max_chunk_status);
+                read_optional(working_state, "max_tool_results", config.context_budgets.working_state.max_tool_results);
+            }
+        }
+        read_optional(runtime, "n_gpu_layers", config.n_gpu_layers);
+        read_optional(runtime, "default_mode", config.default_mode);
+        read_optional(runtime, "thinking_mode", config.thinking_mode);
+        read_optional(runtime, "max_reflection_rounds", config.max_reflection_rounds);
+        read_optional(runtime, "max_plan_revisions", config.max_plan_revisions);
+        read_optional(runtime, "max_research_iterations", config.max_research_iterations);
+        read_optional(runtime, "memory_learn", config.memory_learn);
+        read_optional(runtime, "agent_plan", config.agent_plan);
+        read_optional(runtime, "agent_blueprint", config.agent_blueprint);
+        read_optional(runtime, "memory_learn_show_candidate", config.memory_learn_show_candidate);
+        read_optional(runtime, "memory_learn_min_confidence", config.memory_learn_min_confidence);
+        read_optional(runtime, "memory_learn_min_reuse", config.memory_learn_min_reuse);
+        read_optional(runtime, "plan_show_summary", config.plan_show_summary);
+        read_optional(runtime, "agent_trace", config.agent_trace);
+        if (runtime.contains("adaptation") && runtime["adaptation"].is_object()) {
+            const auto & adaptation = runtime["adaptation"];
+            read_optional(adaptation, "capture", config.adaptation_capture);
+            read_optional(adaptation, "collection_allowed", config.adaptation_collection_allowed);
+            read_optional(adaptation, "max_evidence", config.adaptation_max_evidence);
+            read_optional(adaptation, "backend", config.adaptation_transaction_backend);
+            read_optional(adaptation, "transaction_path", config.adaptation_transaction_path);
+            if (adaptation.contains("outcome_guidance")) {
+                const auto & guidance = adaptation["outcome_guidance"];
+                if (!guidance.is_object()) {
+                    error = "runtime.adaptation.outcome_guidance must be an object";
+                    return false;
+                }
+                if (guidance.contains("generalization")) {
+                    const auto & generalization = guidance["generalization"];
+                    if (!generalization.is_object()) {
+                        error = "runtime.adaptation.outcome_guidance.generalization must be an object";
+                        return false;
+                    }
+                    for (const auto * key : {"tool_family_backoff", "project_history"}) {
+                        if (generalization.contains(key) && !generalization[key].is_boolean()) {
+                            error = std::string("runtime.adaptation.outcome_guidance.generalization.") + key +
+                                " must be boolean";
+                            return false;
+                        }
+                    }
+                    read_optional(generalization, "tool_family_backoff",
+                        config.adaptation_outcome_guidance_generalization.tool_family_backoff);
+                    read_optional(generalization, "project_history",
+                        config.adaptation_outcome_guidance_generalization.project_history);
+                    if (generalization.contains("tool_families")) {
+                        const auto & families = generalization["tool_families"];
+                        if (!families.is_object()) {
+                            error = "runtime.adaptation.outcome_guidance.generalization.tool_families must be an object";
+                            return false;
+                        }
+                        config.adaptation_outcome_guidance_generalization.tool_families.clear();
+                        for (auto it = families.begin(); it != families.end(); ++it) {
+                            if (!it.value().is_array()) {
+                                error = "each outcome tool family must contain an array of behavior domains";
+                                return false;
+                            }
+                            auto & domains = config.adaptation_outcome_guidance_generalization.tool_families[it.key()];
+                            for (const auto & domain : it.value()) {
+                                if (!domain.is_string()) {
+                                    error = "outcome tool-family domains must be strings";
+                                    return false;
+                                }
+                                domains.push_back(domain.get<std::string>());
+                            }
+                        }
+                    }
+                }
+            }
+            if (adaptation.contains("semi_oracle")) {
+                const auto & oracle = adaptation["semi_oracle"];
+                if (!oracle.is_object()) { error = "runtime.adaptation.semi_oracle must be an object"; return false; }
+                if (oracle.contains("search")) {
+                    const auto & search = oracle["search"];
+                    if (!search.is_object()) { error = "runtime.adaptation.semi_oracle.search must be an object"; return false; }
+                    if (search.contains("algorithm") && !search["algorithm"].is_string()) {
+                        error = "runtime.adaptation.semi_oracle.search.algorithm must be a string"; return false;
+                    }
+                    if (search.contains("suboptimality_bound") && !search["suboptimality_bound"].is_number()) {
+                        error = "runtime.adaptation.semi_oracle.search.suboptimality_bound must be numeric"; return false;
+                    }
+                    if (search.contains("exact_history_order") && !search["exact_history_order"].is_string()) {
+                        error = "runtime.adaptation.semi_oracle.search.exact_history_order must be a string"; return false;
+                    }
+                    read_optional(search, "algorithm", config.adaptation_semi_oracle_outcome_guidance.search_algorithm);
+                    read_optional(search, "suboptimality_bound", config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound);
+                    if (search.contains("exact_history_order")) {
+                        const auto order = search["exact_history_order"].get<std::string>();
+                        if (order == "before_h") config.adaptation_semi_oracle_outcome_guidance.exact_history_order =
+                            common_semi_oracle_history_order::before_heuristic;
+                        else if (order == "after_h") config.adaptation_semi_oracle_outcome_guidance.exact_history_order =
+                            common_semi_oracle_history_order::after_heuristic;
+                        else { error = "runtime.adaptation.semi_oracle.search.exact_history_order must be before_h or after_h"; return false; }
+                    }
+                }
+                if (oracle.contains("outcome_guidance")) {
+                    const auto & guidance = oracle["outcome_guidance"];
+                    if (!guidance.is_object()) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance must be an object"; return false;
+                    }
+                    if (guidance.contains("mode") && !guidance["mode"].is_string()) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance.mode must be a string"; return false;
+                    }
+                    if (guidance.contains("sampling_policy") && !guidance["sampling_policy"].is_string()) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance.sampling_policy must be a string"; return false;
+                    }
+                    for (const auto * key : {"seed", "max_history_evaluations", "projection_cache_bytes"}) {
+                        if (guidance.contains(key) && !guidance[key].is_number_unsigned() &&
+                                (!guidance[key].is_number_integer() || guidance[key].get<int64_t>() < 0)) {
+                            error = std::string("runtime.adaptation.semi_oracle.outcome_guidance.") + key +
+                                " must be a non-negative integer"; return false;
+                        }
+                    }
+                    read_optional(guidance, "mode", config.adaptation_semi_oracle_outcome_guidance.mode);
+                    read_optional(guidance, "sampling_policy", config.adaptation_semi_oracle_outcome_guidance.sampling_policy);
+                    read_optional(guidance, "seed", config.adaptation_semi_oracle_outcome_guidance.seed);
+                    if (guidance.contains("max_history_evaluations") &&
+                            (guidance["max_history_evaluations"].get<uint64_t>() == 0 ||
+                             guidance["max_history_evaluations"].get<uint64_t>() > 1024)) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance.max_history_evaluations must be 1..1024";
+                        return false;
+                    }
+                    read_optional(guidance, "max_history_evaluations",
+                        config.adaptation_semi_oracle_outcome_guidance.max_history_evaluations);
+                    if (guidance.contains("projection_cache_bytes") &&
+                            guidance["projection_cache_bytes"].get<uint64_t>() > 256 * 1024 * 1024) {
+                        error = "runtime.adaptation.semi_oracle.outcome_guidance.projection_cache_bytes must be 0..268435456";
+                        return false;
+                    }
+                    read_optional(guidance, "projection_cache_bytes",
+                        config.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes);
+                }
+            }
+            if (adaptation.contains("flydelta")) {
+                if (!adaptation["flydelta"].is_object()) {
+                    error = "runtime.adaptation.flydelta must be an object";
+                    return false;
+                }
+                const auto & flydelta = adaptation["flydelta"];
+                read_optional(flydelta, "enabled", config.adaptation_flydelta_enabled);
+                read_optional(flydelta, "worker_count", config.adaptation_flydelta_worker_count);
+                read_optional(flydelta, "queue_path", config.adaptation_flydelta_queue_path);
+                read_optional(flydelta, "batch_mode", config.adaptation_flydelta_batch_mode);
+                read_optional(flydelta, "dose_mode", config.adaptation_flydelta_dose_mode);
+                read_optional(flydelta, "dose_calibration_ref", config.adaptation_flydelta_dose_calibration_ref);
+                if (flydelta.contains("search_model_call_budget")) {
+                    const auto & budget = flydelta.at("search_model_call_budget");
+                    if (!budget.is_number_integer() || budget <= 0 || budget > 65536) {
+                        error = "FlyDelta search_model_call_budget must be an integer between 1 and 65536";
+                        return false;
+                    }
+                    config.adaptation_flydelta_search_model_call_budget = budget.get<size_t>();
+                }
+                read_optional(flydelta, "batch_parallelism", config.adaptation_flydelta_batch_parallelism);
+                if (flydelta.contains("disable_factorized_cvec_batch") &&
+                        flydelta.contains("factorized_cvec_batch")) {
+                    error = "runtime.adaptation.flydelta must not set both disable_factorized_cvec_batch and legacy factorized_cvec_batch";
+                    return false;
+                }
+                if (flydelta.contains("disable_factorized_cvec_batch")) {
+                    read_optional(flydelta, "disable_factorized_cvec_batch",
+                        config.adaptation_flydelta_disable_factorized_cvec_batch);
+                } else if (flydelta.contains("factorized_cvec_batch")) {
+                    // Preserve old configs: the legacy positive option is
+                    // translated once into the new negative opt-out setting.
+                    bool legacy_enabled = true;
+                    read_optional(flydelta, "factorized_cvec_batch", legacy_enabled);
+                    config.adaptation_flydelta_disable_factorized_cvec_batch = !legacy_enabled;
+                }
+                read_optional(flydelta, "capture_candidates", config.adaptation_flydelta_capture_candidates);
+                read_optional(flydelta, "lifecycle_backend", config.adaptation_flydelta_lifecycle_backend);
+                read_optional(flydelta, "lifecycle_path", config.adaptation_flydelta_lifecycle_path);
+                if (flydelta.contains("outcome_guidance")) {
+                    const auto & guidance = flydelta["outcome_guidance"];
+                    if (!guidance.is_object()) {
+                        error = "runtime.adaptation.flydelta.outcome_guidance must be an object";
+                        return false;
+                    }
+                    std::string mode = common_flydelta_outcome_guidance_mode_name(
+                        config.adaptation_flydelta_outcome_guidance.mode);
+                    read_optional(guidance, "mode", mode);
+                    if (!common_flydelta_parse_outcome_guidance_mode(
+                            mode, config.adaptation_flydelta_outcome_guidance.mode, error)) return false;
+                    read_optional(guidance, "seed", config.adaptation_flydelta_outcome_guidance.seed);
+                    read_optional(guidance, "harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty);
+                    read_optional(guidance, "progress_reward", config.adaptation_flydelta_outcome_guidance.progress_reward);
+                    read_optional(guidance, "min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups);
+                    read_optional(guidance, "max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength);
+                    if (guidance.contains("matched_evaluation") && !guidance["matched_evaluation"].is_boolean()) {
+                        error = "runtime.adaptation.flydelta.outcome_guidance.matched_evaluation must be boolean";
+                        return false;
+                    }
+                    if (guidance.contains("matched_max_arms") &&
+                            (!guidance["matched_max_arms"].is_number_integer() ||
+                             guidance["matched_max_arms"] < 1 || guidance["matched_max_arms"] > 48)) {
+                        error = "runtime.adaptation.flydelta.outcome_guidance.matched_max_arms must be 1..48";
+                        return false;
+                    }
+                    read_optional(guidance, "matched_evaluation", config.adaptation_flydelta_outcome_guidance.matched_evaluation);
+                    read_optional(guidance, "matched_max_arms", config.adaptation_flydelta_outcome_guidance.matched_max_arms);
+                    if (guidance.contains("projection_cache_bytes") &&
+                            (!guidance["projection_cache_bytes"].is_number_integer() ||
+                             guidance["projection_cache_bytes"] < 0 ||
+                             guidance["projection_cache_bytes"] > 256 * 1024 * 1024)) {
+                        error = "runtime.adaptation.flydelta.outcome_guidance.projection_cache_bytes must be 0..268435456";
+                        return false;
+                    }
+                    read_optional(guidance, "projection_cache_bytes",
+                        config.adaptation_flydelta_outcome_guidance.projection_cache_bytes);
+                }
+                read_optional(flydelta, "teacher_scoring_backend",
+                    config.adaptation_flydelta_teacher_scoring_backend);
+                read_optional(flydelta, "artifact_root", config.adaptation_flydelta_artifact_root);
+                read_optional(flydelta, "model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint);
+                read_optional(flydelta, "capture_layout_revision", config.adaptation_flydelta_capture_layout_revision);
+                read_optional(flydelta, "max_capture_candidates", config.adaptation_flydelta_max_capture_candidates);
+                if (flydelta.contains("canary")) {
+                    if (!flydelta["canary"].is_object()) {
+                        error = "runtime.adaptation.flydelta.canary must be an object";
+                        return false;
+                    }
+                    const auto & canary = flydelta["canary"];
+                    std::string mode = common_flydelta_canary_mode_name(
+                        config.adaptation_flydelta_canary_policy.mode);
+                    read_optional(canary, "mode", mode);
+                    if (!parse_common_flydelta_canary_mode(
+                            mode, config.adaptation_flydelta_canary_policy.mode, error)) return false;
+                    read_optional(canary, "min_observations", config.adaptation_flydelta_canary_policy.min_observations);
+                    read_optional(canary, "min_unique_allocations", config.adaptation_flydelta_canary_policy.min_unique_allocations);
+                    read_optional(canary, "min_target_gain", config.adaptation_flydelta_canary_policy.min_target_gain);
+                    read_optional(canary, "max_control_regression", config.adaptation_flydelta_canary_policy.max_control_regression);
+                    read_optional(canary, "max_competitor_regression", config.adaptation_flydelta_canary_policy.max_competitor_regression);
+                    read_optional(canary, "max_harmed_results", config.adaptation_flydelta_canary_policy.max_harmed_results);
+                    read_optional(canary, "pristine_control_interval", config.adaptation_flydelta_canary_policy.pristine_control_interval);
+                    read_optional(canary, "allow_scope_expansion", config.adaptation_flydelta_canary_policy.allow_scope_expansion);
+                    read_optional(canary, "allow_promotion", config.adaptation_flydelta_canary_policy.allow_promotion);
+                    read_optional(canary, "auto_close_on_harmed", config.adaptation_flydelta_canary_policy.auto_close_on_harmed);
+                    read_optional(canary, "allow_auto_admission", config.adaptation_flydelta_canary_policy.allow_auto_admission);
+                    read_optional(canary, "initial_traffic_basis_points", config.adaptation_flydelta_canary_policy.initial_traffic_basis_points);
+                    read_optional(canary, "initial_max_evaluated_observations", config.adaptation_flydelta_canary_policy.initial_max_evaluated_observations);
+                    read_optional(canary, "initial_expiry_ms", config.adaptation_flydelta_canary_policy.initial_expiry_ms);
+                    if (canary.contains("traffic_steps_basis_points")) {
+                        if (!canary["traffic_steps_basis_points"].is_array()) {
+                            error = "runtime.adaptation.flydelta.canary.traffic_steps_basis_points must be an array";
+                            return false;
+                        }
+                        config.adaptation_flydelta_canary_policy.traffic_steps_basis_points.clear();
+                        for (const auto & step : canary["traffic_steps_basis_points"]) {
+                            if (!step.is_number_unsigned()) {
+                                error = "runtime.adaptation.flydelta.canary traffic step must be unsigned";
+                                return false;
+                            }
+                            config.adaptation_flydelta_canary_policy.traffic_steps_basis_points.push_back(step.get<uint32_t>());
+                        }
+                    }
+                    if (canary.contains("scope_step_fingerprints")) {
+                        if (!canary["scope_step_fingerprints"].is_array()) {
+                            error = "runtime.adaptation.flydelta.canary.scope_step_fingerprints must be an array";
+                            return false;
+                        }
+                        config.adaptation_flydelta_canary_policy.scope_step_fingerprints.clear();
+                        for (const auto & scope : canary["scope_step_fingerprints"]) {
+                            if (!scope.is_string() || scope.get<std::string>().empty()) {
+                                error = "runtime.adaptation.flydelta.canary scope step must be a non-empty string";
+                                return false;
+                            }
+                            config.adaptation_flydelta_canary_policy.scope_step_fingerprints.push_back(
+                                scope.get<std::string>());
+                        }
+                    }
+                }
+            }
+            if (adaptation.contains("stable_model_facing_tools") &&
+                    adaptation["stable_model_facing_tools"].is_array()) {
+                config.adaptation_stable_model_facing_tools.clear();
+                for (const auto & item : adaptation["stable_model_facing_tools"]) {
+                    if (item.is_string()) config.adaptation_stable_model_facing_tools.insert(item.get<std::string>());
+                }
+            }
+            if (adaptation.contains("domains")) {
+                if (!adaptation["domains"].is_object()) {
+                    error = "runtime.adaptation.domains must be an object";
+                    return false;
+                }
+                const auto & domains = adaptation["domains"];
+                config.adaptation_domains.configured = true;
+                read_optional(domains, "planning", config.adaptation_domains.planning);
+                read_optional(domains, "tool_use", config.adaptation_domains.tool_use);
+                read_optional(domains, "research", config.adaptation_domains.research);
+                read_optional(domains, "procedure_learning", config.adaptation_domains.procedure_learning);
+                if (domains.contains("families")) {
+                    if (!domains["families"].is_object()) {
+                        error = "runtime.adaptation.domains.families must be an object";
+                        return false;
+                    }
+                    for (auto it = domains["families"].begin(); it != domains["families"].end(); ++it) {
+                        if (!it.value().is_boolean() || it.key().empty()) {
+                            error = "runtime.adaptation.domains.families entries must be boolean values";
+                            return false;
+                        }
+                        config.adaptation_domains.tool_use_families[it.key()] = it.value().get<bool>();
+                    }
+                }
+            }
+        }
+    }
+
+    if (parsed.contains("stores") && parsed["stores"].is_object()) {
+        const auto & stores = parsed["stores"];
+        if (stores.contains("memory") && stores["memory"].is_object()) {
+            const auto & memory = stores["memory"];
+            read_optional(memory, "backend", config.memory_backend);
+            read_optional(memory, "path", config.memory_db);
+        }
+        if (stores.contains("plan") && stores["plan"].is_object()) {
+            const auto & plan = stores["plan"];
+            read_optional(plan, "backend", config.plan_backend);
+            read_optional(plan, "path", config.plan_db);
+        }
+        if (stores.contains("data") && stores["data"].is_object()) {
+            const auto & data = stores["data"];
+            read_optional(data, "backend", config.data_backend);
+            read_optional(data, "path", config.data_db);
+        }
+    }
+
+    if (parsed.contains("investigation")) {
+        const auto & investigation = parsed["investigation"];
+        if (!investigation.is_object()) {
+            error = "investigation must be an object";
+            return false;
+        }
+        read_optional(investigation, "enabled", config.investigation.enabled);
+        read_optional(investigation, "workflow_package", config.investigation.workflow_package);
+        read_optional(investigation, "max_events_per_query", config.investigation.max_events_per_query);
+        read_optional(investigation, "max_nodes_per_expansion", config.investigation.max_nodes_per_expansion);
+        read_optional(investigation, "max_edges_per_expansion", config.investigation.max_edges_per_expansion);
+        read_optional(investigation, "max_expansions_per_turn", config.investigation.max_expansions_per_turn);
+        read_optional(investigation, "max_materialized_rows", config.investigation.max_materialized_rows);
+        if (investigation.contains("sources")) {
+            if (!investigation["sources"].is_array()) {
+                error = "investigation.sources must be an array";
+                return false;
+            }
+            config.investigation.sources.clear();
+            for (const auto & source_json : investigation["sources"]) {
+                if (!source_json.is_object()) {
+                    error = "investigation.sources entries must be objects";
+                    return false;
+                }
+                agent_host_investigation_source_config source;
+                read_optional(source_json, "id", source.id);
+                read_optional(source_json, "dialect", source.dialect);
+                read_optional(source_json, "base_url", source.base_url);
+                read_optional(source_json, "allow_private_network", source.allow_private_network);
+                read_optional(source_json, "connect_timeout_ms", source.connect_timeout_ms);
+                read_optional(source_json, "request_timeout_ms", source.request_timeout_ms);
+                read_optional(source_json, "max_page_size", source.max_page_size);
+                read_optional(source_json, "max_result_bytes", source.max_result_bytes);
+                if (source_json.contains("allowed_indices") &&
+                        !read_string_array(source_json["allowed_indices"], source.allowed_indices,
+                            "investigation source allowed_indices", error)) return false;
+                if (source_json.contains("allowed_namespaces") &&
+                        !read_string_array(source_json["allowed_namespaces"], source.allowed_namespaces,
+                            "investigation source allowed_namespaces", error)) return false;
+                if (source_json.contains("allowed_projects") &&
+                        !read_string_array(source_json["allowed_projects"], source.allowed_projects,
+                            "investigation source allowed_projects", error)) return false;
+                if (source_json.contains("fields")) {
+                    if (!source_json["fields"].is_object()) {
+                        error = "investigation source fields must be an object";
+                        return false;
+                    }
+                    for (auto it = source_json["fields"].begin(); it != source_json["fields"].end(); ++it) {
+                        if (!it.value().is_string()) {
+                            error = "investigation source field mappings must be strings";
+                            return false;
+                        }
+                        source.fields.emplace(it.key(), it.value().get<std::string>());
+                    }
+                }
+                if (source_json.contains("relation_profiles")) {
+                    const auto & profiles = source_json["relation_profiles"];
+                    if (!profiles.is_array() || profiles.size() > 256) {
+                        error = "investigation source relation_profiles must be an array of at most 256 entries";
+                        return false;
+                    }
+                    for (const auto & profile : profiles) {
+                        if (!profile.is_object() || !profile.contains("id") || !profile["id"].is_string() ||
+                                !profile.contains("event_type") || !profile["event_type"].is_string() ||
+                                !profile.contains("from_kind") || !profile["from_kind"].is_string() ||
+                                !profile.contains("to_kind") || !profile["to_kind"].is_string() ||
+                                !profile.contains("relation_kind") || !profile["relation_kind"].is_string()) {
+                            error = "investigation relation profile requires string id, event_type, from_kind, to_kind and relation_kind";
+                            return false;
+                        }
+                        common_investigation_relation_rule rule;
+                        rule.id = profile["id"].get<std::string>();
+                        rule.event_type = profile["event_type"].get<std::string>();
+                        if (!investigation_entity_kind_from_name(profile["from_kind"].get<std::string>(), rule.from_kind) ||
+                                !investigation_entity_kind_from_name(profile["to_kind"].get<std::string>(), rule.to_kind) ||
+                                !investigation_relation_kind_from_name(profile["relation_kind"].get<std::string>(), rule.relation_kind)) {
+                            error = "investigation relation profile contains an unknown entity or relation kind";
+                            return false;
+                        }
+                        if ((profile.contains("from_role") && !profile["from_role"].is_string()) ||
+                                (profile.contains("to_role") && !profile["to_role"].is_string())) {
+                            error = "investigation relation profile roles must be strings";
+                            return false;
+                        }
+                        rule.from_role = profile.value("from_role", std::string());
+                        rule.to_role = profile.value("to_role", std::string());
+                        source.relation_profiles.push_back(std::move(rule));
+                    }
+                }
+                if (source_json.contains("auth")) {
+                    const auto & auth = source_json["auth"];
+                    if (!auth.is_object()) {
+                        error = "investigation source auth must be an object";
+                        return false;
+                    }
+                    read_optional(auth, "type", source.auth.type);
+                    read_optional(auth, "scheme", source.auth.scheme);
+                    read_optional(auth, "token_url", source.auth.token_url);
+                    read_optional(auth, "scopes", source.auth.scopes);
+                    read_optional(auth, "token_env", source.auth.token_env);
+                    read_optional(auth, "username_env", source.auth.username_env);
+                    read_optional(auth, "password_env", source.auth.password_env);
+                    read_optional(auth, "client_id_env", source.auth.client_id_env);
+                    read_optional(auth, "client_secret_env", source.auth.client_secret_env);
+                    read_optional(auth, "client_cert_path_env", source.auth.client_cert_path_env);
+                    read_optional(auth, "client_key_path_env", source.auth.client_key_path_env);
+                    read_optional(auth, "ca_cert_path_env", source.auth.ca_cert_path_env);
+                }
+                config.investigation.sources.push_back(std::move(source));
+            }
+        }
+    }
+
+    if (parsed.contains("resources") && parsed["resources"].is_object()) {
+        const auto & resources = parsed["resources"];
+        read_optional(resources, "blob_backend", config.resource_blob_backend);
+        read_optional(resources, "blob_root", config.resource_blob_root);
+        read_optional(resources, "metadata_backend", config.resource_metadata_backend);
+        read_optional(resources, "metadata_db", config.resource_metadata_db);
+        if (resources.contains("processor_policies")) {
+            if (!resources["processor_policies"].is_object()) {
+                error = "resources.processor_policies must be an object";
+                return false;
+            }
+            config.resource_processor_policies.clear();
+            for (auto it = resources["processor_policies"].begin();
+                    it != resources["processor_policies"].end(); ++it) {
+                if (!it.value().is_object()) {
+                    error = "resources.processor_policies entries must be objects";
+                    return false;
+                }
+                agent_resource_processor_execution_policy policy;
+                read_optional(it.value(), "execution", policy.execution);
+                read_optional(it.value(), "backend", policy.backend);
+                read_optional(it.value(), "executable", policy.executable);
+                read_optional(it.value(), "script", policy.script);
+                read_optional(it.value(), "image", policy.image);
+                read_optional(it.value(), "expected_version", policy.expected_version);
+                read_optional(it.value(), "max_pages", policy.max_pages);
+                config.resource_processor_policies.emplace(it.key(), std::move(policy));
+            }
+        }
+    }
+
+    if (parsed.contains("sandbox")) {
+        if (!parsed["sandbox"].is_object()) { error = "sandbox must be an object"; return false; }
+        const auto & sandbox = parsed["sandbox"];
+        read_optional(sandbox, "backend", config.sandbox.backend);
+        if (sandbox.contains("docker")) {
+            if (!sandbox["docker"].is_object()) { error = "sandbox.docker must be an object"; return false; }
+            const auto & docker = sandbox["docker"];
+            read_optional(docker, "executable", config.sandbox.docker_executable);
+            read_optional(docker, "default_image", config.sandbox.docker_default_image);
+        }
+        if (sandbox.contains("lxc")) {
+            if (!sandbox["lxc"].is_object()) { error = "sandbox.lxc must be an object"; return false; }
+            const auto & lxc = sandbox["lxc"];
+            read_optional(lxc, "executable", config.sandbox.lxc_executable);
+            read_optional(lxc, "default_image", config.sandbox.lxc_default_image);
+            read_optional(lxc, "network_mode", config.sandbox.lxc_network_mode);
+            read_optional(lxc, "network_profile", config.sandbox.lxc_network_profile);
+            read_optional(lxc, "network_profile_scope", config.sandbox.lxc_network_profile_scope);
+            read_optional(lxc, "cleanup", config.sandbox.lxc_cleanup);
+        }
+        if (sandbox.contains("kubernetes")) {
+            if (!sandbox["kubernetes"].is_object()) { error = "sandbox.kubernetes must be an object"; return false; }
+            const auto & kubernetes = sandbox["kubernetes"];
+            read_optional(kubernetes, "executable", config.sandbox.kubernetes_executable);
+            read_optional(kubernetes, "kubeconfig", config.sandbox.kubernetes_kubeconfig);
+            read_optional(kubernetes, "context", config.sandbox.kubernetes_context);
+            read_optional(kubernetes, "insecure_skip_tls_verify", config.sandbox.kubernetes_insecure_skip_tls_verify);
+            read_optional(kubernetes, "namespace", config.sandbox.kubernetes_namespace);
+            read_optional(kubernetes, "service_account", config.sandbox.kubernetes_service_account);
+            read_optional(kubernetes, "runtime_class", config.sandbox.kubernetes_runtime_class);
+            read_optional(kubernetes, "storage_class", config.sandbox.kubernetes_storage_class);
+            read_optional(kubernetes, "workspace_storage_size", config.sandbox.kubernetes_workspace_storage_size);
+            read_optional(kubernetes, "artifact_storage_size", config.sandbox.kubernetes_artifact_storage_size);
+            read_optional(kubernetes, "staging_image", config.sandbox.kubernetes_staging_image);
+            read_optional(kubernetes, "pvc_retention", config.sandbox.kubernetes_pvc_retention);
+            read_optional(kubernetes, "staging_timeout_ms", config.sandbox.kubernetes_staging_timeout_ms);
+            read_optional(kubernetes, "cleanup", config.sandbox.kubernetes_cleanup);
+        }
+        if (sandbox.contains("workspace")) {
+            if (!sandbox["workspace"].is_object()) { error = "sandbox.workspace must be an object"; return false; }
+            const auto & workspace = sandbox["workspace"];
+            read_optional(workspace, "root", config.sandbox.workspace.workspace_root);
+            read_optional(workspace, "artifact_root", config.sandbox.workspace.artifact_root);
+            read_optional(workspace, "operation_mode", config.sandbox.workspace.operation_mode);
+            read_optional(workspace, "project_mode", config.sandbox.workspace.project_mode);
+        }
+        if (sandbox.contains("defaults")) {
+            if (!sandbox["defaults"].is_object()) { error = "sandbox.defaults must be an object"; return false; }
+            const auto & defaults = sandbox["defaults"];
+            read_optional(defaults, "image", config.sandbox.defaults.image);
+            if (defaults.contains("timeout_ms")) read_optional(defaults, "timeout_ms", config.sandbox.defaults.limits.timeout_ms);
+            if (defaults.contains("memory_bytes")) read_optional(defaults, "memory_bytes", config.sandbox.defaults.limits.memory_bytes);
+            if (defaults.contains("cpu_count")) read_optional(defaults, "cpu_count", config.sandbox.defaults.limits.cpu_count);
+            if (defaults.contains("process_count")) read_optional(defaults, "process_count", config.sandbox.defaults.limits.process_count);
+            if (defaults.contains("max_output_bytes")) read_optional(defaults, "max_output_bytes", config.sandbox.defaults.limits.max_output_bytes);
+            if (defaults.contains("network") && !read_sandbox_network(defaults["network"], config.sandbox.defaults.network, error)) return false;
+            if (defaults.contains("filesystem") && !read_sandbox_filesystem(defaults["filesystem"], config.sandbox.defaults.filesystem, error)) return false;
+            read_optional(defaults, "allow_artifacts", config.sandbox.defaults.allow_artifacts);
+        }
+        if (sandbox.contains("classes")) {
+            if (!sandbox["classes"].is_object()) { error = "sandbox.classes must be an object"; return false; }
+            config.sandbox.classes.clear();
+            for (auto it = sandbox["classes"].begin(); it != sandbox["classes"].end(); ++it) {
+                if (!it.value().is_object()) { error = "sandbox.classes entries must be objects"; return false; }
+                common_agent_sandbox_policy policy = config.sandbox.defaults;
+                policy.execution_class = it.key();
+                if (const size_t class_default = agent_resource_processor_default_sandbox_output_bytes(it.key());
+                        class_default != 0) {
+                    policy.limits.max_output_bytes = class_default;
+                }
+                if (const uint32_t class_default = agent_resource_processor_default_sandbox_timeout_ms(it.key());
+                        class_default != 0) {
+                    policy.limits.timeout_ms = class_default;
+                }
+                const auto & value = it.value();
+                read_optional(value, "image", policy.image);
+                if (value.contains("timeout_ms")) read_optional(value, "timeout_ms", policy.limits.timeout_ms);
+                if (value.contains("memory_bytes")) read_optional(value, "memory_bytes", policy.limits.memory_bytes);
+                if (value.contains("cpu_count")) read_optional(value, "cpu_count", policy.limits.cpu_count);
+                if (value.contains("process_count")) read_optional(value, "process_count", policy.limits.process_count);
+                if (value.contains("max_output_bytes")) read_optional(value, "max_output_bytes", policy.limits.max_output_bytes);
+                if (value.contains("network") && !read_sandbox_network(value["network"], policy.network, error)) return false;
+                if (value.contains("filesystem") && !read_sandbox_filesystem(value["filesystem"], policy.filesystem, error)) return false;
+                if (value.contains("allow_artifacts")) read_optional(value, "allow_artifacts", policy.allow_artifacts);
+                config.sandbox.classes.emplace(it.key(), std::move(policy));
+            }
+        }
+        if (sandbox.contains("development_targets")) {
+            if (!sandbox["development_targets"].is_object()) { error = "sandbox.development_targets must be an object"; return false; }
+            config.sandbox.development_targets.clear();
+            for (auto it = sandbox["development_targets"].begin(); it != sandbox["development_targets"].end(); ++it) {
+                if (!it.value().is_object()) { error = "sandbox.development_targets entries must be objects"; return false; }
+                const auto & value = it.value();
+                common_agent_development_target_profile profile;
+                read_optional(value, "build_program", profile.build_program);
+                read_optional(value, "test_program", profile.test_program);
+                read_optional(value, "working_directory", profile.working_directory);
+                read_optional(value, "max_timeout_ms", profile.max_timeout_ms);
+                if (value.contains("build_arguments") && !read_string_array(value["build_arguments"], profile.build_arguments, "sandbox.development_targets.build_arguments", error)) return false;
+                if (value.contains("test_arguments") && !read_string_array(value["test_arguments"], profile.test_arguments, "sandbox.development_targets.test_arguments", error)) return false;
+                const auto read_argument_map = [&](const char * key, auto & target) {
+                    if (!value.contains(key)) return true;
+                    if (!value[key].is_object()) { error = std::string("sandbox.development_targets.") + key + " must be an object"; return false; }
+                    for (auto entry = value[key].begin(); entry != value[key].end(); ++entry) {
+                        if (entry.key().empty() || entry.key().size() > 128 || entry.key().find('\0') != std::string::npos) {
+                            error = std::string("sandbox.development_targets.") + key + " contains an invalid alias";
+                            return false;
+                        }
+                        std::vector<std::string> arguments;
+                        if (!read_string_array(entry.value(), arguments, key, error)) return false;
+                        if (arguments.size() > 64 || std::any_of(arguments.begin(), arguments.end(), [](const std::string & argument) {
+                                return argument.size() > 4096 || argument.find('\0') != std::string::npos;
+                            })) {
+                            error = std::string("sandbox.development_targets.") + key + " arguments exceed their limits";
+                            return false;
+                        }
+                        target.emplace(entry.key(), std::move(arguments));
+                    }
+                    return true;
+                };
+                if (!read_argument_map("configurations", profile.configurations) ||
+                        !read_argument_map("test_filters", profile.test_filters)) return false;
+                config.sandbox.development_targets.emplace(it.key(), std::move(profile));
+            }
+        }
+    }
+
+    if (parsed.contains("tools") && parsed["tools"].is_object()) {
+        const auto & tools = parsed["tools"];
+        read_optional(tools, "profile", config.tool_profile);
+        read_optional(tools, "repository_root", config.repository_root);
+        read_optional(tools, "include_dir", config.tools_include_dir);
+        if (tools.contains("families")) {
+            if (!tools["families"].is_object()) {
+                error = "tools.families must be an object mapping family ids to metadata";
+                return false;
+            }
+            config.tool_family_descriptions.clear();
+            for (auto it = tools["families"].begin(); it != tools["families"].end(); ++it) {
+                if (!it.value().is_object() || !it.value().contains("description") ||
+                        !it.value()["description"].is_string()) {
+                    error = "tools.families entries must contain a string description";
+                    return false;
+                }
+                const std::string description = it.value()["description"].get<std::string>();
+                if (it.key().empty() || description.empty() || description.size() > 240 ||
+                        description.find_first_of("\r\n") != std::string::npos) {
+                    error = "tools.families descriptions must be non-empty, single-line and at most 240 characters";
+                    return false;
+                }
+                config.tool_family_descriptions[it.key()] = description;
+            }
+        }
+        if (tools.contains("capabilities")) {
+            if (!tools["capabilities"].is_object()) {
+                error = "tools.capabilities must be an object mapping capability ids to tool arrays";
+                return false;
+            }
+            config.tool_capabilities.clear();
+            for (auto it = tools["capabilities"].begin(); it != tools["capabilities"].end(); ++it) {
+                if (!read_string_array(it.value(), config.tool_capabilities[it.key()],
+                        (std::string("tools.capabilities.") + it.key()).c_str(), error)) {
+                    return false;
+                }
+            }
+        }
+        if (tools.contains("profiles")) {
+            if (!tools["profiles"].is_object()) {
+                error = "tools.profiles must be an object mapping profile ids to profile definitions";
+                return false;
+            }
+            config.tool_profiles.clear();
+            for (auto it = tools["profiles"].begin(); it != tools["profiles"].end(); ++it) {
+                if (!it.value().is_object()) {
+                    error = "tools.profiles entries must be objects";
+                    return false;
+                }
+                common_tool_profile profile;
+                profile.id = it.key();
+                if (it.value().contains("include_capabilities") &&
+                        !read_string_array(it.value()["include_capabilities"], profile.include_capabilities,
+                            (std::string("tools.profiles.") + it.key() + ".include_capabilities").c_str(), error)) {
+                    return false;
+                }
+                if (it.value().contains("exclude_capabilities") &&
+                        !read_string_array(it.value()["exclude_capabilities"], profile.exclude_capabilities,
+                            (std::string("tools.profiles.") + it.key() + ".exclude_capabilities").c_str(), error)) {
+                    return false;
+                }
+                if (it.value().contains("allow_network")) {
+                    if (!it.value()["allow_network"].is_boolean()) {
+                        error = "tools.profiles.allow_network must be a boolean";
+                        return false;
+                    }
+                    profile.allow_network = it.value()["allow_network"].get<bool>();
+                }
+                if (it.value().contains("allow_policy_gated_writes")) {
+                    if (!it.value()["allow_policy_gated_writes"].is_boolean()) {
+                        error = "tools.profiles.allow_policy_gated_writes must be a boolean";
+                        return false;
+                    }
+                    profile.allow_policy_gated_writes = it.value()["allow_policy_gated_writes"].get<bool>();
+                }
+                config.tool_profiles.emplace(it.key(), std::move(profile));
+            }
+        }
+        if (tools.contains("providers")) {
+            if (!tools["providers"].is_array()) {
+                error = "tools.providers must be an array";
+                return false;
+            }
+            config.mcp_providers.clear();
+            config.openapi_providers.clear();
+            for (const auto & entry : tools["providers"]) {
+                if (!entry.is_object()) {
+                    error = "tools.providers entries must be objects";
+                    return false;
+                }
+                if (entry.contains("type") && !entry["type"].is_string()) {
+                    error = "tools.providers.type must be a string";
+                    return false;
+                }
+                const std::string type = entry.value("type", "mcp");
+                if (type == "mcp") {
+                    agent_host_mcp_provider_config provider;
+                    if (!read_mcp_provider(entry, provider, error)) return false;
+                    config.mcp_providers.push_back(std::move(provider));
+                } else if (type == "openapi") {
+                    agent_host_openapi_provider_config provider;
+                    if (!read_openapi_provider(entry, provider, error)) return false;
+                    config.openapi_providers.push_back(std::move(provider));
+                } else {
+                    error = "unsupported tools.providers type: " + type;
+                    return false;
+                }
+            }
+        }
+    }
+
+    if (parsed.contains("diagnostics") && parsed["diagnostics"].is_object()) {
+        const auto & diagnostics = parsed["diagnostics"];
+        read_optional(diagnostics, "semantic_backend", config.diagnostics.semantic_backend);
+        read_optional(diagnostics, "clang_executable", config.diagnostics.clang_executable);
+        read_optional(diagnostics, "clangd_executable", config.diagnostics.clangd_executable);
+        read_optional(diagnostics, "compile_commands", config.diagnostics.compile_commands);
+        read_optional(diagnostics, "compile_commands_source", config.diagnostics.compile_commands_source);
+        read_optional(diagnostics, "compile_commands_destination", config.diagnostics.compile_commands_destination);
+        read_optional(diagnostics, "semantic_request_timeout_ms", config.diagnostics.semantic_request_timeout_ms);
+        read_optional(diagnostics, "native_crash_backend", config.diagnostics.native_crash_backend);
+        read_optional(diagnostics, "gdb_executable", config.diagnostics.gdb_executable);
+        read_optional(diagnostics, "cdb_executable", config.diagnostics.cdb_executable);
+        read_optional(diagnostics, "native_crash_timeout_ms", config.diagnostics.native_crash_timeout_ms);
+        read_optional(diagnostics, "native_crash_max_frames", config.diagnostics.native_crash_max_frames);
+        read_optional(diagnostics, "native_crash_max_threads", config.diagnostics.native_crash_max_threads);
+        read_optional(diagnostics, "native_crash_max_output_bytes", config.diagnostics.native_crash_max_output_bytes);
+    }
+
+    if (parsed.contains("mcp") && parsed["mcp"].is_object()) {
+        const auto & mcp = parsed["mcp"];
+        if (mcp.contains("inbound") && mcp["inbound"].is_object()) {
+            const auto & inbound = mcp["inbound"];
+            read_optional(inbound, "enabled", config.inbound_mcp_enabled);
+            read_optional(inbound, "listen", config.inbound_mcp_listen_address);
+            read_optional(inbound, "port", config.inbound_mcp_port);
+            read_optional(inbound, "path", config.inbound_mcp_path);
+            read_optional(inbound, "allowed_origin", config.inbound_mcp_allowed_origin);
+            read_optional(inbound, "max_body_bytes", config.inbound_mcp_max_body_bytes);
+            read_optional(inbound, "max_result_bytes", config.inbound_mcp_max_result_bytes);
+            read_optional(inbound, "agent_tools", config.inbound_mcp_agent_tools_enabled);
+            read_optional(inbound, "max_delegation_depth", config.inbound_mcp_max_delegation_depth);
+            if (inbound.contains("tokens")) {
+                if (!inbound["tokens"].is_array()) {
+                    error = "mcp.inbound.tokens must be an array";
+                    return false;
+                }
+                config.inbound_mcp_tokens.clear();
+                for (const auto & entry : inbound["tokens"]) {
+                    agent_host_mcp_inbound_token_config token;
+                    if (!read_inbound_token(entry, token, error)) return false;
+                    config.inbound_mcp_tokens.push_back(std::move(token));
+                }
+            }
+            if (inbound.contains("authorization") && inbound["authorization"].is_object()) {
+                const auto & authorization = inbound["authorization"];
+                read_optional(authorization, "mode", config.inbound_mcp_authorization_mode);
+                read_optional(authorization, "issuer", config.inbound_mcp_jwt_issuer);
+                read_optional(authorization, "audience", config.inbound_mcp_jwt_audience);
+                read_optional(authorization, "jwks_uri", config.inbound_mcp_jwt_jwks_uri);
+                read_optional(authorization, "tool_profile", config.inbound_mcp_jwt_tool_profile);
+                read_optional(authorization, "allow_writes", config.inbound_mcp_jwt_allow_writes);
+                read_optional(authorization, "allow_admin", config.inbound_mcp_jwt_allow_admin);
+                if (authorization.contains("allowed_algorithms") &&
+                        !read_string_array(authorization["allowed_algorithms"], config.inbound_mcp_jwt_allowed_algorithms, "mcp.inbound.authorization.allowed_algorithms", error)) {
+                    return false;
+                }
+                if (authorization.contains("required_scopes") &&
+                        !read_string_array(authorization["required_scopes"], config.inbound_mcp_jwt_required_scopes, "mcp.inbound.authorization.required_scopes", error)) {
+                    return false;
+                }
+                if (authorization.contains("allowed_tools") &&
+                        !read_string_array(authorization["allowed_tools"], config.inbound_mcp_jwt_allowed_tools, "mcp.inbound.authorization.allowed_tools", error)) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    if (parsed.contains("jsonl") && parsed["jsonl"].is_object() &&
+            parsed["jsonl"].contains("tcp") && parsed["jsonl"]["tcp"].is_object()) {
+        const auto & tcp = parsed["jsonl"]["tcp"];
+        read_optional(tcp, "enabled", config.jsonl_tcp_enabled);
+        read_optional(tcp, "listen", config.jsonl_tcp_listen_address);
+        read_optional(tcp, "port", config.jsonl_tcp_port);
+        read_optional(tcp, "max_line_bytes", config.jsonl_tcp_max_line_bytes);
+        read_optional(tcp, "idle_timeout_seconds", config.jsonl_tcp_idle_timeout_seconds);
+    }
+    if (parsed.contains("jsonl") && parsed["jsonl"].is_object() &&
+            parsed["jsonl"].contains("unix_socket") && parsed["jsonl"]["unix_socket"].is_object()) {
+        const auto & socket = parsed["jsonl"]["unix_socket"];
+        read_optional(socket, "enabled", config.jsonl_unix_socket_enabled);
+        read_optional(socket, "path", config.jsonl_unix_socket_path);
+        read_optional(socket, "mode", config.jsonl_unix_socket_mode);
+    }
+
+    if (parsed.contains("limits") && parsed["limits"].is_object()) {
+        const auto & limits = parsed["limits"];
+        read_optional(limits, "queue_capacity", config.queue_capacity);
+        read_optional(limits, "worker_count", config.worker_count);
+        read_optional(limits, "inference_max_active", config.inference_max_active);
+        read_optional(limits, "max_turn_seconds", config.max_turn_seconds);
+        read_optional(limits, "turn_timeout_ms", config.turn_timeout_ms);
+        read_optional(limits, "inference_step_timeout_ms", config.inference_step_timeout_ms);
+        read_optional(limits, "tool_timeout_ms", config.tool_timeout_ms);
+        read_optional(limits, "mcp_connect_timeout_ms", config.mcp_connect_timeout_ms);
+        read_optional(limits, "mcp_request_timeout_ms", config.mcp_request_timeout_ms);
+        read_optional(limits, "mcp_shutdown_timeout_ms", config.mcp_shutdown_timeout_ms);
+        read_optional(limits, "max_tool_rounds", config.max_tool_rounds);
+        read_optional(limits, "max_continuations", config.max_continuations);
+    }
+
+    if (config.turn_timeout_ms == 0 && config.max_turn_seconds > 0) {
+        config.turn_timeout_ms = config.max_turn_seconds * 1000;
+    }
+
+    if (!validate_agent_host_config(config, error)) {
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
+bool load_agent_host_config(
+        const std::string & path,
+        agent_host_config & config,
+        std::string & error) {
+    std::ifstream input(path);
+    if (!input.is_open()) {
+        error = "failed to open host config: " + path;
+        return false;
+    }
+
+    json parsed = json::parse(input, nullptr, false);
+    if (parsed.is_discarded()) {
+        error = "host config must be a JSON object";
+        return false;
+    }
+    if (!parse_agent_host_config_json(parsed, config, error)) {
+        return false;
+    }
+
+    const std::filesystem::path config_directory =
+        std::filesystem::absolute(std::filesystem::path(path)).parent_path();
+    if (!config.investigation.workflow_package.empty()) {
+        auto package_path = std::filesystem::path(config.investigation.workflow_package);
+        if (!package_path.is_absolute()) package_path = config_directory / package_path;
+        package_path = package_path.lexically_normal();
+        std::error_code package_error;
+        if (!std::filesystem::is_regular_file(package_path, package_error)) {
+            error = "investigation.workflow_package is not a readable regular file: " + package_path.string();
+            return false;
+        }
+        config.investigation.workflow_package = package_path.string();
+    }
+    for (auto & library : config.bootstrap_libraries) {
+        auto package_path = std::filesystem::path(library.package);
+        if (!package_path.is_absolute()) package_path = config_directory / package_path;
+        package_path = package_path.lexically_normal();
+        std::error_code package_error;
+        if (!std::filesystem::is_regular_file(package_path, package_error)) {
+            error = "bootstrap library is not a readable regular file: " + library.id;
+            return false;
+        }
+        library.package = package_path.string();
+    }
+    for (auto & provider : config.openapi_providers) {
+        provider.source_directory = config_directory.string();
+    }
+
+    if (!config.tools_include_dir.empty()) {
+        const std::filesystem::path include_directory =
+            std::filesystem::path(config.tools_include_dir).is_absolute()
+                ? std::filesystem::path(config.tools_include_dir)
+                : config_directory / config.tools_include_dir;
+        std::error_code directory_error;
+        if (!std::filesystem::is_directory(include_directory, directory_error)) {
+            error = "tools.include_dir is not a directory: " + include_directory.string();
+            return false;
+        }
+
+        std::vector<std::filesystem::path> fragments;
+        for (const auto & entry : std::filesystem::directory_iterator(include_directory, directory_error)) {
+            if (directory_error) break;
+            if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
+            fragments.push_back(entry.path());
+        }
+        if (directory_error) {
+            error = "failed to enumerate tools.include_dir: " + include_directory.string();
+            return false;
+        }
+        std::sort(fragments.begin(), fragments.end(),
+            [](const auto & left, const auto & right) {
+                return left.filename().string() < right.filename().string();
+            });
+
+        for (const auto & fragment_path : fragments) {
+            std::ifstream fragment_input(fragment_path);
+            if (!fragment_input.is_open()) {
+                error = "failed to open provider fragment: " + fragment_path.string();
+                return false;
+            }
+            json fragment = json::parse(fragment_input, nullptr, false);
+            if (fragment.is_discarded()) {
+                error = "provider fragment is not valid JSON: " + fragment_path.string();
+                return false;
+            }
+            const size_t mcp_count = config.mcp_providers.size();
+            const size_t openapi_count = config.openapi_providers.size();
+            std::string fragment_error;
+            if (!read_provider_fragment(fragment, config, fragment_error)) {
+                error = fragment_path.string() + ": " + fragment_error;
+                return false;
+            }
+            if (config.mcp_providers.size() > mcp_count) {
+                config.included_provider_ids.insert(config.mcp_providers.back().id);
+            } else if (config.openapi_providers.size() > openapi_count) {
+                config.openapi_providers.back().source_directory = config_directory.string();
+                config.included_provider_ids.insert(config.openapi_providers.back().id);
+            }
+        }
+        if (!validate_agent_host_config(config, error)) {
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool resolve_agent_host_config_path(
+        const std::string & explicit_path,
+        std::string & path,
+        std::string & error) {
+    path.clear();
+    error.clear();
+
+    if (!explicit_path.empty()) {
+        if (existing_config_path(explicit_path, path)) {
+            return true;
+        }
+        error = "host config was not found: " + explicit_path;
+        return false;
+    }
+
+    const std::string environment_path = environment_value("LLAMA_AGENT_CONFIG");
+    if (!environment_path.empty()) {
+        if (existing_config_path(environment_path, path)) {
+            return true;
+        }
+        error = "LLAMA_AGENT_CONFIG was not found: " + environment_path;
+        return false;
+    }
+
+    std::vector<std::filesystem::path> candidates;
+#ifndef _WIN32
+    append_config_candidate(
+        candidates,
+        std::filesystem::path(LLAMA_AGENT_SYSCONFDIR) / "config.json");
+#endif
+
+    const std::string xdg_config_home = environment_value("XDG_CONFIG_HOME");
+    if (!xdg_config_home.empty()) {
+        append_config_candidate(
+            candidates,
+            std::filesystem::path(xdg_config_home) / "llama-agent" / "config.json");
+    }
+
+    const std::string home = environment_value("HOME");
+#ifdef _WIN32
+    const std::string appdata = environment_value("APPDATA");
+    if (!appdata.empty()) {
+        append_config_candidate(
+            candidates,
+            std::filesystem::path(appdata) / "llama-agent" / "config.json");
+    }
+#endif
+    if (!home.empty()) {
+        append_config_candidate(
+            candidates,
+            std::filesystem::path(home) / ".config" / "llama-agent" / "config.json");
+    }
+
+    for (const auto & candidate : candidates) {
+        if (existing_config_path(candidate, path)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+nlohmann::ordered_json agent_host_config_to_json(
+        const agent_host_config & config) {
+    json providers = json::array();
+    for (const auto & provider : config.mcp_providers) {
+        if (config.included_provider_ids.count(provider.id) != 0) continue;
+        providers.push_back({
+            {"type", provider.type},
+            {"id", provider.id},
+            {"enabled", provider.enabled},
+            {"required", provider.required},
+            {"transport", provider.transport},
+            {"url", provider.url},
+            {"auth", {
+                {"type", provider.auth.type},
+                {"scheme", provider.auth.scheme},
+                {"token_url", provider.auth.token_url},
+                {"scopes", provider.auth.scopes},
+                {"token_env", provider.auth.token_env},
+                {"username_env", provider.auth.username_env},
+                {"password_env", provider.auth.password_env},
+                {"client_id_env", provider.auth.client_id_env},
+                {"client_secret_env", provider.auth.client_secret_env},
+                {"client_cert_path_env", provider.auth.client_cert_path_env},
+                {"client_key_path_env", provider.auth.client_key_path_env},
+                {"ca_cert_path_env", provider.auth.ca_cert_path_env},
+            }},
+            {"allowed_tools", provider.allowed_tools},
+            {"read_only_tools", provider.read_only_tools},
+            {"connect_timeout_ms", provider.connect_timeout_ms},
+            {"request_timeout_ms", provider.request_timeout_ms},
+            {"shutdown_timeout_ms", provider.shutdown_timeout_ms},
+            {"max_result_bytes", provider.max_result_bytes},
+            {"prefix", provider.prefix},
+            {"server_name", provider.server_name},
+            {"command", provider.command},
+        });
+    }
+    for (const auto & provider : config.openapi_providers) {
+        if (config.included_provider_ids.count(provider.id) != 0) continue;
+        json operations = json::object();
+        for (const auto & operation : provider.operations) {
+            operations[operation.first] = {
+                {"enabled", operation.second.enabled},
+                {"access", operation.second.access},
+                {"default_projection", operation.second.default_projection},
+                {"required_parameters", operation.second.required_parameters},
+                {"required_any_parameters", operation.second.required_any_parameters},
+            };
+            const auto parameter_prefixes = json::parse(operation.second.parameter_prefixes_json, nullptr, false);
+            if (parameter_prefixes.is_object() && !parameter_prefixes.empty()) {
+                operations[operation.first]["parameter_prefixes"] = parameter_prefixes;
+            }
+            if (!operation.second.result_view_json.empty()) {
+                operations[operation.first]["result_view"] = json::parse(operation.second.result_view_json);
+            }
+            const auto bound_arguments = json::parse(
+                operation.second.bound_arguments_json, nullptr, false);
+            if (!bound_arguments.is_discarded() && bound_arguments.is_object() &&
+                    !bound_arguments.empty()) {
+                operations[operation.first]["bound_arguments"] = bound_arguments;
+            }
+        }
+        providers.push_back({
+            {"type", "openapi"},
+            {"id", provider.id},
+            {"enabled", provider.enabled},
+            {"required", provider.required},
+            {"spec_path", provider.spec_path},
+            {"base_url", provider.base_url},
+            {"prefix", provider.prefix},
+            {"additional_families", provider.additional_families},
+            {"policy", {
+                {"access", provider.access},
+                {"exposure", provider.exposure},
+                {"operations", std::move(operations)},
+            }},
+            {"auth", {
+                {"type", provider.auth.type},
+                {"scheme", provider.auth.scheme},
+                {"token_url", provider.auth.token_url},
+                {"scopes", provider.auth.scopes},
+                {"token_env", provider.auth.token_env},
+                {"username_env", provider.auth.username_env},
+                {"password_env", provider.auth.password_env},
+                {"client_id_env", provider.auth.client_id_env},
+                {"client_secret_env", provider.auth.client_secret_env},
+                {"client_cert_path_env", provider.auth.client_cert_path_env},
+                {"client_key_path_env", provider.auth.client_key_path_env},
+                {"ca_cert_path_env", provider.auth.ca_cert_path_env},
+            }},
+            {"allow_private_network", provider.allow_private_network},
+            {"limits", {
+                {"connect_timeout_ms", provider.connect_timeout_ms},
+                {"request_timeout_ms", provider.request_timeout_ms},
+                {"max_result_bytes", provider.max_result_bytes},
+                {"default_page_size", provider.default_page_size},
+                {"max_page_size", provider.max_page_size},
+            }},
+        });
+    }
+    json capabilities = json::object();
+    for (const auto & entry : config.tool_capabilities) {
+        capabilities[entry.first] = entry.second;
+    }
+
+    json families = json::object();
+    for (const auto & entry : config.tool_family_descriptions) {
+        families[entry.first] = { {"description", entry.second} };
+    }
+
+    json profiles = json::object();
+    for (const auto & entry : config.tool_profiles) {
+        json profile = {
+            {"include_capabilities", entry.second.include_capabilities},
+            {"exclude_capabilities", entry.second.exclude_capabilities},
+        };
+        if (entry.second.allow_network.has_value()) {
+            profile["allow_network"] = *entry.second.allow_network;
+        }
+        if (entry.second.allow_policy_gated_writes.has_value()) {
+            profile["allow_policy_gated_writes"] = *entry.second.allow_policy_gated_writes;
+        }
+        profiles[entry.first] = std::move(profile);
+    }
+    json sandbox_classes = json::object();
+    for (const auto & entry : config.sandbox.classes) sandbox_classes[entry.first] = sandbox_class_to_json(entry.second);
+    json development_targets = json::object();
+    for (const auto & entry : config.sandbox.development_targets) {
+        json configurations = json::object();
+        for (const auto & item : entry.second.configurations) configurations[item.first] = item.second;
+        json test_filters = json::object();
+        for (const auto & item : entry.second.test_filters) test_filters[item.first] = item.second;
+        development_targets[entry.first] = {
+            {"build_program", entry.second.build_program},
+            {"build_arguments", entry.second.build_arguments},
+            {"test_program", entry.second.test_program},
+            {"test_arguments", entry.second.test_arguments},
+            {"working_directory", entry.second.working_directory},
+            {"configurations", std::move(configurations)},
+            {"test_filters", std::move(test_filters)},
+            {"max_timeout_ms", entry.second.max_timeout_ms},
+        };
+    }
+    json result = {
+        {"schema_version", config.schema_version},
+        {"model", {
+            {"backend", config.model_backend},
+            {"path", config.model_path},
+            {"mmproj", config.mmproj_path},
+            {"embedding_model", config.embedding_model},
+            {"profile", config.model_profile},
+        }},
+        {"bootstrap", {
+            {"package", config.bootstrap_package},
+            {"libraries", common_agent_template_library_config_json(config.bootstrap_libraries)},
+        }},
+        {"runtime", {
+            {"context_size", config.runtime_context_size},
+            {"context_management", {
+                {"enabled", config.context_management.enabled},
+                {"persist_session", config.context_management.persist_session},
+                {"semantic_compaction", config.context_management.semantic_compaction},
+                {"recent_turns", config.context_management.recent_turns},
+                {"summary_max_tokens", config.context_management.summary_max_tokens},
+                {"max_summary_calls_per_turn", config.context_management.max_summary_calls_per_turn},
+                {"max_history_chars", config.context_management.max_history_chars},
+            }},
+            {"n_predict", config.n_predict},
+            {"context_budgets", {
+                {"plan_chars", config.context_budgets.plan_chars},
+                {"step_chars", config.context_budgets.step_chars},
+                {"tool_observation_chars", config.context_budgets.tool_observation_chars},
+                {"input_resources_chars", config.context_budgets.input_resources_chars},
+                {"deliberate_input_resources_chars", config.context_budgets.deliberate_input_resources_chars},
+                {"resource_chunk_max_bytes", config.context_budgets.resource_chunk_max_bytes},
+                {"resource_chunk_overlap_bytes", config.context_budgets.resource_chunk_overlap_bytes},
+                {"memory_chars", config.context_budgets.memory_chars},
+                {"memory_per_item_chars", config.context_budgets.memory_per_item_chars},
+                {"overlay_chars", config.context_budgets.overlay_chars},
+                {"overlay_per_item_chars", config.context_budgets.overlay_per_item_chars},
+                {"deliberate_memory_chars", config.context_budgets.deliberate_memory_chars},
+                {"deliberate_memory_per_item_chars", config.context_budgets.deliberate_memory_per_item_chars},
+                {"deliberate_overlay_chars", config.context_budgets.deliberate_overlay_chars},
+                {"deliberate_overlay_per_item_chars", config.context_budgets.deliberate_overlay_per_item_chars},
+                {"working_state", {
+                    {"max_total_chars", config.context_budgets.working_state.max_total_chars},
+                    {"max_value_chars", config.context_budgets.working_state.max_value_chars},
+                    {"max_completed_steps", config.context_budgets.working_state.max_completed_steps},
+                    {"max_remaining_steps", config.context_budgets.working_state.max_remaining_steps},
+                    {"max_constraints", config.context_budgets.working_state.max_constraints},
+                    {"max_open_questions", config.context_budgets.working_state.max_open_questions},
+                    {"max_resource_refs", config.context_budgets.working_state.max_resource_refs},
+                    {"max_chunk_status", config.context_budgets.working_state.max_chunk_status},
+                    {"max_tool_results", config.context_budgets.working_state.max_tool_results},
+                }},
+            }},
+            {"n_threads", config.n_threads},
+            {"n_gpu_layers", config.n_gpu_layers},
+            {"default_mode", config.default_mode},
+            {"thinking_mode", config.thinking_mode},
+            {"max_reflection_rounds", config.max_reflection_rounds},
+            {"max_plan_revisions", config.max_plan_revisions},
+            {"max_research_iterations", config.max_research_iterations},
+            {"memory_learn", config.memory_learn},
+            {"memory_learn_show_candidate", config.memory_learn_show_candidate},
+            {"memory_learn_min_confidence", config.memory_learn_min_confidence},
+            {"memory_learn_min_reuse", config.memory_learn_min_reuse},
+            {"plan_show_summary", config.plan_show_summary},
+            {"agent_trace", config.agent_trace},
+            {"adaptation", {
+                {"capture", config.adaptation_capture},
+                {"collection_allowed", config.adaptation_collection_allowed},
+                {"max_evidence", config.adaptation_max_evidence},
+                {"backend", config.adaptation_transaction_backend},
+                {"transaction_path", config.adaptation_transaction_path},
+                {"outcome_guidance", {{"generalization", {
+                    {"tool_family_backoff", config.adaptation_outcome_guidance_generalization.tool_family_backoff},
+                    {"project_history", config.adaptation_outcome_guidance_generalization.project_history},
+                    {"tool_families", config.adaptation_outcome_guidance_generalization.tool_families},
+                }}}},
+                {"semi_oracle", {{"search", {
+                    {"algorithm", config.adaptation_semi_oracle_outcome_guidance.search_algorithm},
+                    {"suboptimality_bound", config.adaptation_semi_oracle_outcome_guidance.suboptimality_bound},
+                    {"exact_history_order", config.adaptation_semi_oracle_outcome_guidance.exact_history_order ==
+                        common_semi_oracle_history_order::after_heuristic ? "after_h" : "before_h"},
+                }}, {"outcome_guidance", {
+                    {"mode", config.adaptation_semi_oracle_outcome_guidance.mode},
+                    {"seed", config.adaptation_semi_oracle_outcome_guidance.seed},
+                    {"max_history_evaluations", config.adaptation_semi_oracle_outcome_guidance.max_history_evaluations},
+                    {"sampling_policy", config.adaptation_semi_oracle_outcome_guidance.sampling_policy},
+                    {"projection_cache_bytes", config.adaptation_semi_oracle_outcome_guidance.projection_cache_bytes},
+                }}}},
+                {"flydelta", {
+                    {"enabled", config.adaptation_flydelta_enabled},
+                    {"worker_count", config.adaptation_flydelta_worker_count},
+                    {"queue_path", config.adaptation_flydelta_queue_path},
+                    {"batch_mode", config.adaptation_flydelta_batch_mode},
+                    {"dose_mode", config.adaptation_flydelta_dose_mode},
+                    {"dose_calibration_ref", config.adaptation_flydelta_dose_calibration_ref},
+                    {"search_model_call_budget", config.adaptation_flydelta_search_model_call_budget},
+                    {"batch_parallelism", config.adaptation_flydelta_batch_parallelism},
+                    {"disable_factorized_cvec_batch", config.adaptation_flydelta_disable_factorized_cvec_batch},
+                    {"capture_candidates", config.adaptation_flydelta_capture_candidates},
+                    {"lifecycle_backend", config.adaptation_flydelta_lifecycle_backend},
+                    {"lifecycle_path", config.adaptation_flydelta_lifecycle_path},
+                    {"artifact_root", config.adaptation_flydelta_artifact_root},
+                    {"model_profile_fingerprint", config.adaptation_flydelta_model_profile_fingerprint},
+                    {"capture_layout_revision", config.adaptation_flydelta_capture_layout_revision},
+                    {"max_capture_candidates", config.adaptation_flydelta_max_capture_candidates},
+                    {"outcome_guidance", {
+                        {"mode", common_flydelta_outcome_guidance_mode_name(
+                            config.adaptation_flydelta_outcome_guidance.mode)},
+                        {"seed", config.adaptation_flydelta_outcome_guidance.seed},
+                        {"harm_penalty", config.adaptation_flydelta_outcome_guidance.harm_penalty},
+                        {"progress_reward", config.adaptation_flydelta_outcome_guidance.progress_reward},
+                        {"min_backoff_groups", config.adaptation_flydelta_outcome_guidance.min_backoff_groups},
+                        {"max_prior_strength", config.adaptation_flydelta_outcome_guidance.max_prior_strength},
+                        {"matched_evaluation", config.adaptation_flydelta_outcome_guidance.matched_evaluation},
+                        {"matched_max_arms", config.adaptation_flydelta_outcome_guidance.matched_max_arms},
+                        {"projection_cache_bytes", config.adaptation_flydelta_outcome_guidance.projection_cache_bytes},
+                    }},
+                    {"teacher_scoring_backend", config.adaptation_flydelta_teacher_scoring_backend},
+                    {"canary", {
+                        {"mode", common_flydelta_canary_mode_name(config.adaptation_flydelta_canary_policy.mode)},
+                        {"min_observations", config.adaptation_flydelta_canary_policy.min_observations},
+                        {"min_unique_allocations", config.adaptation_flydelta_canary_policy.min_unique_allocations},
+                        {"min_target_gain", config.adaptation_flydelta_canary_policy.min_target_gain},
+                        {"max_control_regression", config.adaptation_flydelta_canary_policy.max_control_regression},
+                        {"max_competitor_regression", config.adaptation_flydelta_canary_policy.max_competitor_regression},
+                        {"max_harmed_results", config.adaptation_flydelta_canary_policy.max_harmed_results},
+                        {"traffic_steps_basis_points", config.adaptation_flydelta_canary_policy.traffic_steps_basis_points},
+                        {"scope_step_fingerprints", config.adaptation_flydelta_canary_policy.scope_step_fingerprints},
+                        {"pristine_control_interval", config.adaptation_flydelta_canary_policy.pristine_control_interval},
+                        {"allow_scope_expansion", config.adaptation_flydelta_canary_policy.allow_scope_expansion},
+                        {"allow_promotion", config.adaptation_flydelta_canary_policy.allow_promotion},
+                        {"auto_close_on_harmed", config.adaptation_flydelta_canary_policy.auto_close_on_harmed},
+                        {"allow_auto_admission", config.adaptation_flydelta_canary_policy.allow_auto_admission},
+                        {"initial_traffic_basis_points", config.adaptation_flydelta_canary_policy.initial_traffic_basis_points},
+                        {"initial_max_evaluated_observations", config.adaptation_flydelta_canary_policy.initial_max_evaluated_observations},
+                        {"initial_expiry_ms", config.adaptation_flydelta_canary_policy.initial_expiry_ms},
+                    }},
+                }},
+                {"stable_model_facing_tools", config.adaptation_stable_model_facing_tools},
+                {"domains", {
+                    {"planning", config.adaptation_domains.planning},
+                    {"tool_use", config.adaptation_domains.tool_use},
+                    {"research", config.adaptation_domains.research},
+                    {"procedure_learning", config.adaptation_domains.procedure_learning},
+                    {"families", config.adaptation_domains.tool_use_families},
+                }},
+            }},
+        }},
+        {"stores", {
+            {"memory", {
+                {"backend", config.memory_backend},
+                {"path", config.memory_db},
+            }},
+            {"plan", {
+                {"backend", config.plan_backend},
+                {"path", config.plan_db},
+            }},
+            {"data", {
+                {"backend", config.data_backend},
+                {"path", config.data_db},
+            }},
+        }},
+        {"investigation", [&config]() {
+            json sources = json::array();
+            for (const auto & source : config.investigation.sources) {
+                json relation_profiles = json::array();
+                for (const auto & rule : source.relation_profiles) {
+                    relation_profiles.push_back({{"id", rule.id}, {"event_type", rule.event_type},
+                        {"from_kind", investigation_entity_kind_name(rule.from_kind)},
+                        {"to_kind", investigation_entity_kind_name(rule.to_kind)},
+                        {"relation_kind", common_investigation_relation_kind_name(rule.relation_kind)},
+                        {"from_role", rule.from_role}, {"to_role", rule.to_role}});
+                }
+                sources.push_back({
+                    {"id", source.id}, {"dialect", source.dialect}, {"base_url", source.base_url},
+                    {"allowed_indices", source.allowed_indices},
+                    {"allowed_namespaces", source.allowed_namespaces},
+                    {"allowed_projects", source.allowed_projects}, {"fields", source.fields},
+                    {"relation_profiles", std::move(relation_profiles)},
+                    {"auth", {
+                        {"type", source.auth.type}, {"scheme", source.auth.scheme},
+                        {"token_url", source.auth.token_url}, {"scopes", source.auth.scopes},
+                        {"token_env", source.auth.token_env}, {"username_env", source.auth.username_env},
+                        {"password_env", source.auth.password_env}, {"client_id_env", source.auth.client_id_env},
+                        {"client_secret_env", source.auth.client_secret_env},
+                        {"client_cert_path_env", source.auth.client_cert_path_env},
+                        {"client_key_path_env", source.auth.client_key_path_env},
+                        {"ca_cert_path_env", source.auth.ca_cert_path_env},
+                    }},
+                    {"allow_private_network", source.allow_private_network},
+                    {"connect_timeout_ms", source.connect_timeout_ms},
+                    {"request_timeout_ms", source.request_timeout_ms},
+                    {"max_page_size", source.max_page_size},
+                    {"max_result_bytes", source.max_result_bytes},
+                });
+            }
+            return json{
+                {"enabled", config.investigation.enabled}, {"workflow_package", config.investigation.workflow_package},
+                {"sources", std::move(sources)},
+                {"max_events_per_query", config.investigation.max_events_per_query},
+                {"max_nodes_per_expansion", config.investigation.max_nodes_per_expansion},
+                {"max_edges_per_expansion", config.investigation.max_edges_per_expansion},
+                {"max_expansions_per_turn", config.investigation.max_expansions_per_turn},
+                {"max_materialized_rows", config.investigation.max_materialized_rows},
+            };
+        }()},
+        {"resources", {
+            {"blob_backend", config.resource_blob_backend},
+            {"blob_root", config.resource_blob_root},
+            {"metadata_backend", config.resource_metadata_backend},
+            {"metadata_db", config.resource_metadata_db},
+            {"processor_policies", [&config]() {
+                json policies = json::object();
+                for (const auto & entry : config.resource_processor_policies) {
+                    policies[entry.first] = {
+                        {"execution", entry.second.execution},
+                        {"backend", entry.second.backend},
+                        {"executable", entry.second.executable},
+                        {"script", entry.second.script},
+                        {"image", entry.second.image},
+                        {"expected_version", entry.second.expected_version},
+                        {"max_pages", entry.second.max_pages},
+                    };
+                }
+                return policies;
+            }()},
+        }},
+        {"tools", {
+            {"profile", config.tool_profile},
+            {"repository_root", config.repository_root},
+            {"include_dir", config.tools_include_dir},
+            {"capabilities", std::move(capabilities)},
+            {"families", std::move(families)},
+            {"profiles", std::move(profiles)},
+            {"providers", std::move(providers)},
+        }},
+        {"diagnostics", {
+            {"semantic_backend", config.diagnostics.semantic_backend},
+            {"clang_executable", config.diagnostics.clang_executable},
+            {"clangd_executable", config.diagnostics.clangd_executable},
+            {"compile_commands", config.diagnostics.compile_commands},
+            {"compile_commands_source", config.diagnostics.compile_commands_source},
+            {"compile_commands_destination", config.diagnostics.compile_commands_destination},
+            {"semantic_request_timeout_ms", config.diagnostics.semantic_request_timeout_ms},
+            {"native_crash_backend", config.diagnostics.native_crash_backend},
+            {"gdb_executable", config.diagnostics.gdb_executable},
+            {"cdb_executable", config.diagnostics.cdb_executable},
+            {"native_crash_timeout_ms", config.diagnostics.native_crash_timeout_ms},
+            {"native_crash_max_frames", config.diagnostics.native_crash_max_frames},
+            {"native_crash_max_threads", config.diagnostics.native_crash_max_threads},
+            {"native_crash_max_output_bytes", config.diagnostics.native_crash_max_output_bytes},
+        }},
+        {"sandbox", {
+            {"backend", config.sandbox.backend},
+            {"docker", {
+                {"executable", config.sandbox.docker_executable},
+                {"default_image", config.sandbox.docker_default_image},
+            }},
+            {"lxc", {
+                {"executable", config.sandbox.lxc_executable},
+                {"default_image", config.sandbox.lxc_default_image},
+                {"network_mode", config.sandbox.lxc_network_mode},
+                {"network_profile", config.sandbox.lxc_network_profile},
+                {"network_profile_scope", config.sandbox.lxc_network_profile_scope},
+                {"cleanup", config.sandbox.lxc_cleanup},
+            }},
+            {"kubernetes", {
+                {"executable", config.sandbox.kubernetes_executable},
+                {"kubeconfig", config.sandbox.kubernetes_kubeconfig},
+                {"context", config.sandbox.kubernetes_context},
+                {"insecure_skip_tls_verify", config.sandbox.kubernetes_insecure_skip_tls_verify},
+                {"namespace", config.sandbox.kubernetes_namespace},
+                {"service_account", config.sandbox.kubernetes_service_account},
+                {"runtime_class", config.sandbox.kubernetes_runtime_class},
+                {"storage_class", config.sandbox.kubernetes_storage_class},
+                {"workspace_storage_size", config.sandbox.kubernetes_workspace_storage_size},
+                {"artifact_storage_size", config.sandbox.kubernetes_artifact_storage_size},
+                {"staging_image", config.sandbox.kubernetes_staging_image},
+                {"pvc_retention", config.sandbox.kubernetes_pvc_retention},
+                {"staging_timeout_ms", config.sandbox.kubernetes_staging_timeout_ms},
+                {"cleanup", config.sandbox.kubernetes_cleanup},
+            }},
+            {"workspace", {
+                {"root", config.sandbox.workspace.workspace_root},
+                {"artifact_root", config.sandbox.workspace.artifact_root},
+                {"operation_mode", config.sandbox.workspace.operation_mode},
+                {"project_mode", config.sandbox.workspace.project_mode},
+            }},
+            {"defaults", sandbox_defaults_to_json(config.sandbox.defaults)},
+            {"classes", std::move(sandbox_classes)},
+            {"development_targets", std::move(development_targets)},
+        }},
+        {"mcp", {
+            {"inbound", {
+                {"enabled", config.inbound_mcp_enabled},
+                {"listen", config.inbound_mcp_listen_address},
+                {"port", config.inbound_mcp_port},
+                {"path", config.inbound_mcp_path},
+                {"allowed_origin", config.inbound_mcp_allowed_origin},
+                {"max_body_bytes", config.inbound_mcp_max_body_bytes},
+                {"max_result_bytes", config.inbound_mcp_max_result_bytes},
+                {"agent_tools", config.inbound_mcp_agent_tools_enabled},
+                {"max_delegation_depth", config.inbound_mcp_max_delegation_depth},
+                {"tokens", [&config]() {
+                    json tokens = json::array();
+                    for (const auto & token : config.inbound_mcp_tokens) {
+                        tokens.push_back({
+                            {"id", token.id},
+                            {"token_env", token.token_env},
+                            {"audience", token.audience},
+                            {"namespace", token.namespace_id},
+                            {"project", token.project_id},
+                            {"tool_profile", token.tool_profile},
+                            {"allowed_tools", token.allowed_tools},
+                            {"allow_writes", token.allow_writes},
+                            {"allow_admin", token.allow_admin},
+                        });
+                    }
+                    return tokens;
+                }()},
+                {"authorization", {
+                    {"mode", config.inbound_mcp_authorization_mode},
+                    {"issuer", config.inbound_mcp_jwt_issuer},
+                    {"audience", config.inbound_mcp_jwt_audience},
+                    {"jwks_uri", config.inbound_mcp_jwt_jwks_uri},
+                    {"allowed_algorithms", config.inbound_mcp_jwt_allowed_algorithms},
+                    {"required_scopes", config.inbound_mcp_jwt_required_scopes},
+                    {"tool_profile", config.inbound_mcp_jwt_tool_profile},
+                    {"allowed_tools", config.inbound_mcp_jwt_allowed_tools},
+                    {"allow_writes", config.inbound_mcp_jwt_allow_writes},
+                    {"allow_admin", config.inbound_mcp_jwt_allow_admin},
+                }},
+            }},
+        }},
+        {"jsonl", {
+            {"tcp", {
+                {"enabled", config.jsonl_tcp_enabled},
+                {"listen", config.jsonl_tcp_listen_address},
+                {"port", config.jsonl_tcp_port},
+                {"max_line_bytes", config.jsonl_tcp_max_line_bytes},
+                {"idle_timeout_seconds", config.jsonl_tcp_idle_timeout_seconds},
+            }},
+            {"unix_socket", {
+                {"enabled", config.jsonl_unix_socket_enabled},
+                {"path", config.jsonl_unix_socket_path},
+                {"mode", config.jsonl_unix_socket_mode},
+            }},
+        }},
+        {"limits", {
+            {"queue_capacity", config.queue_capacity},
+            {"worker_count", config.worker_count},
+            {"inference_max_active", config.inference_max_active},
+            {"max_turn_seconds", config.max_turn_seconds},
+            {"turn_timeout_ms", config.turn_timeout_ms},
+            {"inference_step_timeout_ms", config.inference_step_timeout_ms},
+            {"tool_timeout_ms", config.tool_timeout_ms},
+            {"mcp_connect_timeout_ms", config.mcp_connect_timeout_ms},
+            {"mcp_request_timeout_ms", config.mcp_request_timeout_ms},
+            {"mcp_shutdown_timeout_ms", config.mcp_shutdown_timeout_ms},
+            {"max_tool_rounds", config.max_tool_rounds},
+            {"max_continuations", config.max_continuations},
+        }},
+    };
+    const common_agent_context_budget_config budget_defaults;
+    for (const auto & field : prompt_budget_fields) {
+        if (config.context_budgets.configured_prompt_values.count(field.first) == 0 &&
+                config.context_budgets.*(field.second) == budget_defaults.*(field.second)) {
+            result["runtime"]["context_budgets"].erase(field.first);
+        }
+    }
+    if (!config.model_catalog.directory.empty() || !config.model_catalog.bases.empty() ||
+            !config.model_catalog.profiles.empty()) {
+        result["models"] = json::parse(common_agent_model_catalog_to_json(config.model_catalog));
+    }
+    return result;
+}
+
+bool validate_agent_host_config(
+        const agent_host_config & config,
+        std::string & error) {
+    if (!common_agent_validate_model_catalog(config.model_catalog, error)) {
+        error = "models: " + error;
+        return false;
+    }
+    for (const auto & [family_id, description] : config.tool_family_descriptions) {
+        if (family_id.empty() || description.empty() || description.size() > 240 ||
+                family_id.find_first_of(" \t\r\n") != std::string::npos ||
+                description.find_first_of("\r\n") != std::string::npos) {
+            error = "tools.families entries must have non-empty ids and single-line descriptions at most 240 characters";
+            return false;
+        }
+    }
+    if (config.jsonl_tcp_enabled && config.jsonl_unix_socket_enabled) {
+        error = "jsonl.tcp and jsonl.unix_socket cannot both be enabled for one JSONL host";
+        return false;
+    }
+    if (config.schema_version != 1) {
+        error = "unsupported host config schema_version: " + std::to_string(config.schema_version);
+        return false;
+    }
+    if (config.queue_capacity == 0) {
+        error = "limits.queue_capacity must be greater than zero";
+        return false;
+    }
+    if (config.worker_count == 0) {
+        error = "limits.worker_count must be greater than zero";
+        return false;
+    }
+    if (config.inference_max_active == 0) {
+        error = "limits.inference_max_active must be greater than zero";
+        return false;
+    }
+    common_flydelta_worker_budget flydelta_budget;
+    if (!common_flydelta_worker_budget_compute(
+            config.worker_count,
+            config.adaptation_flydelta_enabled,
+            config.adaptation_flydelta_worker_count,
+            flydelta_budget,
+            error)) {
+        error = "runtime.adaptation.flydelta: " + error;
+        return false;
+    }
+    if (config.adaptation_flydelta_enabled && config.adaptation_flydelta_queue_path.empty()) {
+        error = "runtime.adaptation.flydelta.queue_path is required when FlyDelta is enabled";
+        return false;
+    }
+    if (config.adaptation_flydelta_dose_mode != "direction_dose" &&
+            config.adaptation_flydelta_dose_mode != "raw_coefficients") {
+        error = "FlyDelta dose_mode must be direction_dose or raw_coefficients";
+        return false;
+    }
+    if (config.adaptation_flydelta_dose_calibration_ref.size() > 512) {
+        error = "FlyDelta dose calibration reference is too long";
+        return false;
+    }
+    if (config.adaptation_flydelta_search_model_call_budget == 0 ||
+            config.adaptation_flydelta_search_model_call_budget > 65536) {
+        error = "FlyDelta search_model_call_budget must be between 1 and 65536";
+        return false;
+    }
+    if (config.adaptation_flydelta_batch_mode != "disabled" &&
+            config.adaptation_flydelta_batch_mode != "auto" &&
+            config.adaptation_flydelta_batch_mode != "required") {
+        error = "runtime.adaptation.flydelta.batch_mode must be disabled, auto or required";
+        return false;
+    }
+    if (config.adaptation_flydelta_batch_parallelism == 0 ||
+            config.adaptation_flydelta_batch_parallelism > 8) {
+        error = "runtime.adaptation.flydelta.batch_parallelism must be between 1 and 8";
+        return false;
+    }
+    if (config.adaptation_flydelta_enabled && flydelta_budget.agent_workers == 0) {
+        error = "runtime.adaptation.flydelta.worker_count must leave at least one agent worker";
+        return false;
+    }
+    if (config.adaptation_flydelta_capture_candidates && !config.adaptation_capture) {
+        error = "runtime.adaptation.flydelta.capture_candidates requires adaptation.capture";
+        return false;
+    }
+    if (config.adaptation_flydelta_capture_candidates && config.adaptation_flydelta_capture_layout_revision.empty()) {
+        error = "runtime.adaptation.flydelta.capture_layout_revision must not be empty";
+        return false;
+    }
+    if (config.adaptation_flydelta_max_capture_candidates == 0) {
+        error = "runtime.adaptation.flydelta.max_capture_candidates must be greater than zero";
+        return false;
+    }
+    if (!common_flydelta_canary_policy_validate(
+            config.adaptation_flydelta_canary_policy, error)) {
+        error = "runtime.adaptation.flydelta.canary: " + error;
+        return false;
+    }
+    if (!common_semi_oracle_outcome_guidance_config_validate(
+            config.adaptation_semi_oracle_outcome_guidance, error)) {
+        error = "runtime.adaptation.semi_oracle.outcome_guidance: " + error;
+        return false;
+    }
+    if (!common_flydelta_outcome_guidance_config_validate(
+            config.adaptation_flydelta_outcome_guidance, error)) {
+        error = "runtime.adaptation.flydelta.outcome_guidance: " + error;
+        return false;
+    }
+    if (!common_outcome_guidance_generalization_config_validate(
+            config.adaptation_outcome_guidance_generalization, error)) {
+        error = "runtime.adaptation.outcome_guidance.generalization: " + error;
+        return false;
+    }
+    if (config.adaptation_flydelta_teacher_scoring_backend != "auto" &&
+            config.adaptation_flydelta_teacher_scoring_backend != "cpu" &&
+            config.adaptation_flydelta_teacher_scoring_backend != "backend") {
+        error = "runtime.adaptation.flydelta.teacher_scoring_backend must be auto, cpu, or backend";
+        return false;
+    }
+    if (config.n_threads < 1) {
+        error = "runtime.n_threads must be greater than zero";
+        return false;
+    }
+    if (config.runtime_context_size < 0) {
+        error = "runtime.context_size must not be negative";
+        return false;
+    }
+    if (config.context_management.recent_turns == 0 || config.context_management.recent_turns > 32 ||
+            config.context_management.summary_max_tokens < 16 || config.context_management.summary_max_tokens > 4096 ||
+            config.context_management.max_summary_calls_per_turn > 1 ||
+            config.context_management.max_history_chars < 256 || config.context_management.max_history_chars > 1024 * 1024) {
+        error = "runtime.context_management limits are outside supported bounds";
+        return false;
+    }
+    const auto & budgets = config.context_budgets;
+    if (budgets.plan_chars == 0 || budgets.step_chars == 0 ||
+            budgets.tool_observation_chars == 0 || budgets.input_resources_chars == 0 ||
+            budgets.deliberate_input_resources_chars == 0 ||
+            (budgets.configured_prompt_values.count("resource_chunk_max_bytes") && budgets.resource_chunk_max_bytes == 0) ||
+            (budgets.resource_chunk_max_bytes != 0 && budgets.resource_chunk_max_bytes < 4) ||
+            (budgets.resource_chunk_max_bytes != 0 &&
+                (budgets.configured_prompt_values.count("resource_chunk_overlap_bytes") ||
+                 budgets.resource_chunk_overlap_bytes != common_agent_context_budget_config{}.resource_chunk_overlap_bytes) &&
+                budgets.resource_chunk_overlap_bytes >= budgets.resource_chunk_max_bytes) || budgets.memory_chars == 0 ||
+            budgets.memory_per_item_chars == 0 || budgets.overlay_chars == 0 ||
+            budgets.overlay_per_item_chars == 0 || budgets.deliberate_memory_chars == 0 ||
+            budgets.deliberate_memory_per_item_chars == 0 || budgets.deliberate_overlay_chars == 0 ||
+            budgets.deliberate_overlay_per_item_chars == 0 ||
+            budgets.working_state.max_total_chars == 0 ||
+            budgets.working_state.max_value_chars == 0 ||
+            budgets.working_state.max_completed_steps == 0 ||
+            budgets.working_state.max_remaining_steps == 0 ||
+            budgets.working_state.max_constraints == 0 ||
+            budgets.working_state.max_open_questions == 0 ||
+            budgets.working_state.max_resource_refs == 0 ||
+            budgets.working_state.max_chunk_status == 0 ||
+            budgets.working_state.max_tool_results == 0) {
+        error = "runtime.context_budgets values must be greater than zero";
+        return false;
+    }
+    if (config.max_continuations > 16) {
+        error = "limits.max_continuations must not exceed 16";
+        return false;
+    }
+    common_agent_thinking_request thinking_request;
+    if (!parse_common_agent_thinking_request(config.thinking_mode, thinking_request)) {
+        error = "runtime.thinking_mode must be auto, reflective, deliberate, or research";
+        return false;
+    }
+    if (config.max_reflection_rounds < 0 || config.max_plan_revisions < 0) {
+        error = "runtime deliberation limits must not be negative";
+        return false;
+    }
+    if (config.memory_backend != "auto" && config.memory_backend != "in-memory" && config.memory_backend != "cozo" && config.memory_backend != "sqlite") {
+        error = "stores.memory.backend must be auto, in-memory, cozo, or sqlite";
+        return false;
+    }
+    if (config.plan_backend != "auto" && config.plan_backend != "in-memory" && config.plan_backend != "cozo" && config.plan_backend != "sqlite") {
+        error = "stores.plan.backend must be auto, in-memory, cozo, or sqlite";
+        return false;
+    }
+    if (config.data_backend != "auto" && config.data_backend != "none" && config.data_backend != "cozo" && config.data_backend != "sqlite") {
+        error = "stores.data.backend must be auto, none, cozo, or sqlite";
+        return false;
+    }
+    if ((config.memory_backend == "cozo" || config.memory_backend == "sqlite") && config.memory_db.empty()) {
+        error = "stores.memory.path is required when stores.memory.backend is cozo or sqlite";
+        return false;
+    }
+    if ((config.plan_backend == "cozo" || config.plan_backend == "sqlite") && config.plan_db.empty()) {
+        error = "stores.plan.path is required when stores.plan.backend is cozo or sqlite";
+        return false;
+    }
+    if ((config.data_backend == "cozo" || config.data_backend == "sqlite") && config.data_db.empty()) {
+        error = "stores.data.path is required when stores.data.backend is cozo or sqlite";
+        return false;
+    }
+    const auto & investigation = config.investigation;
+    if (investigation.max_events_per_query == 0 || investigation.max_events_per_query > 100000 ||
+            investigation.max_nodes_per_expansion == 0 || investigation.max_nodes_per_expansion > 1000 ||
+            investigation.max_edges_per_expansion == 0 || investigation.max_edges_per_expansion > 4000 ||
+            investigation.max_expansions_per_turn == 0 || investigation.max_expansions_per_turn > 128 ||
+            investigation.max_materialized_rows == 0 || investigation.max_materialized_rows > 1000000) {
+        error = "investigation limits are outside supported bounds";
+        return false;
+    }
+    if (investigation.enabled) {
+#ifndef LLAMA_MEMORY_USE_COZO
+        error = "investigation.enabled requires a build with LLAMA_MEMORY_COZO";
+        return false;
+#else
+        if (config.data_backend != "cozo" || config.data_db.empty()) {
+            error = "investigation.enabled requires stores.data.backend=cozo and stores.data.path";
+            return false;
+        }
+        if (investigation.sources.empty()) {
+            error = "investigation.enabled requires at least one configured search source";
+            return false;
+        }
+        if (investigation.workflow_package.empty()) {
+            error = "investigation.enabled requires investigation.workflow_package";
+            return false;
+        }
+#endif
+    }
+    std::unordered_set<std::string> investigation_source_ids;
+    for (const auto & source : investigation.sources) {
+        if (source.id.empty() || source.id.size() > 128 || !investigation_source_ids.insert(source.id).second ||
+                (source.dialect != "elasticsearch" && source.dialect != "opensearch") ||
+                source.base_url.empty() || source.base_url.size() > 2048 ||
+                source.allowed_indices.empty() || source.allowed_indices.size() > 256 ||
+                source.allowed_namespaces.empty() || source.allowed_namespaces.size() > 256 ||
+                source.connect_timeout_ms == 0 || source.request_timeout_ms == 0 ||
+                source.max_page_size == 0 || source.max_page_size > investigation.max_events_per_query ||
+                source.max_result_bytes == 0 || source.max_result_bytes > 64 * 1024 * 1024) {
+            error = "investigation source identity, dialect, endpoint, index allowlist, or limits are invalid";
+            return false;
+        }
+        for (const auto & index : source.allowed_indices) {
+            if (index.empty() || index.size() > 255 || index.find_first_of("*?{},") != std::string::npos) {
+                error = "investigation source allowed_indices must be explicit names without wildcards";
+                return false;
+            }
+        }
+        for (const auto & scope_id : source.allowed_namespaces) {
+            if (scope_id.empty() || scope_id.size() > 256) {
+                error = "investigation source allowed_namespaces must contain explicit namespace IDs";
+                return false;
+            }
+        }
+        for (const auto & scope_id : source.allowed_projects) {
+            if (scope_id.empty() || scope_id.size() > 256) {
+                error = "investigation source allowed_projects must contain explicit project IDs";
+                return false;
+            }
+        }
+        static const std::unordered_set<std::string> mapped_fields = {
+            "event_id", "event_time", "collected_time", "host_id", "host_name", "user_id",
+            "source_ip", "destination_ip", "process_id", "process_start_time", "file_hash",
+            "trace_id", "message_id", "event_type", "event_outcome"
+        };
+        for (const auto & field : source.fields) {
+            if (!mapped_fields.count(field.first) || field.second.empty() || field.second.size() > 256) {
+                error = "investigation source contains an unsupported or empty field mapping";
+                return false;
+            }
+        }
+        std::vector<common_investigation_relation> profile_probe_relations;
+        std::vector<std::string> profile_probe_limitations;
+        if (!common_investigation_build_relations(source.id, {}, {}, source.relation_profiles,
+                profile_probe_relations, profile_probe_limitations, error)) {
+            error = "investigation source relation profile is invalid: " + error;
+            return false;
+        }
+        if (!validate_provider_auth(source.auth, "investigation source", true, error)) return false;
+        if (source.auth.type == "api_key") {
+            error = "investigation source api_key auth requires an explicit header contract and is not supported";
+            return false;
+        }
+    }
+    if (config.diagnostics.semantic_backend != "auto" &&
+            config.diagnostics.semantic_backend != "text" &&
+            config.diagnostics.semantic_backend != "clang" &&
+            config.diagnostics.semantic_backend != "clangd") {
+        error = "diagnostics.semantic_backend must be auto, text, clang, or clangd";
+        return false;
+    }
+    if (config.diagnostics.native_crash_backend != "auto" &&
+            config.diagnostics.native_crash_backend != "gdb" &&
+            config.diagnostics.native_crash_backend != "cdb" &&
+            config.diagnostics.native_crash_backend != "none") {
+        error = "diagnostics.native_crash_backend must be auto, gdb, cdb, or none";
+        return false;
+    }
+    if (config.diagnostics.clang_executable.empty() || config.diagnostics.clangd_executable.empty()) {
+        error = "diagnostics clang executable names must not be empty";
+        return false;
+    }
+    if (config.diagnostics.compile_commands.empty()) {
+        error = "diagnostics.compile_commands must not be empty";
+        return false;
+    }
+    for (const auto * path : {&config.diagnostics.compile_commands_source, &config.diagnostics.compile_commands_destination}) {
+        if (path->size() > 4096 || path->find('\0') != std::string::npos) {
+            error = "diagnostics compilation database paths must be at most 4096 bytes and contain no NUL";
+            return false;
+        }
+    }
+    if (config.diagnostics.semantic_request_timeout_ms < 100 || config.diagnostics.semantic_request_timeout_ms > 180000) {
+        error = "diagnostics.semantic_request_timeout_ms must be between 100 and 180000";
+        return false;
+    }
+    if (config.diagnostics.gdb_executable.empty() || config.diagnostics.cdb_executable.empty()) {
+        error = "diagnostics native crash debugger executable names must not be empty";
+        return false;
+    }
+    if (config.diagnostics.native_crash_timeout_ms < 100 || config.diagnostics.native_crash_timeout_ms > 600000 ||
+            config.diagnostics.native_crash_max_frames < 1 || config.diagnostics.native_crash_max_frames > 1024 ||
+            config.diagnostics.native_crash_max_threads < 1 || config.diagnostics.native_crash_max_threads > 256 ||
+            config.diagnostics.native_crash_max_output_bytes < 4096 || config.diagnostics.native_crash_max_output_bytes > 16 * 1024 * 1024) {
+        error = "diagnostics native crash limits are out of bounds";
+        return false;
+    }
+    if (config.inbound_mcp_enabled) {
+        if (config.inbound_mcp_listen_address.empty() || config.inbound_mcp_path.empty()) {
+            error = "mcp.inbound listen and path must not be empty";
+            return false;
+        }
+        if (config.inbound_mcp_tokens.empty()) {
+            if (config.inbound_mcp_authorization_mode != "jwt") {
+                error = "mcp.inbound.tokens must not be empty when opaque inbound MCP is enabled";
+                return false;
+            }
+        }
+        if (config.inbound_mcp_authorization_mode != "opaque" &&
+                config.inbound_mcp_authorization_mode != "jwt") {
+            error = "mcp.inbound.authorization.mode must be opaque or jwt";
+            return false;
+        }
+        if (config.inbound_mcp_authorization_mode == "jwt" &&
+                (config.inbound_mcp_jwt_issuer.empty() ||
+                 config.inbound_mcp_jwt_audience.empty() ||
+                 config.inbound_mcp_jwt_jwks_uri.empty() ||
+                 config.inbound_mcp_jwt_tool_profile.empty())) {
+            error = "JWT inbound MCP authorization requires issuer, audience, jwks_uri and tool_profile";
+            return false;
+        }
+    }
+
+    if (config.jsonl_tcp_enabled) {
+        if (config.jsonl_tcp_listen_address.empty() ||
+                config.jsonl_tcp_port <= 0 || config.jsonl_tcp_port > 65535) {
+            error = "jsonl.tcp requires a valid listen address and port";
+            return false;
+        }
+        if (config.jsonl_tcp_max_line_bytes == 0) {
+            error = "jsonl.tcp.max_line_bytes must be at least 1";
+            return false;
+        }
+        if (config.inbound_mcp_tokens.empty() && config.inbound_mcp_authorization_mode != "jwt") {
+            error = "jsonl.tcp reuses mcp.inbound authentication and requires opaque token profiles or jwt mode";
+            return false;
+        }
+    }
+    if (config.jsonl_unix_socket_enabled) {
+        if (config.jsonl_unix_socket_path.empty()) {
+            error = "jsonl.unix_socket requires a path";
+            return false;
+        }
+        if (config.jsonl_unix_socket_mode < 0 || config.jsonl_unix_socket_mode > 0777) {
+            error = "jsonl.unix_socket.mode must be an octal permission value between 0000 and 0777";
+            return false;
+        }
+        if (config.inbound_mcp_tokens.empty() && config.inbound_mcp_authorization_mode != "jwt") {
+            error = "jsonl.unix_socket reuses mcp.inbound authentication and requires opaque token profiles or jwt mode";
+            return false;
+        }
+    }
+    std::unordered_set<std::string> inbound_token_ids;
+    for (const auto & token : config.inbound_mcp_tokens) {
+        if (token.id.empty() || token.token_env.empty() || token.audience.empty() ||
+                token.namespace_id.empty() || token.project_id.empty() || token.tool_profile.empty()) {
+            error = "MCP inbound token requires id, token_env, audience, namespace, project and tool_profile";
+            return false;
+        }
+        if (!inbound_token_ids.insert(token.id).second) {
+            error = "MCP inbound token ids must be unique: " + token.id;
+            return false;
+        }
+    }
+    std::unordered_set<std::string> provider_ids;
+    for (const auto & capability : config.tool_capabilities) {
+        if (capability.first.empty()) {
+            error = "tools.capabilities ids must not be empty";
+            return false;
+        }
+        std::unordered_set<std::string> tool_names;
+        for (const auto & tool : capability.second) {
+            if (tool.empty()) {
+                error = "tools.capabilities entries must not contain empty tool names";
+                return false;
+            }
+            if (!tool_names.insert(tool).second) {
+                error = "tools.capabilities entries must not contain duplicate tools: " + tool;
+                return false;
+            }
+        }
+    }
+    for (const auto & entry : config.resource_processor_policies) {
+        const auto & policy = entry.second;
+        if (entry.first.empty()) {
+            error = "resources.processor_policies ids must not be empty";
+            return false;
+        }
+        if (policy.execution != "local_preferred" &&
+                policy.execution != "sandbox_preferred" &&
+                policy.execution != "local_required" &&
+                policy.execution != "sandbox_required") {
+            error = "resource processor policy has unsupported execution mode: " + entry.first;
+            return false;
+        }
+        if (policy.backend != "auto" && policy.backend != "local" &&
+                policy.backend != "docker" && policy.backend != "kubernetes" &&
+                policy.backend != "lxc") {
+            error = "resource processor policy has unsupported backend: " + entry.first;
+            return false;
+        }
+        if (policy.execution == "sandbox_required" && policy.backend == "local") {
+            error = "sandbox_required resource processor policy cannot use the local backend: " + entry.first;
+            return false;
+        }
+        if (policy.execution == "local_required" &&
+                (policy.backend == "docker" || policy.backend == "kubernetes" || policy.backend == "lxc")) {
+            error = "local_required resource processor policy cannot use a sandbox backend: " + entry.first;
+            return false;
+        }
+        if (entry.first == "pdf.page_image" && policy.max_pages > 100) {
+            error = "pdf.page_image max_pages must not exceed 100";
+            return false;
+        }
+    }
+    if (config.sandbox.backend != "none" && config.sandbox.backend != "docker" &&
+            config.sandbox.backend != "kubernetes" && config.sandbox.backend != "lxc") {
+        error = "sandbox.backend must be none, docker, kubernetes or lxc";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_executable.empty()) {
+        error = "sandbox.lxc.executable must not be empty";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_network_mode != "none" &&
+            config.sandbox.lxc_network_mode != "profile") {
+        error = "sandbox.lxc.network_mode must be none or profile";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_network_profile.empty()) {
+        error = "sandbox.lxc.network_profile is required; use an operator-managed profile that enforces the declared network scope";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" &&
+            config.sandbox.lxc_network_profile_scope != "none" &&
+            config.sandbox.lxc_network_profile_scope != "dns_only" &&
+            config.sandbox.lxc_network_profile_scope != "allowlisted" &&
+            config.sandbox.lxc_network_profile_scope != "package_registry" &&
+            config.sandbox.lxc_network_profile_scope != "research_web") {
+        error = "sandbox.lxc.network_profile_scope must be none, dns_only, allowlisted, package_registry or research_web";
+        return false;
+    }
+    if (config.sandbox.backend == "lxc" && config.sandbox.lxc_network_mode == "none" &&
+            !config.sandbox.lxc_network_profile.empty() &&
+            config.sandbox.lxc_network_profile_scope != "none") {
+        error = "sandbox.lxc network_mode none requires a network_profile_scope of none";
+        return false;
+    }
+    if (config.sandbox.backend == "kubernetes" && config.sandbox.kubernetes_namespace.empty()) {
+        error = "sandbox.kubernetes.namespace must not be empty";
+        return false;
+    }
+    if (config.sandbox.backend == "kubernetes" &&
+            (config.sandbox.kubernetes_workspace_storage_size.empty() ||
+             config.sandbox.kubernetes_artifact_storage_size.empty() ||
+             config.sandbox.kubernetes_staging_image.empty() ||
+             config.sandbox.kubernetes_staging_timeout_ms == 0)) {
+        error = "sandbox.kubernetes storage sizes, staging image and staging timeout must be configured";
+        return false;
+    }
+    if (config.sandbox.backend == "kubernetes" &&
+            config.sandbox.kubernetes_pvc_retention != "operation" &&
+            config.sandbox.kubernetes_pvc_retention != "session" &&
+            config.sandbox.kubernetes_pvc_retention != "project" &&
+            config.sandbox.kubernetes_pvc_retention != "never") {
+        error = "sandbox.kubernetes.pvc_retention must be operation, session, project or never";
+        return false;
+    }
+    if (!config.sandbox.classes.empty() && config.sandbox.workspace.workspace_root.empty()) {
+        error = "sandbox.workspace.root is required when sandbox classes are configured";
+        return false;
+    }
+    if (config.sandbox.workspace.operation_mode != "ephemeral" &&
+            config.sandbox.workspace.operation_mode != "persistent") {
+        error = "sandbox.workspace.operation_mode must be ephemeral or persistent";
+        return false;
+    }
+    if (config.sandbox.workspace.project_mode != "persistent" &&
+            config.sandbox.workspace.project_mode != "ephemeral") {
+        error = "sandbox.workspace.project_mode must be persistent or ephemeral";
+        return false;
+    }
+    for (const auto & entry : config.sandbox.classes) {
+        if (entry.first.empty() || entry.second.execution_class != entry.first ||
+                entry.second.limits.timeout_ms == 0 || entry.second.limits.cpu_count == 0 ||
+                entry.second.limits.max_output_bytes == 0) {
+            error = "sandbox class has invalid identity or limits: " + entry.first;
+            return false;
+        }
+    }
+    for (const auto & entry : config.sandbox.development_targets) {
+        const auto & profile = entry.second;
+        if (entry.first.empty() || profile.build_program.empty() || profile.max_timeout_ms < 1000 ||
+                profile.max_timeout_ms > 1800000 ||
+                (profile.working_directory != "/workspace/source" &&
+                    profile.working_directory != "/workspace/writable" &&
+                    profile.working_directory != "/workspace/artifacts") ||
+                profile.build_program.find('\0') != std::string::npos ||
+                profile.test_program.find('\0') != std::string::npos ||
+                profile.build_arguments.size() > 64 || profile.test_arguments.size() > 64) {
+            error = "sandbox development target has invalid identity, command, timeout or working directory: " + entry.first;
+            return false;
+        }
+        const auto valid_arguments = [](const std::vector<std::string> & arguments) {
+            return std::all_of(arguments.begin(), arguments.end(), [](const std::string & argument) {
+                return argument.size() <= 4096 && argument.find('\0') == std::string::npos;
+            });
+        };
+        if (!valid_arguments(profile.build_arguments) || !valid_arguments(profile.test_arguments)) {
+            error = "sandbox development target contains invalid command arguments: " + entry.first;
+            return false;
+        }
+        if (profile.test_program.empty() && !profile.test_arguments.empty()) {
+            error = "sandbox development target test arguments require a test program: " + entry.first;
+            return false;
+        }
+    }
+    for (const auto & profile : config.tool_profiles) {
+        if (profile.first.empty()) {
+            error = "tools.profiles ids must not be empty";
+            return false;
+        }
+        std::unordered_set<std::string> included;
+        for (const auto & capability : profile.second.include_capabilities) {
+            if (!config.tool_capabilities.count(capability)) {
+                error = "tool profile references an unknown included capability: " + capability;
+                return false;
+            }
+            if (!included.insert(capability).second) {
+                error = "tool profile includes a duplicate capability: " + capability;
+                return false;
+            }
+        }
+        std::unordered_set<std::string> excluded;
+        for (const auto & capability : profile.second.exclude_capabilities) {
+            if (!config.tool_capabilities.count(capability)) {
+                error = "tool profile references an unknown excluded capability: " + capability;
+                return false;
+            }
+            if (!excluded.insert(capability).second) {
+                error = "tool profile excludes a duplicate capability: " + capability;
+                return false;
+            }
+            if (included.count(capability)) {
+                error = "tool profile cannot both include and exclude capability: " + capability;
+                return false;
+            }
+        }
+    }
+    for (const auto & provider : config.mcp_providers) {
+        if (provider.id.empty()) {
+            error = "MCP provider is missing a stable id";
+            return false;
+        }
+        if (!provider_ids.insert(provider.id).second) {
+            error = "MCP provider ids must be unique: " + provider.id;
+            return false;
+        }
+    }
+    for (const auto & provider : config.mcp_providers) {
+        if (!provider.enabled) {
+            continue;
+        }
+        if (!validate_provider_auth(provider.auth, "MCP", false, error)) {
+            return false;
+        }
+        if (provider.transport.empty()) {
+            error = "enabled MCP provider is missing a transport";
+            return false;
+        }
+        if (provider.transport == "stdio" && provider.command.empty()) {
+            error = "enabled stdio MCP provider is missing a command";
+            return false;
+        }
+        if (provider.transport == "http" || provider.transport == "https" || provider.transport == "streamable_http") {
+            if (provider.url.empty()) {
+                error = "enabled HTTP MCP provider is missing a url";
+                return false;
+            }
+            if (provider.command.size() > 0) {
+                error = "HTTP MCP provider must not define a command";
+                return false;
+            }
+        } else if (provider.transport != "stdio") {
+            error = "unsupported MCP provider transport: " + provider.transport;
+            return false;
+        }
+    }
+    for (const auto & provider : config.openapi_providers) {
+        if (provider.id.empty()) {
+            error = "OpenAPI provider is missing a stable id";
+            return false;
+        }
+        if (!provider_ids.insert(provider.id).second) {
+            error = "provider ids must be unique: " + provider.id;
+            return false;
+        }
+        if (!provider.enabled) {
+            continue;
+        }
+        if (provider.spec_path.empty() || provider.base_url.empty()) {
+            error = "enabled OpenAPI provider requires spec_path and base_url";
+            return false;
+        }
+        if (provider.access != "read_only" && provider.access != "read_write" && provider.access != "full") {
+            error = "OpenAPI provider access must be read_only, read_write or full";
+            return false;
+        }
+        if (provider.exposure != "auto" && provider.exposure != "include" && provider.exposure != "exclude") {
+            error = "OpenAPI provider exposure must be auto, include or exclude";
+            return false;
+        }
+        if (!validate_provider_auth(provider.auth, "OpenAPI", true, error)) {
+            return false;
+        }
+        if (provider.connect_timeout_ms == 0 || provider.request_timeout_ms == 0 || provider.max_result_bytes == 0) {
+            error = "OpenAPI provider limits must be greater than zero";
+            return false;
+        }
+        if ((provider.default_page_size == 0) != (provider.max_page_size == 0) ||
+                (provider.default_page_size != 0 && provider.default_page_size > provider.max_page_size)) {
+            error = "OpenAPI pagination limits must set a positive default_page_size no greater than max_page_size";
+            return false;
+        }
+        for (const auto & operation : provider.operations) {
+            if (operation.first.empty() ||
+                    (operation.second.access != "" &&
+                     operation.second.access != "read" &&
+                     operation.second.access != "write" &&
+                     operation.second.access != "destructive")) {
+                error = "OpenAPI operation policy has an invalid access value: " + operation.first;
+                return false;
+            }
+            const auto prefixes = json::parse(operation.second.parameter_prefixes_json, nullptr, false);
+            if (!prefixes.is_object() || prefixes.size() > 32 || operation.second.parameter_prefixes_json.size() > 8192) {
+                error = "OpenAPI operation parameter_prefixes must be a bounded object: " + operation.first;
+                return false;
+            }
+            for (const auto & entry : prefixes.items()) {
+                const auto & rule = entry.value();
+                if (entry.key().empty() || entry.key().size() > 128 || !rule.is_object() || rule.size() != 2 ||
+                        !rule.contains("if_starts_with") || !rule["if_starts_with"].is_string() ||
+                        !rule.contains("prepend") || !rule["prepend"].is_string() ||
+                        rule["if_starts_with"].get<std::string>().empty() ||
+                        rule["if_starts_with"].get<std::string>().size() > 128 ||
+                        rule["prepend"].get<std::string>().empty() || rule["prepend"].get<std::string>().size() > 512) {
+                    error = "invalid OpenAPI path parameter prefix rule for " + operation.first + ": " + entry.key();
+                    return false;
+                }
+            }
+            if (!operation.second.result_view_json.empty() &&
+                    !agent_result_view_validate(operation.second.result_view_json, error)) {
+                error = "invalid result_view for provider " + provider.id + " operation " + operation.first + ": " + error;
+                return false;
+            }
+            const auto bound_arguments = json::parse(
+                operation.second.bound_arguments_json, nullptr, false);
+            if (bound_arguments.is_discarded() || !bound_arguments.is_object() ||
+                    bound_arguments.dump().size() > 16384) {
+                error = "OpenAPI operation policy bound_arguments must be a bounded JSON object: " +
+                    operation.first;
+                return false;
+            }
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool resolve_agent_host_model_selection(
+        const agent_host_config & config,
+        common_agent_model_selection & selection,
+        std::string & error) {
+    if (config.model_catalog.profiles.empty()) {
+        error = "host config does not contain a catalog generation profile";
+        return false;
+    }
+    return common_agent_model_catalog_resolve_profile(
+        config.model_catalog, config.model_profile, selection, error);
+}
+
+void apply_agent_host_config_to_daemon_options(
+        const agent_host_config & config,
+        daemon_options & options) {
+    options.model = config.model_path;
+    options.mmproj = config.mmproj_path;
+    options.embedding_model = config.embedding_model;
+    options.bootstrap_package = config.bootstrap_package;
+    options.bootstrap_libraries = config.bootstrap_libraries;
+    options.model_profile = config.model_profile;
+    options.model_catalog = config.model_catalog;
+    options.default_mode = config.default_mode;
+    options.thinking_mode = config.thinking_mode;
+    options.max_reflection_rounds = config.max_reflection_rounds;
+    options.max_plan_revisions = config.max_plan_revisions;
+    options.max_research_iterations = config.max_research_iterations;
+    options.n_predict = config.n_predict;
+    options.context_size = config.runtime_context_size;
+    options.n_threads = config.n_threads;
+    options.context_budgets = config.context_budgets;
+    options.context_management = config.context_management;
+    options.max_continuations = config.max_continuations;
+    options.n_gpu_layers = config.n_gpu_layers;
+    options.memory_learn = config.memory_learn;
+    options.agent_plan = config.agent_plan;
+    options.agent_blueprint = config.agent_blueprint;
+    options.backend = config.memory_backend;
+    options.memory_db = config.memory_db;
+    options.plan_backend = config.plan_backend;
+    options.plan_db = config.plan_db;
+    options.data_backend = config.data_backend;
+    options.data_db = config.data_db;
+    options.investigation = config.investigation;
+    options.tool_profile = config.tool_profile;
+    options.tool_capabilities = config.tool_capabilities;
+    options.tool_family_descriptions = config.tool_family_descriptions;
+    options.tool_profiles = config.tool_profiles;
+    options.mcp_providers = config.mcp_providers;
+    options.openapi_providers = config.openapi_providers;
+    options.sandbox = config.sandbox;
+    options.diagnostics = config.diagnostics;
+    options.repository_root = config.repository_root;
+    options.resource_blob_backend = config.resource_blob_backend;
+    options.resource_blob_root = config.resource_blob_root;
+    options.resource_metadata_backend = config.resource_metadata_backend;
+    options.resource_metadata_db = config.resource_metadata_db;
+    options.resource_processor_policies = config.resource_processor_policies;
+    options.memory_learn_show_candidate = config.memory_learn_show_candidate;
+    options.memory_learn_min_confidence = config.memory_learn_min_confidence;
+    options.memory_learn_min_reuse = config.memory_learn_min_reuse;
+    options.plan_show_summary = config.plan_show_summary;
+    options.agent_trace = config.agent_trace;
+    options.adaptation_capture = config.adaptation_capture;
+    options.adaptation_collection_allowed = config.adaptation_collection_allowed;
+    options.adaptation_max_evidence = config.adaptation_max_evidence;
+    options.adaptation_transaction_backend = config.adaptation_transaction_backend;
+    options.adaptation_transaction_path = config.adaptation_transaction_path;
+    options.adaptation_stable_model_facing_tools = config.adaptation_stable_model_facing_tools;
+    options.adaptation_domains = config.adaptation_domains;
+    options.adaptation_flydelta_enabled = config.adaptation_flydelta_enabled;
+    options.adaptation_flydelta_worker_count = config.adaptation_flydelta_worker_count;
+    options.adaptation_flydelta_queue_path = config.adaptation_flydelta_queue_path;
+    options.adaptation_flydelta_batch_mode = config.adaptation_flydelta_batch_mode;
+    options.adaptation_flydelta_dose_mode = config.adaptation_flydelta_dose_mode;
+    options.adaptation_flydelta_dose_calibration_ref = config.adaptation_flydelta_dose_calibration_ref;
+    options.adaptation_flydelta_search_model_call_budget = config.adaptation_flydelta_search_model_call_budget;
+    options.adaptation_flydelta_batch_parallelism = config.adaptation_flydelta_batch_parallelism;
+    const std::string profile_id = config.model_profile.empty()
+        ? config.model_catalog.default_profile : config.model_profile;
+    const auto profile = config.model_catalog.profiles.find(profile_id);
+    const auto base = profile == config.model_catalog.profiles.end()
+        ? config.model_catalog.bases.end()
+        : config.model_catalog.bases.find(profile->second.base_model_id);
+    options.adaptation_flydelta_factorized_cvec_batch =
+        !config.adaptation_flydelta_disable_factorized_cvec_batch &&
+        config.adaptation_flydelta_enabled &&
+        config.model_backend == "server-context" &&
+        config.adaptation_flydelta_batch_mode != "disabled" &&
+        config.adaptation_flydelta_batch_parallelism >= 2 &&
+        profile != config.model_catalog.profiles.end() &&
+        base != config.model_catalog.bases.end() &&
+        base->second.backend == "server-context";
+    options.adaptation_flydelta_capture_candidates = config.adaptation_flydelta_capture_candidates;
+    options.adaptation_flydelta_lifecycle_backend = config.adaptation_flydelta_lifecycle_backend;
+    options.adaptation_flydelta_lifecycle_path = config.adaptation_flydelta_lifecycle_path;
+    options.adaptation_flydelta_artifact_root = config.adaptation_flydelta_artifact_root;
+    options.adaptation_flydelta_model_profile_fingerprint = config.adaptation_flydelta_model_profile_fingerprint;
+    options.adaptation_flydelta_capture_layout_revision = config.adaptation_flydelta_capture_layout_revision;
+    options.adaptation_flydelta_max_capture_candidates = config.adaptation_flydelta_max_capture_candidates;
+    options.adaptation_flydelta_canary_policy = config.adaptation_flydelta_canary_policy;
+    options.adaptation_flydelta_outcome_guidance = config.adaptation_flydelta_outcome_guidance;
+    options.adaptation_semi_oracle_outcome_guidance = config.adaptation_semi_oracle_outcome_guidance;
+    options.adaptation_outcome_guidance_generalization = config.adaptation_outcome_guidance_generalization;
+    options.adaptation_flydelta_teacher_scoring_backend =
+        config.adaptation_flydelta_teacher_scoring_backend;
+    options.max_tool_rounds = config.max_tool_rounds;
+    options.queue_capacity = config.queue_capacity;
+    options.worker_count = config.worker_count;
+    options.inference_max_active = config.inference_max_active;
+    options.max_turn_seconds = config.max_turn_seconds;
+    options.turn_timeout_ms = config.turn_timeout_ms;
+    options.inference_step_timeout_ms = config.inference_step_timeout_ms;
+    options.tool_timeout_ms = config.tool_timeout_ms;
+    options.mcp_connect_timeout_ms = config.mcp_connect_timeout_ms;
+    options.mcp_request_timeout_ms = config.mcp_request_timeout_ms;
+    options.mcp_shutdown_timeout_ms = config.mcp_shutdown_timeout_ms;
+
+    agent_host_mcp_provider_config provider;
+    std::string ignored_error;
+    if (select_agent_host_stdio_mcp_provider(config, provider, ignored_error)) {
+        options.mcp_tool_command = provider.command.front();
+        options.mcp_tool_args.assign(provider.command.begin() + 1, provider.command.end());
+        options.mcp_tool_server_name = provider.server_name.empty() ? provider.id : provider.server_name;
+        options.mcp_tool_prefix = provider.prefix;
+    }
+    options.mcp_providers = config.mcp_providers;
+    options.openapi_providers = config.openapi_providers;
+    options.http_enabled = config.inbound_mcp_enabled;
+    options.http_listen_address = config.inbound_mcp_listen_address;
+    options.http_port = config.inbound_mcp_port;
+    options.http_path = config.inbound_mcp_path;
+    options.http_allowed_origin = config.inbound_mcp_allowed_origin;
+    options.http_max_body_bytes = config.inbound_mcp_max_body_bytes;
+    options.http_max_result_bytes = config.inbound_mcp_max_result_bytes;
+    options.http_agent_tools_enabled = config.inbound_mcp_agent_tools_enabled;
+    options.http_max_delegation_depth = config.inbound_mcp_max_delegation_depth;
+    options.http_token_profiles = config.inbound_mcp_tokens;
+    options.http_authorization_mode = config.inbound_mcp_authorization_mode;
+    options.http_jwt_issuer = config.inbound_mcp_jwt_issuer;
+    options.http_jwt_audience = config.inbound_mcp_jwt_audience;
+    options.http_jwt_jwks_uri = config.inbound_mcp_jwt_jwks_uri;
+    options.http_jwt_allowed_algorithms = config.inbound_mcp_jwt_allowed_algorithms;
+    options.http_jwt_required_scopes = config.inbound_mcp_jwt_required_scopes;
+    options.http_jwt_tool_profile = config.inbound_mcp_jwt_tool_profile;
+    options.http_jwt_allowed_tools = config.inbound_mcp_jwt_allowed_tools;
+    options.http_jwt_allow_writes = config.inbound_mcp_jwt_allow_writes;
+    options.http_jwt_allow_admin = config.inbound_mcp_jwt_allow_admin;
+    options.tcp_enabled = config.jsonl_tcp_enabled;
+    options.tcp_listen_address = config.jsonl_tcp_listen_address;
+    options.tcp_port = config.jsonl_tcp_port;
+    options.tcp_max_line_bytes = config.jsonl_tcp_max_line_bytes;
+    options.tcp_idle_timeout_seconds = config.jsonl_tcp_idle_timeout_seconds;
+    options.unix_socket_enabled = config.jsonl_unix_socket_enabled;
+    options.unix_socket_path = config.jsonl_unix_socket_path;
+    options.unix_socket_mode = config.jsonl_unix_socket_mode;
+}
+
+void apply_agent_host_config_to_args(
+        const agent_host_config & config,
+        args & options) {
+    options.model = config.model_path;
+    options.mmproj = config.mmproj_path;
+    options.embedding_model = config.embedding_model;
+    options.backend = config.memory_backend;
+    options.memory_db = config.memory_db;
+    options.n_predict = config.n_predict;
+    options.context_size = config.runtime_context_size;
+    options.context_budgets = config.context_budgets;
+    options.max_continuations = config.max_continuations;
+    options.n_gpu_layers = config.n_gpu_layers;
+    options.tool_profile = config.tool_profile;
+    options.tool_capabilities = config.tool_capabilities;
+    options.tool_family_descriptions = config.tool_family_descriptions;
+    options.tool_profiles = config.tool_profiles;
+    options.mcp_providers = config.mcp_providers;
+    options.openapi_providers = config.openapi_providers;
+    options.investigation = config.investigation;
+    options.sandbox = config.sandbox;
+    options.diagnostics = config.diagnostics;
+    options.repository_root = config.repository_root;
+    options.resource_blob_backend = config.resource_blob_backend;
+    options.resource_blob_root = config.resource_blob_root;
+    options.resource_metadata_backend = config.resource_metadata_backend;
+    options.resource_metadata_db = config.resource_metadata_db;
+    options.resource_processor_policies = config.resource_processor_policies;
+    options.plan_backend = config.plan_backend;
+    options.plan_db = config.plan_db;
+    options.data_backend = config.data_backend;
+    options.data_db = config.data_db;
+    options.thinking_mode = config.thinking_mode;
+    options.max_reflection_rounds = config.max_reflection_rounds;
+    options.max_plan_revisions = config.max_plan_revisions;
+    options.max_research_iterations = config.max_research_iterations;
+    options.memory_learn = config.memory_learn;
+    options.agent_plan = config.agent_plan;
+    options.agent_blueprint = config.agent_blueprint;
+    options.n_threads = config.n_threads;
+    options.max_tool_rounds = config.max_tool_rounds;
+    options.turn_timeout_ms = config.turn_timeout_ms;
+    options.inference_step_timeout_ms = config.inference_step_timeout_ms;
+    options.tool_timeout_ms = config.tool_timeout_ms;
+    options.mcp_connect_timeout_ms = config.mcp_connect_timeout_ms;
+    options.mcp_request_timeout_ms = config.mcp_request_timeout_ms;
+    options.mcp_shutdown_timeout_ms = config.mcp_shutdown_timeout_ms;
+    options.memory_learn_show_candidate = config.memory_learn_show_candidate;
+    options.memory_learn_min_confidence = config.memory_learn_min_confidence;
+    options.memory_learn_min_reuse = config.memory_learn_min_reuse;
+    options.plan_show_summary = config.plan_show_summary;
+    options.agent_trace = config.agent_trace;
+}
+
+bool select_agent_host_stdio_mcp_provider(
+        const agent_host_config & config,
+        agent_host_mcp_provider_config & provider,
+        std::string & error) {
+    bool found = false;
+    for (const auto & candidate : config.mcp_providers) {
+        if (!candidate.enabled || candidate.type != "mcp") {
+            continue;
+        }
+        if (candidate.transport != "stdio") {
+            error = "only stdio MCP providers are currently supported by this host config path";
+            return false;
+        }
+        if (found) {
+            error = "multiple enabled stdio MCP providers are not yet supported by this host config path";
+            return false;
+        }
+        provider = candidate;
+        found = true;
+    }
+
+    if (!found) {
+        error.clear();
+        return false;
+    }
+    if (provider.command.empty()) {
+        error = "enabled stdio MCP provider is missing a command";
+        return false;
+    }
+    error.clear();
+    return true;
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "flydelta://fixture/dataset-question-repair-batch-v1",
+  "language": "en",
+  "dataset": "dataset://local/sales",
+  "dataset_name": "Sales",
+  "replay_mode": true,
+  "purpose": "A deterministic host-constructed negative decision pair for the server batch teacher-score smoke. It is experimental replay material and never learning credit.",
+  "model_contract": {
+    "selection": "Choose exactly one most-specific read-only dataset tool. Return only {\"name\":\"tool.name\",\"arguments\":{}}.",
+    "dataset_rule": "Use the canonical dataset reference dataset://local/sales when a dataset argument is required.",
+    "learning_rule": "Replay material exercises search diagnostics only; it must not create learning credit."
+  },
+  "scenarios": [
+    {
+      "id": "content-overview-batch-margin",
+      "question": "What does this dataset contain at a high level? Identify the kind of records, the row count, and the main fields.",
+      "expected_tool": "dataset.inspect",
+      "verification_mode": "tool_only",
+      "failed_output": {
+        "name": "dataset.schema",
+        "arguments": {"dataset": "dataset://local/sales"}
+      },
+      "plan": {
+        "goal": "Inspect the dataset contents at a high level",
+        "steps": [
+          {"tool": "dataset.inspect", "args": {"dataset": "dataset://local/sales"}}
+        ]
+      }
+    }
+  ]
+}

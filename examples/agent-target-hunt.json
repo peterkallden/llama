@@ -1,0 +1,22 @@
+{
+  "description": "Sequential MCP tools/call params; authenticate with a policy allowing session writes.",
+  "calls": [
+    {
+      "name": "oracle.ruleset.define",
+      "arguments": {
+        "ruleset_dsl": "name: Target Hunt\ndescription: Orthogonal Maze\ndomain: target_hunt\nmovement: orthogonal\nmax_rows: 32\nmax_columns: 32"
+      }
+    },
+    {
+      "name": "oracle.problem.define",
+      "arguments": {
+        "problem_dsl": "grid: .../.#./...\nstart: 0,0\ntarget: 2,2"
+      }
+    },
+    {
+      "name": "oracle.action.verify",
+      "arguments": { "action_dsl": "open! target_hunt.move\ndirection: east" }
+    },
+    { "name": "oracle.goal.search", "arguments": {} }
+  ]
+}

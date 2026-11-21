@@ -1,0 +1,569 @@
+#pragma once
+
+#include "runtime/runtime-state.h"
+
+#include <cstdint>
+#include <algorithm>
+#include <optional>
+#include "resource/resource-contract.h"
+#include "agent/dataset-contracts.h"
+#include <string>
+#include <map>
+#include <vector>
+
+enum class common_plan_scope { turn, session, project, global };
+enum class common_plan_kind { task, blueprint, workflow };
+enum class common_plan_workflow_policy { preferred, required };
+enum class common_plan_workflow_resource_read_policy { single_range, chunked };
+enum class common_plan_status { proposed, active, completed, blocked, failed, cancelled };
+enum class common_plan_step_status { pending, active, completed, blocked, skipped, failed };
+// A plan step either invokes one registered tool, asks the model for a bounded
+// intermediate result, or produces the user-visible final response.
+enum class common_plan_step_mode { tool, reasoning, final_response, artifact_compose };
+struct common_plan_artifact_section_profile {
+    std::string id, title, purpose;
+    std::vector<std::string> required_observation_sources;
+    std::vector<std::string> allowed_block_kinds{"observation", "conclusion", "recommendation"};
+    bool required = true;
+    // When empty, every research relation is eligible for this section.
+    std::vector<std::string> evidence_relations;
+};
+struct common_plan_artifact_profile {
+    std::string id, revision, title, purpose;
+    std::vector<common_plan_artifact_section_profile> sections;
+};
+struct common_plan_artifact_binding {
+    std::string transition_id;
+    std::string profile_ref;
+    std::string profile_revision;
+    std::string section_id;
+    std::string snapshot_id;
+};
+
+struct common_plan_constraint { std::string id; std::string description; bool hard = true; };
+struct common_plan_assumption { std::string id; std::string statement; float confidence = 0.5f; bool valid = true; std::vector<std::string> evidence_ids; };
+struct common_plan_resource_read_provenance {
+    std::string task_fingerprint;
+    std::string intent;
+    std::string source_uri;
+    std::string source_fingerprint;
+    std::string representation;
+    std::string source_parent_uri;
+};
+struct common_plan_observation {
+    std::string id;
+    std::string source;
+    std::string summary;
+    float confidence = 0.5f;
+    std::vector<std::string> evidence_ids;
+    std::vector<common_runtime_resource_ref> resource_refs;
+    int64_t created_at = 0;
+    std::vector<common_agent_dataset_ref> dataset_refs;
+    std::optional<common_plan_resource_read_provenance> resource_read_provenance;
+};
+
+inline bool common_plan_observation_is_resource_chunk(const common_plan_observation & observation) {
+    return observation.source == "resource_chunk" ||
+        observation.source == "resource_chunk_unresolved";
+}
+
+inline bool common_plan_chunk_observations_valid(
+        const std::vector<common_plan_observation> & observations,
+        std::string & error) {
+    std::string parent_uri;
+    size_t chunk_count = 0;
+    struct chunk_attempt { size_t index; bool unresolved; size_t offset, length, overlap; };
+    std::vector<chunk_attempt> indexes;
+    for (const auto & observation : observations) {
+        if (!common_plan_observation_is_resource_chunk(observation)) {
+            continue;
+        }
+        if (observation.resource_refs.size() != 1 ||
+                observation.resource_refs.front().lineage.parent_uri.empty()) {
+            error = "resource_chunk observation requires exactly one parent-linked resource";
+            return false;
+        }
+        const auto & lineage = observation.resource_refs.front().lineage;
+        if (!common_runtime_resource_lineage_is_valid(lineage, error)) {
+            return false;
+        }
+        if (parent_uri.empty()) {
+            parent_uri = lineage.parent_uri;
+            chunk_count = lineage.chunk_count;
+        } else if (parent_uri != lineage.parent_uri || chunk_count != lineage.chunk_count) {
+            error = "resource_chunk observations must share one parent and chunk_count";
+            return false;
+        }
+        const auto prior = std::find_if(indexes.begin(), indexes.end(), [&](const auto & item) { return item.index == lineage.chunk_index; });
+        if (prior != indexes.end()) {
+            if (!prior->unresolved) {
+                error = "resource_chunk observations must not contain duplicate chunk indexes";
+                return false;
+            }
+            if (prior->offset != lineage.byte_offset || prior->length != lineage.byte_length ||
+                    prior->overlap != lineage.overlap_bytes) {
+                error = "resource_chunk retry must match an unresolved chunk range"; return false;
+            }
+            prior->unresolved = observation.source == "resource_chunk_unresolved";
+        } else indexes.push_back({lineage.chunk_index, observation.source == "resource_chunk_unresolved",
+            lineage.byte_offset, lineage.byte_length, lineage.overlap_bytes});
+    }
+    error.clear();
+    return true;
+}
+
+enum class common_plan_chunk_synthesis_status { complete, incomplete, conflict };
+
+struct common_plan_chunk_synthesis_input {
+    common_plan_chunk_synthesis_status status = common_plan_chunk_synthesis_status::incomplete;
+    std::string parent_uri;
+    size_t chunk_count = 0;
+    std::vector<size_t> completed_chunk_indexes;
+    std::vector<size_t> missing_chunk_indexes;
+    std::vector<size_t> unresolved_chunk_indexes;
+    std::vector<size_t> unobserved_chunk_indexes;
+    std::vector<std::string> summaries;
+};
+
+// Build a deterministic, ordered synthesis view from existing plan evidence.
+// The original resource remains authoritative; summaries are bounded working
+// evidence and must not be treated as a replacement resource.
+inline bool common_plan_chunk_synthesis_from_observations(
+        const std::vector<common_plan_observation> & observations,
+        const std::string & parent_uri,
+        common_plan_chunk_synthesis_input & out,
+        std::string & error) {
+    out = {};
+    out.parent_uri = parent_uri;
+    if (!common_plan_chunk_observations_valid(observations, error)) {
+        out.status = common_plan_chunk_synthesis_status::conflict;
+        return false;
+    }
+    struct item { size_t index; std::string summary; bool unresolved = false; };
+    std::vector<item> items;
+    for (const auto & observation : observations) {
+        if (!common_plan_observation_is_resource_chunk(observation) || observation.resource_refs.size() != 1) continue;
+        const auto & lineage = observation.resource_refs.front().lineage;
+        if (!parent_uri.empty() && lineage.parent_uri != parent_uri) continue;
+        if (out.parent_uri.empty()) out.parent_uri = lineage.parent_uri;
+        if (out.chunk_count == 0) out.chunk_count = lineage.chunk_count;
+        const auto prior = std::find_if(items.begin(), items.end(), [&](const auto & value) { return value.index == lineage.chunk_index; });
+        const item latest{lineage.chunk_index, observation.summary, observation.source == "resource_chunk_unresolved"};
+        if (prior == items.end()) items.push_back(latest); else *prior = latest;
+    }
+    std::sort(items.begin(), items.end(), [](const item & left, const item & right) {
+        return left.index < right.index;
+    });
+    for (const auto & item : items) {
+        if (item.unresolved) out.unresolved_chunk_indexes.push_back(item.index);
+        else out.completed_chunk_indexes.push_back(item.index);
+        out.summaries.push_back(item.summary);
+    }
+    for (size_t index = 0; index < out.chunk_count; ++index) {
+        const bool observed = std::any_of(items.begin(), items.end(), [index](const item & value) {
+            return value.index == index;
+        });
+        if (!observed) out.unobserved_chunk_indexes.push_back(index);
+        if (!observed || std::find(out.unresolved_chunk_indexes.begin(),
+                    out.unresolved_chunk_indexes.end(), index) != out.unresolved_chunk_indexes.end()) {
+            out.missing_chunk_indexes.push_back(index);
+        }
+    }
+    out.status = out.missing_chunk_indexes.empty()
+        ? common_plan_chunk_synthesis_status::complete
+        : common_plan_chunk_synthesis_status::incomplete;
+    error.clear();
+    return true;
+}
+// Data proposed by a plan; execution is owned by the agent tool registry.
+struct common_plan_tool_call {
+    std::string name;
+    std::string arguments_json = "{}";
+    // Host-validated, operation-specific interpretation of the current task.
+    // It is persisted with the step, never forwarded as a provider argument.
+    std::string result_requirement_json;
+};
+// A blueprint binds only to immutable workflow identities.  The host resolves
+// these against the current scope before it materializes any executable plan.
+struct common_plan_workflow_binding {
+    std::string workflow_ref;
+    std::string workflow_revision;
+    // Blueprint step -> declared workflow transitions realizing that phase.
+    // Empty preserves legacy and independently authored blueprint behaviour.
+    std::map<std::string, std::vector<std::string>> phase_bindings;
+};
+
+// A workflow graph is host-owned method structure.  It deliberately names
+// only registered tools and JSON-pointer dataflow; request-specific values
+// remain in task observations and never in an imported definition.
+enum class common_plan_workflow_transition_kind {
+    tool,
+    model_choice,
+    artifact_compose,
+};
+
+struct common_plan_workflow_transition {
+    std::string id;
+    std::string from_state;
+    std::string to_state;
+    common_plan_workflow_transition_kind kind = common_plan_workflow_transition_kind::tool;
+    // Exact host-registered tool name for tool transitions.  Empty only for
+    // model_choice, whose candidate values are derived from an observation.
+    std::string tool_name;
+    // Canonical JSON object. Values may use {$from_step, $json_pointer}; the
+    // normal plan binding materializer resolves those only after the source
+    // observation exists.
+    std::string arguments_template_json = "{}";
+    // For model_choice, an RFC-6901 pointer into the immediately preceding
+    // observation that yields the bounded candidate array.
+    std::string candidate_json_pointer;
+    float cost = 1.0f;
+    // Candidate identity pointer within each array item. Defaults to /id;
+    // catalogue records may expose another stable host-returned key such as /code.
+    std::string candidate_id_json_pointer = "/id";
+    // Optional fixed choices owned by the host. When present, the selector
+    // chooses among these values using the bounded observation and request.
+    struct choice {
+        std::string id;
+        std::string description;
+        std::string to_state;
+        std::vector<std::string> required_observation_json_pointers;
+        // Zero permits repeated selection; otherwise count completed route steps.
+        size_t max_uses = 0;
+    };
+    std::vector<choice> choices;
+    // For tool transitions, bind target argument JSON pointers from the
+    // immediately preceding structured observation.
+    struct argument_binding {
+        std::string target_json_pointer;
+        // Empty or "$previous" binds from the observation that triggered
+        // this continuation; otherwise names a stable workflow transition id.
+        std::string source_transition_id;
+        std::string source_json_pointer;
+        bool required = true;
+    };
+    std::vector<argument_binding> argument_bindings;
+    bool optional = false;
+    // Host-controlled bounded collection pagination for this transition only.
+    // Zero keeps the ordinary single-request semantics.
+    uint8_t max_pages = 0;
+    // The graph fixes this action's tool and host-owned argument seeds while
+    // the model supplies request-dependent arguments at this transition.
+    bool model_supplies_arguments = false;
+    // Optional bounded guidance for a model-supplied action at this exact
+    // transition. It narrows the method, never the tool or host authority.
+    std::string model_instruction;
+    // Host-owned, typed report composition; all three refs are immutable
+    // bootstrap/profile identities and are not supplied by the model.
+    std::string artifact_profile_ref;
+    std::string artifact_profile_revision;
+    std::string artifact_section_id;
+    // Canonical profile JSON is host-injected during package installation so
+    // a plan remains bound to the exact immutable profile revision.
+    std::string artifact_profile_json;
+    // An unavailable optional capability removes this branch from choices.
+    // Once selected, its execution remains mandatory unless optional is set.
+    bool optional_availability = false;
+    // Explicitly declared HTTP failures may terminate this workflow with a
+    // recorded limitation. Empty fields preserve ordinary failure semantics.
+    std::string failure_terminal_state;
+    std::vector<int> handled_http_statuses;
+    // An explicit, host-invoked review entry from a terminal graph state.
+    // Normal execution never traverses it; accepted completed plans stay closed.
+    bool review_only = false;
+    // Host opt-in for this exact tool transition to repair unfinished work
+    // after answer review. It grants no additional tool or route authority.
+    bool review_mutation_allowed = false;
+};
+
+// A declared handoff from a completed workflow observation to another
+// workflow. Source JSON pointers are resolved by the host; model generated
+// text can never satisfy a continuation binding.
+struct common_plan_workflow_continuation_link {
+    struct argument_binding {
+        std::string target_transition_id;
+        std::string target_tool_name;
+        std::string target_json_pointer;
+        std::string source_json_pointer;
+        bool required = true;
+        // Optional completed transition whose structured observation supplies
+        // this value; empty means the observation that triggered the link.
+        std::string source_transition_id;
+        // If set, source points to an array and the model selects one of its
+        // host-observed identities at this JSON pointer within each item.
+        std::string candidate_id_json_pointer;
+    };
+    std::string source_transition_id;
+    std::string source_terminal_state;
+    std::string target_workflow_ref;
+    std::string target_workflow_revision;
+    std::vector<argument_binding> argument_bindings;
+    bool optional = false;
+    // Zero means no link-specific limit; the host continuation budget still applies.
+    size_t max_uses = 0;
+};
+
+enum class common_plan_verification_phase { before_tool, after_tool, before_answer };
+enum class common_plan_verification_operation { required, equal, member, count, status, dimension_membership, coverage };
+struct common_plan_verification_operand {
+    // arguments, result, observation or literal. Observations are resolved
+    // from completed transitions in the active workflow segment.
+    std::string source = "literal";
+    std::string transition_id;
+    std::string pointer;
+    std::string literal_json = "null";
+    bool dataset_rows = false;
+    // Optional canonical operation selector for legacy one-action routes.
+    std::string tool_name;
+};
+struct common_plan_verification_check {
+    std::string id;
+    std::string transition_id;
+    common_plan_verification_phase phase = common_plan_verification_phase::before_tool;
+    common_plan_verification_operation operation = common_plan_verification_operation::required;
+    common_plan_verification_operand left, right;
+    bool required = true;
+    // Format-independent argument-field -> dimension-field mapping. The
+    // dataset normalizer retains region grouping for constraint evaluation.
+    std::string dimension_mapping_json = "{}";
+    std::string clarification_question;
+    std::string tool_name;
+};
+
+// Workflow definitions describe a host-validated family of work. They never
+// contain request-specific resource ids or tool arguments.
+struct common_plan_workflow_definition {
+    std::string workflow_ref;
+    std::string workflow_revision;
+    std::string family;
+    std::string graph_revision;
+    // Compatibility ceiling for v1 packages. New definitions should use
+    // required_capabilities and let the host resolve concrete tools.
+    std::vector<std::string> allowed_tools;
+    // Stable semantic requirements are the primary workflow contract. The
+    // host resolves them against the active tool view; these are not tool ids.
+    std::vector<std::string> required_capabilities;
+    // Optional capabilities are resolved when the route is compiled. Missing
+    // optional capabilities do not make the workflow ineligible.
+    std::vector<std::string> optional_capabilities;
+    // Host facts required before this workflow can be materialized, e.g.
+    // "dataset.available". They are checked independently of tool authority.
+    std::vector<std::string> required_context;
+    // Workflow families that this workflow may hand off to after producing a
+    // typed host-owned output such as a materialized dataset.
+    std::vector<std::string> continuation_workflow_targets;
+    std::vector<common_plan_workflow_continuation_link> continuation_links;
+    // Full-text reads remain a single bounded range unless the workflow
+    // explicitly opts into host-managed chunk continuation.
+    common_plan_workflow_resource_read_policy resource_read_policy =
+        common_plan_workflow_resource_read_policy::single_range;
+    // Empty preserves the v1 one-action workflow behaviour.  Non-empty
+    // definitions are a bounded directed graph evaluated by the generic
+    // workflow transition runtime.
+    std::string start_state;
+    std::vector<std::string> terminal_states;
+    std::vector<common_plan_workflow_transition> transitions;
+    std::string preferred_thinking_mode;
+    std::vector<common_plan_verification_check> verification_checks;
+    bool require_declared_claims = false;
+    // Conditional assurance for declared operations, without imposing numeric
+    // claims on routes that never execute such an operation. Once required,
+    // unrelated reads in the same workflow segment cannot remove assurance.
+    std::vector<std::string> declared_claim_tools;
+    // Canonical operation -> versioned result-contract profile. Empty keeps
+    // older workflows readable without inventing missing task requirements.
+    std::map<std::string, std::string> result_contracts;
+};
+
+// Host-owned route provenance for a concrete task plan.  This is deliberately
+// smaller than the route catalog: it records the frame that was actually
+// selected, not every route that happened to be eligible for the turn.
+struct common_plan_route_binding {
+    std::string route_id;
+    std::string blueprint_ref;
+    std::string blueprint_revision;
+    std::string workflow_ref;
+    std::string workflow_revision;
+    std::string graph_revision;
+    std::string execution_envelope_fingerprint;
+    std::string policy_revision;
+    // Durable idempotency provenance for host-authorized workflow handoffs.
+    std::string continuation_link_id;
+    std::string continuation_source_fingerprint;
+    // Historical source-workflow steps remain in the plan. This marks the
+    // first step owned by the currently bound workflow revision.
+    size_t workflow_step_start_index = 0;
+};
+struct common_plan_workflow_continuation_record {
+    std::string link_id;
+    std::string source_fingerprint;
+    std::string source_workflow_ref;
+    std::string source_workflow_revision;
+    std::string source_terminal_state;
+    std::string target_workflow_ref;
+    std::string target_workflow_revision;
+    std::string source_observation_id;
+};
+struct common_plan_step {
+    std::string id, title, objective, intended_contribution;
+    common_plan_step_status status = common_plan_step_status::pending;
+    std::vector<std::string> depends_on, blocked_by, required_evidence, source_memory_ids;
+    std::optional<std::string> selected_tool, result_summary;
+    std::optional<common_plan_tool_call> tool_call;
+    common_plan_step_mode mode = common_plan_step_mode::final_response;
+    bool optional = false, generated_from_memory = false;
+    int64_t created_at = 0, updated_at = 0;
+    // Retain the semantic name so repair can explain typed choices without
+    // exposing host-owned step IDs as the model-facing contract.
+    std::optional<std::string> semantic_alias;
+    std::optional<common_plan_artifact_binding> artifact_binding;
+    // Host-owned method provenance; distinct from model-facing step aliases.
+    std::optional<std::string> method_phase_id, method_turn_id;
+};
+
+inline std::optional<common_plan_artifact_binding> common_plan_artifact_binding_effective(
+        const common_plan_step & step) {
+    if (step.artifact_binding) return step.artifact_binding;
+    if (!step.semantic_alias || step.semantic_alias->rfind("workflow-transition:",0)!=0) return std::nullopt;
+    const auto marker=step.semantic_alias->find(",artifact-section:");
+    if(marker==std::string::npos)return std::nullopt;
+    const auto transition=step.semantic_alias->substr(std::string("workflow-transition:").size(),marker-std::string("workflow-transition:").size());
+    const auto suffix=step.semantic_alias->substr(marker+std::string(",artifact-section:").size());
+    const auto at=suffix.find('@'),colon=suffix.find(':',at==std::string::npos?0:at+1);
+    if(transition.empty()||at==std::string::npos||colon==std::string::npos)return std::nullopt;
+    common_plan_artifact_binding binding;binding.transition_id=transition;binding.profile_ref=suffix.substr(0,at);
+    binding.profile_revision=suffix.substr(at+1,colon-at-1);binding.section_id=suffix.substr(colon+1);
+    return binding;
+}
+
+inline common_plan_step_mode common_plan_step_effective_mode(const common_plan_step & step) {
+    return step.tool_call ? common_plan_step_mode::tool : step.mode;
+}
+struct common_plan_state {
+    std::string id, session_id;
+    // Runtime-owned identity boundary.  These mirror memory identity so a
+    // persisted plan can be selected or resumed only in its original scope.
+    std::string namespace_id = "local", project_id, turn_id;
+    // Immutable source identity for imported or learned blueprints. A task
+    // instantiated from a blueprint retains it for audit and stale-source
+    // detection. Empty is valid for legacy plans.
+    std::string source_revision;
+    // Retained with the blueprint so package export does not lose the bounded
+    // selection text that was used to build a candidate projection.
+    std::string selection_description;
+    // Imported method metadata. Older plans default to ordinary execution.
+    bool phase_review_required = false;
+    std::vector<std::string> supersedes_blueprints;
+    common_plan_kind kind = common_plan_kind::task;
+    std::optional<std::string> derived_from_plan_id;
+    common_plan_scope scope = common_plan_scope::turn;
+    common_plan_status status = common_plan_status::proposed;
+    // Purpose is the stable user-facing reason for the work. Goal and success
+    // criteria describe the mutable execution target for this particular plan.
+    std::string purpose, goal, success_criteria;
+    std::vector<common_plan_step> steps;
+    // Semantic host capabilities required to execute this plan. These are
+    // requirements, not tool bindings; the host resolves them per turn.
+    std::vector<std::string> required_capabilities;
+    std::vector<common_plan_constraint> constraints;
+    std::vector<common_plan_assumption> assumptions;
+    common_plan_workflow_policy workflow_policy = common_plan_workflow_policy::preferred;
+    std::vector<std::string> procedure_refs;
+    std::vector<common_plan_workflow_binding> workflow_bindings;
+    // The binding selected for this concrete task instance. Blueprint
+    // bindings remain the supported set; this field records the host route
+    // decision without making the route catalog durable.
+    std::optional<common_plan_workflow_binding> selected_workflow;
+    std::optional<common_plan_workflow_definition> workflow_definition;
+    std::optional<common_plan_route_binding> route_binding;
+    std::vector<common_plan_workflow_continuation_record> workflow_continuation_history;
+    std::vector<common_plan_observation> observations;
+    std::optional<std::string> active_step_id, next_action;
+    uint64_t version = 0;
+    int64_t created_at = 0, updated_at = 0;
+};
+
+// Successful operations do not close an active investigation. Read/repair
+// additions still pass route, tool-policy, dependency and budget validation.
+// An accepted completed plan needs an explicit continuation before reopening.
+inline bool common_plan_tool_execution_closed(const common_plan_state & plan) {
+    if (plan.status != common_plan_status::completed) return false;
+    bool has_tool_step = false;
+    for (const auto & step : plan.steps) {
+        if (common_plan_step_effective_mode(step) != common_plan_step_mode::tool) continue;
+        has_tool_step = true;
+        if (step.optional) continue;
+        if (step.status != common_plan_step_status::completed || !step.tool_call) return false;
+        const std::string prefix = "tool:" + step.id + ":";
+        bool observed = false;
+        for (const auto & observation : plan.observations) {
+            if (observation.source == step.tool_call->name &&
+                    observation.id.compare(0, prefix.size(), prefix) == 0) {
+                observed = true;
+                break;
+            }
+        }
+        if (!observed) return false;
+    }
+    return has_tool_step;
+}
+
+inline common_agent_state_descriptor describe_common_plan(
+        const common_plan_state & plan) {
+    common_agent_state_descriptor descriptor;
+    descriptor.state_id = plan.id;
+    descriptor.state_type = "plan";
+    descriptor.state_class = common_agent_state_class::durable_domain;
+    descriptor.lifetime = plan.scope == common_plan_scope::turn
+        ? common_agent_state_lifetime::turn
+        : plan.scope == common_plan_scope::session
+            ? common_agent_state_lifetime::session
+            : plan.scope == common_plan_scope::project
+                ? common_agent_state_lifetime::project
+                : common_agent_state_lifetime::durable;
+    descriptor.persistence = common_agent_state_persistence::persistent;
+    descriptor.identity.namespace_id = plan.namespace_id;
+    descriptor.identity.project_id = plan.project_id;
+    descriptor.identity.session_id = plan.session_id;
+    descriptor.identity.turn_id = plan.turn_id;
+    descriptor.owner = "common_plan_store";
+    descriptor.source_of_truth = "plan store";
+    return descriptor;
+}
+enum class common_plan_operation_kind { create_plan, revise_goal, add_step, revise_step, replace_step, remove_step, activate_step, reset_step, complete_step, block_step, unblock_step, fail_step, skip_step, add_dependency, remove_dependency, add_constraint, add_assumption, invalidate_assumption, record_observation, set_next_action, request_replan, request_route_transition, complete_plan, fail_plan };
+struct common_plan_operation {
+    common_plan_operation_kind kind = common_plan_operation_kind::add_step;
+    std::string plan_id;
+    uint64_t expected_version = 0;
+    std::optional<std::string> step_id, target_id, value;
+    std::optional<common_plan_step> step;
+    std::optional<common_plan_constraint> constraint;
+    std::optional<common_plan_assumption> assumption;
+    std::optional<common_plan_observation> observation;
+    std::string reason_summary;
+    std::vector<std::string> evidence_ids;
+    // Host-only route migration. Model-facing proposal parsing never sets
+    // this flag; the plan store policy requires it for rebinding.
+    std::optional<common_plan_route_binding> route_binding;
+    std::optional<common_plan_workflow_continuation_record> workflow_continuation_record;
+    std::optional<common_plan_workflow_definition> workflow_definition;
+    std::vector<std::string> route_required_capabilities;
+    std::vector<std::string> route_procedure_refs;
+    bool host_authorized = false;
+    // Executable route entry and its grounding snapshot commit with the route
+    // binding. A resumed store must never expose a route without its work.
+    std::vector<common_plan_step> route_steps;
+    std::optional<common_plan_observation> route_handoff;
+};
+struct common_plan_event { uint64_t sequence = 0, prior_version = 0, new_version = 0; common_plan_operation operation; bool accepted = false; std::string reason_summary; int64_t created_at = 0; };
+
+const char * common_plan_operation_kind_name(common_plan_operation_kind kind);
+bool common_plan_scope_matches(const common_plan_state & plan, common_plan_scope scope,
+        const std::string & namespace_id, const std::string & session_id,
+        const std::string & project_id, const std::string & turn_id);
+// Bootstrap/curated templates at host-global scope are visible to narrower
+// execution scopes in the same namespace. This must not be used to resume
+// concrete task plans, for which common_plan_scope_matches remains exact.
+bool common_plan_template_scope_matches(const common_plan_state & plan, common_plan_scope scope,
+        const std::string & namespace_id, const std::string & session_id,
+        const std::string & project_id, const std::string & turn_id);

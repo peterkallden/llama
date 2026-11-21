@@ -140,6 +140,10 @@ struct llama_memory_i {
     virtual void clear(bool data) = 0;
 
     virtual bool seq_rm  (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1) = 0;
+    // Optional capability for an exclusively owned, single-sequence replay context.
+    virtual bool supports_rewind_last() const { return false; }
+    virtual bool can_rewind_last(llama_seq_id seq_id, llama_pos pos) const { (void) seq_id; (void) pos; return false; }
+    virtual bool rewind_last(llama_seq_id seq_id, llama_pos pos) { (void) seq_id; (void) pos; return false; }
     virtual void seq_cp  (llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) = 0;
     virtual void seq_keep(llama_seq_id seq_id) = 0;
     virtual void seq_add (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, llama_pos shift) = 0;

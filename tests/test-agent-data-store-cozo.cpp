@@ -1,0 +1,647 @@
+#include "agent-data-store-cozo.h"
+extern "C" {
+#include <cozo_c.h>
+}
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
+using json = nlohmann::ordered_json;
+
+class virtual_dataset_fixture final : public common_agent_virtual_dataset_source {
+public:
+    size_t calls = 0;
+    common_agent_scope last_scope;
+    bool last_allow_network = false;
+    bool authorized = true;
+    bool secondary_authorized = true;
+    bool authorize_source(const std::string & source_id, const common_agent_scope &, std::string & error) const override {
+        if (!authorized || (source_id != "elastic-a" && (source_id != "elastic-b" || !secondary_authorized))) {
+            error = "source authorization denied"; return false;
+        }
+        error.clear(); return true;
+    }
+    bool execute(const common_agent_dataset_descriptor &, const std::string &,
+            const std::string &, const common_agent_scope & scope, bool allow_network,
+            std::string & result, std::string & error) override {
+        ++calls;
+        last_scope = scope;
+        last_allow_network = allow_network;
+        if (!allow_network) {
+            error = "network permission is required for the virtual source";
+            return false;
+        }
+        result = json{{"rows", json::array()}, {"row_count", 0}, {"complete", false},
+            {"scan_truncated", true}, {"result_truncated", false}}.dump();
+        error.clear();
+        return true;
+    }
+};
+
+#define TEST_ASSERT(expr) do { \
+    const bool test_result = static_cast<bool>(expr); \
+    assert(test_result); \
+    if (!test_result) { std::fprintf(stderr, "test assertion failed at line %d: %s (error=%s)\n", __LINE__, #expr, error.c_str()); return 1; } \
+} while (false)
+
+int main() {
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() / "llama-agent-data-store-cozo-test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+
+    common_agent_cozo_data_store store;
+    std::string error;
+    if (!store.open((root / "data.cozo").string(), error)) {
+        std::fprintf(stderr, "Cozo open failed: %s\n", error.c_str());
+        return 1;
+    }
+    common_agent_scope graph_scope;
+    graph_scope.namespace_id = "tenant-a"; graph_scope.project_id = "graph-project"; graph_scope.session_id = "session-one";
+    common_context_graph_state graph;
+    TEST_ASSERT(store.get_context_graph(graph_scope, graph, error) && graph.revision == 0);
+    graph.revision = 1;
+    graph.nodes.push_back({"node:a", "component", "planning", "", 0, "", "", "", {}});
+    graph.nodes.push_back({"node:b", "file", "selection", "src/selection.cpp", 0, "rev1", "", "", {}});
+    common_context_graph_edge graph_edge;
+    graph_edge.id = "edge:a"; graph_edge.from = "node:a"; graph_edge.to = "node:b";
+    graph_edge.relation = "depends_on"; graph_edge.rationale = "inspect this seam";
+    graph.edges.push_back(graph_edge);
+    common_context_graph_state published_graph;
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 0, graph, published_graph, error) == common_agent_publication_status::published);
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 0, graph, published_graph, error) == common_agent_publication_status::conflict);
+    {
+        auto source_scope = graph_scope; source_scope.project_id = "source-roundtrip";
+        auto sourced = published_graph;
+        const common_source_reference source{"document", "doc:one", "section:a", "2", 100};
+        sourced.nodes[0].sources = {source};
+        common_context_graph_node symbol;
+        symbol.id = "node:sourced-symbol"; symbol.kind = "symbol"; symbol.name = "function";
+        symbol.path = "src/sample.cpp"; symbol.line = 1; symbol.symbol_key = "repo:symbol";
+        symbol.observations.push_back({symbol.path, 1, "2", "document:one", {source}});
+        sourced.nodes.push_back(symbol);
+        sourced.nodes[0].descriptions.push_back({"document evidence", "model", "2", {}, {source}});
+        sourced.edges[0].assertions.push_back({"model", "multiple sources", {}, "2", {source, {"dataset", "dataset://one"}}});
+        common_context_graph_state restored;
+        TEST_ASSERT(store.publish_context_graph(source_scope, 0, sourced, restored, error) == common_agent_publication_status::published);
+        TEST_ASSERT(store.get_context_graph(source_scope, restored, error));
+        TEST_ASSERT(restored.nodes[0].sources == std::vector<common_source_reference>{source});
+        TEST_ASSERT(restored.nodes[0].descriptions[0].sources == std::vector<common_source_reference>{source});
+        TEST_ASSERT(restored.edges[0].assertions[0].sources.size() == 2);
+        const auto sourced_symbol = std::find_if(restored.nodes.begin(), restored.nodes.end(), [](const auto & node) { return node.id == "node:sourced-symbol"; });
+        TEST_ASSERT(sourced_symbol != restored.nodes.end() && sourced_symbol->observations[0].sources[0] == source);
+        auto tampered = restored; tampered.revision = 2;
+        tampered.edges[0].assertions[0].sources[0].revision = "3";
+        TEST_ASSERT(store.publish_context_graph(source_scope, 1, tampered, restored, error) == common_agent_publication_status::invalid);
+        TEST_ASSERT(store.get_context_graph(source_scope, restored, error));
+        tampered = restored; tampered.revision = 2; tampered.nodes[0].descriptions[0].sources.clear();
+        TEST_ASSERT(store.publish_context_graph(source_scope, 1, tampered, restored, error) == common_agent_publication_status::invalid);
+        auto appended = restored; appended.revision = 2;
+        appended.nodes[0].sources.push_back({"dataset", "dataset://additional"});
+        TEST_ASSERT(store.publish_context_graph(source_scope, 1, appended, restored, error) == common_agent_publication_status::published);
+        auto removed = restored; removed.revision = 3; removed.nodes[0].sources.erase(removed.nodes[0].sources.begin());
+        TEST_ASSERT(store.publish_context_graph(source_scope, 2, removed, restored, error) == common_agent_publication_status::invalid);
+    }
+    auto other_graph_scope = graph_scope; other_graph_scope.project_id = "other-project";
+    TEST_ASSERT(store.get_context_graph(other_graph_scope, published_graph, error) && published_graph.nodes.empty());
+    auto session_graph_scope = graph_scope; session_graph_scope.session_id = "session-two";
+    TEST_ASSERT(store.get_context_graph(session_graph_scope, published_graph, error) && published_graph.nodes.size() == 2 && published_graph.edges.size() == 1);
+    auto illegal_graph = published_graph; illegal_graph.revision = 2; illegal_graph.edges.clear();
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 1, illegal_graph, graph, error) == common_agent_publication_status::invalid);
+    auto altered_proposal = published_graph; altered_proposal.revision = 2;
+    altered_proposal.edges[0].status = "retraction_proposed"; altered_proposal.edges[0].version = 2;
+    altered_proposal.edges[0].rationale = "changed original"; altered_proposal.edges[0].retraction_rationale = "recheck";
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 1, altered_proposal, graph, error) == common_agent_publication_status::invalid);
+    auto updated_graph = published_graph; updated_graph.revision = 2;
+    updated_graph.edges[0].status = "retraction_proposed"; updated_graph.edges[0].retraction_rationale = "recheck"; updated_graph.edges[0].version = 2;
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 1, updated_graph, graph, error) == common_agent_publication_status::published);
+    auto domain_graph = graph; domain_graph.revision = 3;
+    domain_graph.nodes.push_back({"node:actor", "actor", "Alice", "", 0, "", "case:a/entity:alice", "", {}});
+    common_context_graph_edge domain_edge;
+    domain_edge.id = "edge:actor"; domain_edge.from = "node:actor"; domain_edge.to = "node:a";
+    domain_edge.relation = "associated_with"; domain_edge.rationale = "inspect case";
+    domain_graph.edges.push_back(domain_edge);
+    TEST_ASSERT(store.publish_context_graph(graph_scope, 2, domain_graph, graph, error) == common_agent_publication_status::published);
+    std::vector<std::string> graph_ids;
+    TEST_ASSERT(store.find_context_graph_edges(graph_scope, 3, "node:actor", "associated_with", "node:a", graph_ids, error) &&
+        graph_ids.size() == 1 && graph_ids[0] == "edge:actor");
+    TEST_ASSERT(store.find_context_graph_edges(graph_scope, 3, "", "associated_with", "node:a", graph_ids, error) && graph_ids.size() == 1);
+    TEST_ASSERT(store.find_context_graph_edges(other_graph_scope, 0, "", "associated_with", "", graph_ids, error) && graph_ids.empty());
+    TEST_ASSERT(!store.find_context_graph_edges(graph_scope, 2, "", "associated_with", "", graph_ids, error));
+    auto missing_graph_scope = graph_scope; missing_graph_scope.project_id.clear();
+    TEST_ASSERT(!store.get_context_graph(missing_graph_scope, published_graph, error));
+    auto assertion_scope = graph_scope; assertion_scope.project_id = "assertion-contract-test";
+    common_context_graph_state assertion_graph;
+    TEST_ASSERT(store.get_context_graph(assertion_scope, assertion_graph, error));
+    assertion_graph.revision = 1;
+    assertion_graph.nodes = {{"node:a", "component", "a", "", 0, "", "", "", {}},
+                             {"node:b", "component", "b", "", 0, "", "", "", {}}};
+    common_context_graph_edge assertion_edge;
+    assertion_edge.id = "edge:test"; assertion_edge.from = "node:a"; assertion_edge.to = "node:b";
+    assertion_edge.relation = "depends_on"; assertion_edge.rationale = "first";
+    assertion_edge.assertions.push_back({"model", "first", {"source:one"}, "r1"});
+    assertion_graph.edges.push_back(assertion_edge);
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 0, assertion_graph, published_graph, error) == common_agent_publication_status::published);
+    assertion_graph.revision = 2; assertion_graph.edges[0].version = 2;
+    assertion_graph.edges[0].assertions.push_back({"model", "second", {"source:two"}, "r2"});
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 1, assertion_graph, published_graph, error) == common_agent_publication_status::published);
+    auto altered_assertion = assertion_graph; altered_assertion.revision = 3; altered_assertion.edges[0].version = 3;
+    altered_assertion.edges[0].assertions[0].rationale = "tampered";
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 2, altered_assertion, published_graph, error) == common_agent_publication_status::invalid);
+    TEST_ASSERT(store.get_context_graph(assertion_scope, published_graph, error) && published_graph.edges[0].assertions.size() == 2);
+    auto described_graph = assertion_graph;
+    described_graph.revision = 3;
+    described_graph.nodes[0].descriptions.push_back({"first description", "model", "r1", {"source:one"}});
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 2, described_graph, published_graph, error) == common_agent_publication_status::published);
+    described_graph.revision = 4;
+    described_graph.nodes[0].descriptions.push_back({"revised description", "model", "r2", {"source:two"}});
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 3, described_graph, published_graph, error) == common_agent_publication_status::published);
+    auto tampered_description = described_graph;
+    tampered_description.revision = 5;
+    tampered_description.nodes[0].descriptions[0].text = "tampered";
+    TEST_ASSERT(store.publish_context_graph(assertion_scope, 4, tampered_description, published_graph, error) == common_agent_publication_status::invalid);
+    TEST_ASSERT(store.get_context_graph(assertion_scope, published_graph, error) &&
+        published_graph.nodes[0].descriptions.size() == 2 && published_graph.nodes[0].descriptions[0].text == "first description");
+    common_agent_scope symbol_scope = graph_scope;
+    symbol_scope.project_id = "symbol-observation-test";
+    common_context_graph_state symbols;
+    TEST_ASSERT(store.get_context_graph(symbol_scope, symbols, error));
+    symbols.revision = 1;
+    common_context_graph_node symbol;
+    symbol.id = "node:symbol"; symbol.kind = "symbol"; symbol.name = "ns::f(int)";
+    symbol.path = "src/f.cpp"; symbol.line = 10; symbol.source_revision = "r1";
+    symbol.symbol_key = "clang:usr:f-int";
+    symbol.observations.push_back({"src/f.cpp", 10, "r1", ""});
+    symbols.nodes.push_back(symbol);
+    TEST_ASSERT(store.publish_context_graph(symbol_scope, 0, symbols, published_graph, error) == common_agent_publication_status::published);
+    symbols.revision = 2;
+    symbols.nodes[0].observations.push_back({"src/f.cpp", 20, "r2", ""});
+    TEST_ASSERT(store.publish_context_graph(symbol_scope, 1, symbols, published_graph, error) == common_agent_publication_status::published);
+    auto changed_observation = symbols;
+    changed_observation.revision = 3; changed_observation.nodes[0].observations[0].line = 99;
+    TEST_ASSERT(store.publish_context_graph(symbol_scope, 2, changed_observation, published_graph, error) == common_agent_publication_status::invalid);
+    TEST_ASSERT(store.get_context_graph(symbol_scope, published_graph, error) &&
+        published_graph.nodes.size() == 1 && published_graph.nodes[0].observations.size() == 2);
+    virtual_dataset_fixture virtual_source;
+    TEST_ASSERT(store.set_virtual_dataset_source(&virtual_source));
+    common_investigation_case_revision investigation;
+    investigation.case_id = "case-persist-1";
+    investigation.title = "Persistence contract";
+    investigation.question = "Can this case be reopened?";
+    investigation.scope.namespace_id = "tenant-a";
+    investigation.scope.project_id = "project-a";
+    investigation.scope.session_id = "session-a";
+    investigation.source_id = "elastic-a";
+    investigation.window_start_ms = 100;
+    investigation.window_end_ms = 200;
+    common_investigation_case_revision published;
+    TEST_ASSERT(store.publish_investigation_case(investigation, 0,
+        "resource://investigation/case-persist-1/revision-1", published, error));
+    TEST_ASSERT(published.revision == 1 && published.fingerprint.rfind("sha256:", 0) == 0);
+    const auto first_case_fingerprint = published.fingerprint;
+    auto second_case = investigation;
+    second_case.case_id = "case-persist-2";
+    second_case.title = "Second case";
+    TEST_ASSERT(store.publish_investigation_case(second_case, 0,
+        "resource://investigation/case-persist-2/revision-1", published, error));
+    std::vector<common_investigation_case_summary> listed_cases;
+    std::string case_cursor;
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 1, "",
+        listed_cases, case_cursor, error));
+    TEST_ASSERT(listed_cases.size() == 1 && listed_cases[0].case_id == "case-persist-1" &&
+        listed_cases[0].title == "Persistence contract" && case_cursor == "case-persist-1");
+    const auto next_case_after = case_cursor;
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 1, next_case_after,
+        listed_cases, case_cursor, error));
+    TEST_ASSERT(listed_cases.size() == 1 && listed_cases[0].case_id == "case-persist-2" && case_cursor.empty());
+    common_investigation_case_revision reloaded_case;
+    TEST_ASSERT(store.get_investigation_case("case-persist-1", investigation.scope, reloaded_case, error));
+    TEST_ASSERT(reloaded_case.revision == 1 && reloaded_case.fingerprint == first_case_fingerprint);
+    virtual_source.authorized = false;
+    TEST_ASSERT(!store.get_investigation_case("case-persist-1", investigation.scope, reloaded_case, error));
+    virtual_source.authorized = true;
+    TEST_ASSERT(store.get_investigation_case("case-persist-1", investigation.scope, reloaded_case, error));
+    TEST_ASSERT(!store.publish_investigation_case(investigation, 0,
+        "resource://investigation/case-persist-1/conflict", published, error));
+    TEST_ASSERT(error.find("revision conflict") != std::string::npos);
+    TEST_ASSERT(store.publish_investigation_case_checked(investigation, 0,
+        "resource://investigation/case-persist-1/conflict", published, error) == common_agent_publication_status::conflict);
+    auto invalid_revision = reloaded_case;
+    invalid_revision.revision = 2;
+    common_investigation_claim invalid_claim;
+    invalid_claim.id = "unknown-evidence"; invalid_claim.text = "Explicit hypothesis";
+    invalid_claim.state = common_investigation_claim_state::hypothesis;
+    invalid_claim.supporting_event_ids = {"invented-event"};
+    invalid_revision.claims.push_back(invalid_claim);
+    TEST_ASSERT(store.publish_investigation_case_checked(invalid_revision, 1,
+        "resource://investigation/case-persist-1/rejected", published, error) == common_agent_publication_status::invalid);
+    TEST_ASSERT(error.find("unknown supporting evidence") != std::string::npos);
+    auto next_revision = reloaded_case;
+    next_revision.revision = 2;
+    next_revision.title = "Persistence contract updated";
+    TEST_ASSERT(store.publish_investigation_case(next_revision, 1,
+        "resource://investigation/case-persist-1/revision-2", published, error));
+    TEST_ASSERT(published.revision == 2 && published.previous_revision_uri ==
+        "resource://investigation/case-persist-1/revision-1");
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 1, "",
+        listed_cases, case_cursor, error));
+    TEST_ASSERT(listed_cases.size() == 1 && listed_cases[0].revision == 2 &&
+        listed_cases[0].title == "Persistence contract updated");
+    auto other_scope = investigation.scope;
+    other_scope.project_id = "project-b";
+    TEST_ASSERT(!store.get_investigation_case("case-persist-1", other_scope, reloaded_case, error));
+    TEST_ASSERT(store.list_investigation_cases(other_scope, 10, "",
+        listed_cases, case_cursor, error) && listed_cases.empty());
+    common_investigation_source secondary_provider;
+    secondary_provider.id = "provider-elastic-b";
+    secondary_provider.kind = common_investigation_source_kind::search_connector;
+    secondary_provider.provider_id = "elastic-b";
+    secondary_provider.processing_status = "not_collected";
+    secondary_provider.complete = false;
+    second_case.sources.push_back(secondary_provider);
+    second_case.revision = 2;
+    TEST_ASSERT(store.publish_investigation_case(second_case, 1,
+        "resource://investigation/case-persist-2/revision-2", published, error));
+    virtual_source.secondary_authorized = false;
+    TEST_ASSERT(!store.get_investigation_case(second_case.case_id, investigation.scope, reloaded_case, error));
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 10, "", listed_cases, case_cursor, error) &&
+        listed_cases.size() == 1 && listed_cases[0].case_id == investigation.case_id);
+    virtual_source.secondary_authorized = true;
+    TEST_ASSERT(store.get_investigation_case(second_case.case_id, investigation.scope, reloaded_case, error));
+
+    common_agent_research_revision_ref research_revision;
+    research_revision.research_id = "research-shared";
+    research_revision.revision = 1;
+    research_revision.parent_revision = 0;
+    research_revision.payload_uri = "resource://project/research/revision-1";
+    research_revision.payload_fingerprint = "sha256:research-v1";
+    research_revision.publication_id = "publish-1";
+    common_agent_research_revision_ref published_research;
+    bool already_published = false;
+    TEST_ASSERT(store.publish_research_revision(investigation.scope, research_revision, 0,
+        published_research, already_published, error));
+    TEST_ASSERT(!already_published && published_research.revision == 1);
+    TEST_ASSERT(store.publish_research_revision(investigation.scope, research_revision, 0,
+        published_research, already_published, error));
+    TEST_ASSERT(already_published && published_research.publication_id == "publish-1");
+    auto retry_research = research_revision;
+    retry_research.payload_uri = "resource://project/research/orphaned-retry-copy";
+    TEST_ASSERT(store.publish_research_revision(investigation.scope, retry_research, 0,
+        published_research, already_published, error));
+    TEST_ASSERT(already_published && published_research.payload_uri == research_revision.payload_uri);
+    common_agent_research_revision_ref reloaded_research;
+    TEST_ASSERT(store.get_research_revision("research-shared", 0, investigation.scope, reloaded_research, error));
+    TEST_ASSERT(reloaded_research.revision == 1 && reloaded_research.payload_uri == research_revision.payload_uri);
+    auto conflicting_research = research_revision;
+    conflicting_research.revision = 2;
+    conflicting_research.parent_revision = 1;
+    conflicting_research.payload_uri = "resource://project/research/revision-2a";
+    conflicting_research.payload_fingerprint = "sha256:research-v2a";
+    conflicting_research.publication_id = "publish-2a";
+    TEST_ASSERT(store.publish_research_revision(investigation.scope, conflicting_research, 1,
+        published_research, already_published, error));
+    auto stale_research = conflicting_research;
+    stale_research.payload_uri = "resource://project/research/revision-2b";
+    stale_research.payload_fingerprint = "sha256:research-v2b";
+    stale_research.publication_id = "publish-2b";
+    TEST_ASSERT(!store.publish_research_revision(investigation.scope, stale_research, 1,
+        published_research, already_published, error));
+    TEST_ASSERT(error.find("revision conflict") != std::string::npos);
+    auto other_research_scope = investigation.scope;
+    other_research_scope.project_id = "project-b";
+    TEST_ASSERT(!store.get_research_revision("research-shared", 0, other_research_scope, reloaded_research, error));
+    common_agent_research_draft_ref draft_ref{"research-shared", "draft-session-a", "session-a", 2, 1,
+        "resource://session/draft-1", "sha256:draft-1", 111};
+    common_agent_research_draft_ref saved_draft;
+    bool already_saved = false;
+    TEST_ASSERT(store.save_research_draft(investigation.scope, draft_ref, 0, saved_draft, already_saved, error));
+    TEST_ASSERT(!already_saved && saved_draft.draft_revision == 1);
+    common_agent_research_draft_ref loaded_draft;
+    TEST_ASSERT(store.get_research_draft(draft_ref.draft_id, investigation.scope, loaded_draft, error));
+    TEST_ASSERT(loaded_draft.owner_session_id == "session-a" && loaded_draft.base_revision == 2);
+
+    TEST_ASSERT(store.put_row("dataset://local/orders", "1", R"({"id":1,"customer_id":10,"region":"north","value":12})", error));
+    TEST_ASSERT(store.put_row("dataset://local/orders", "2", R"({"id":2,"customer_id":11,"region":"south","value":8})", error));
+    TEST_ASSERT(store.put_row("dataset://local/orders", "3", R"({"id":3,"customer_id":10,"region":"north","value":4})", error));
+    TEST_ASSERT(store.put_row("dataset://local/metrics", "1", R"({"region":"all","value":10})", error));
+    TEST_ASSERT(store.put_row("dataset://local/metrics", "2", R"({"region":"all","value":11})", error));
+    TEST_ASSERT(store.put_row("dataset://local/metrics", "3", R"({"region":"all","value":12})", error));
+    TEST_ASSERT(store.put_row("dataset://local/metrics", "4", R"({"region":"all","value":13})", error));
+    TEST_ASSERT(store.put_row("dataset://local/metrics", "5", R"({"region":"all","value":100})", error));
+    TEST_ASSERT(store.put_row("dataset://local/customers", "10", R"({"customer_id":10,"name":"Ada"})", error));
+    TEST_ASSERT(store.put_rows("dataset://local/batch", {
+        {"batch-0", R"({"value":10})"}, {"batch-1", R"({"value":20})"}}, error));
+    common_agent_dataset_descriptor batch_descriptor;
+    batch_descriptor.ref = {"dataset://local/batch", "Batch", 2, 1, {}, "tabular-dataset"};
+    batch_descriptor.ref.source_resource_uri = "resource://test/batch.json";
+    batch_descriptor.ref.content_hash = "sha256:batch-content";
+    batch_descriptor.import_processor_id = "test-importer";
+    batch_descriptor.import_processor_version = "v1";
+    batch_descriptor.columns = {{"value", common_agent_dataset_column_type::integer, false}};
+    TEST_ASSERT(store.put_dataset_descriptor(batch_descriptor, error));
+    common_agent_dataset_descriptor cached_batch;
+    TEST_ASSERT(store.find_dataset_materialization("resource://test/batch.json", "sha256:batch-content", "v1", cached_batch, error));
+    TEST_ASSERT(cached_batch.ref.uri == batch_descriptor.ref.uri);
+    TEST_ASSERT(!store.find_dataset_materialization("resource://test/batch.json", "sha256:changed", "v1", cached_batch, error));
+    TEST_ASSERT(error.empty());
+    std::string batch_output;
+    TEST_ASSERT(store.execute("data.query", R"({"dataset":"dataset://local/batch","max_result_rows":10})", batch_output, error));
+    const auto batch_result = json::parse(batch_output);
+    TEST_ASSERT(batch_result["rows"].size() == 2 &&
+        batch_result["rows"][0]["value"] == 10 && batch_result["rows"][1]["value"] == 20);
+    common_agent_dataset_descriptor orders_descriptor;
+    orders_descriptor.ref = {"dataset://local/orders", "Orders", 3, 4, "resource://uploads/orders.csv", "tabular-dataset"};
+    orders_descriptor.columns = {{"id", common_agent_dataset_column_type::integer, false},
+        {"customer_id", common_agent_dataset_column_type::integer, false},
+        {"region", common_agent_dataset_column_type::string, true},
+        {"value", common_agent_dataset_column_type::integer, true}};
+    orders_descriptor.import_processor_id = "test-importer";
+    orders_descriptor.origin.kind = "document_table";
+    orders_descriptor.origin.source_representation_uri = "resource://uploads/orders.semantic";
+    orders_descriptor.origin.source_node_id = "document-node://table/2";
+    orders_descriptor.origin.table_index = 2;
+    orders_descriptor.origin.caption = "Orders by customer";
+    orders_descriptor.origin.header_mode = common_agent_table_header_mode::first_row;
+    orders_descriptor.origin.header_confidence = 0.9;
+    TEST_ASSERT(store.put_dataset_descriptor(orders_descriptor, error));
+    common_agent_dataset_descriptor reloaded_orders;
+    TEST_ASSERT(store.get_dataset_descriptor("dataset://local/orders", reloaded_orders, error));
+    TEST_ASSERT(reloaded_orders.origin.kind == "document_table" &&
+        reloaded_orders.origin.source_node_id == "document-node://table/2" &&
+        reloaded_orders.origin.table_index == 2 &&
+        reloaded_orders.origin.caption == "Orders by customer" &&
+        reloaded_orders.origin.header_mode == common_agent_table_header_mode::first_row);
+    common_agent_dataset_descriptor customers_descriptor = orders_descriptor;
+    customers_descriptor.ref = {"dataset://local/customers", "Customers", 1, 2, "resource://uploads/customers.csv", "tabular-dataset"};
+    customers_descriptor.columns = {{"customer_id", common_agent_dataset_column_type::integer, false},
+        {"name", common_agent_dataset_column_type::string, true}};
+    TEST_ASSERT(store.put_dataset_descriptor(customers_descriptor, error));
+    common_agent_dataset_descriptor duplicate_customers = customers_descriptor;
+    duplicate_customers.ref.uri = "dataset://local/customers-duplicate";
+    TEST_ASSERT(store.put_dataset_descriptor(duplicate_customers, error));
+    common_agent_dataset_descriptor ambiguous;
+    TEST_ASSERT(!store.find_dataset_by_name("customers", ambiguous, error));
+    TEST_ASSERT(error.find("dataset name is ambiguous") != std::string::npos &&
+        error.find("customers-duplicate") != std::string::npos &&
+        error.find("customers") != std::string::npos);
+
+    std::string output;
+    common_agent_dataset_descriptor virtual_dataset;
+    virtual_dataset.ref.uri = "dataset://investigation/elastic-a/logs-2026.10";
+    virtual_dataset.ref.name = "Security events";
+    virtual_dataset.ref.column_count = 1;
+    virtual_dataset.ref.source_representation = "elasticsearch:search";
+    virtual_dataset.ref.source_provider = "elastic-a";
+    virtual_dataset.ref.source_operation = "search";
+    virtual_dataset.ref.source_request_json = R"({"time_field":"@timestamp"})";
+    virtual_dataset.ref.storage_mode = common_agent_dataset_storage_mode::virtual_;
+    virtual_dataset.ref.count_kind = common_agent_dataset_count_kind::unknown;
+    virtual_dataset.columns = {{"event.id", common_agent_dataset_column_type::string, false}};
+    virtual_dataset.capabilities = {"filter", "project", "sort", "page"};
+    virtual_dataset.read_context_id = "read-context-1";
+    TEST_ASSERT(store.put_dataset_descriptor(virtual_dataset, error));
+    common_agent_scope virtual_scope;
+    virtual_scope.namespace_id = "tenant-a";
+    virtual_scope.project_id = "project-a";
+    TEST_ASSERT(store.execute_scoped("data.query", R"({"dataset":"dataset://investigation/elastic-a/logs-2026.10","max_result_rows":5})", virtual_scope, true, output, error));
+    TEST_ASSERT(virtual_source.calls == 1 && json::parse(output)["complete"] == false);
+    TEST_ASSERT(virtual_source.last_scope.namespace_id == "tenant-a" &&
+        virtual_source.last_scope.project_id == "project-a" && virtual_source.last_allow_network);
+    TEST_ASSERT(!store.execute_scoped("data.query", R"({"dataset":"dataset://investigation/elastic-a/logs-2026.10","max_result_rows":5})", virtual_scope, false, output, error));
+    TEST_ASSERT(error.find("network permission") != std::string::npos && virtual_source.calls == 2);
+    TEST_ASSERT(!store.execute_scoped("data.query", R"({"dataset":"dataset://investigation/elastic-a/logs-2026.10","materialize":true,"result_dataset":"dataset://derived/all"})", virtual_scope, true, output, error));
+    TEST_ASSERT(error.find("incomplete virtual") != std::string::npos && virtual_source.calls == 3);
+    TEST_ASSERT(!store.execute("data.join", R"({"left":"dataset://investigation/elastic-a/logs-2026.10","right":"dataset://local/orders","type":"inner","on":[{"left":"event.id","right":"id"}]})", output, error));
+    TEST_ASSERT(error.find("virtual datasets") != std::string::npos);
+
+    TEST_ASSERT(store.execute("data.query", R"({"dataset":"dataset://local/orders","order_by":[{"field":"value","direction":"desc"}],"max_scan_rows":2,"max_result_rows":1})", output, error));
+    auto query = json::parse(output);
+    TEST_ASSERT(query["scanned_rows"] == 2 && query["scan_truncated"] == true && query["row_count"] == 1 && query["result_truncated"] == true);
+    TEST_ASSERT(query["rows"][0]["value"] == 12);
+
+    TEST_ASSERT(store.execute("data.filter", R"({"dataset":"dataset://local/orders","conditions":[{"field":"region","operator":"=","value":"north"}],"max_scan_rows":10})", output, error));
+    auto filtered = json::parse(output);
+    TEST_ASSERT(filtered["row_count"] == 2 && filtered["rows"][0]["region"] == "north");
+    TEST_ASSERT(store.put_row("dataset://local/catalogue", "1", R"({"code":"DEMO_R_D3DENS","title":"Population density by NUTS 3 region"})", error));
+    TEST_ASSERT(store.put_row("dataset://local/catalogue", "2", R"({"code":"GDP","title":"Gross domestic product"})", error));
+    TEST_ASSERT(store.execute("data.query", R"({"dataset":"dataset://local/catalogue","where":[{"field":"title","operator":"contains","value":"POPULATION DENSITY"}],"max_scan_rows":10})", output, error));
+    const auto catalogue_matches = json::parse(output);
+    TEST_ASSERT(catalogue_matches["row_count"] == 1 && catalogue_matches["rows"][0]["code"] == "DEMO_R_D3DENS");
+    for (const auto * operation : {"data.query", "data.filter"}) {
+        const auto key = std::string(operation) == "data.query" ? "where" : "conditions";
+        const json membership = {{"dataset", "dataset://local/orders"},
+            {key, json::array({{{"field", "region"}, {"operator", "in"},
+                {"value", json::array({"north", "east"})}}})}};
+        TEST_ASSERT(store.execute(operation, membership.dump(), output, error));
+        const auto matching = json::parse(output);
+        TEST_ASSERT(matching["rows"].size() == 2);
+        TEST_ASSERT(matching["rows"][0]["region"] == "north");
+        json typed_membership = membership;
+        typed_membership[key][0] = {{"field", "value"}, {"operator", "in"},
+            {"value", json::array({12, "4"})}};
+        TEST_ASSERT(store.execute(operation, typed_membership.dump(), output, error));
+        TEST_ASSERT(json::parse(output)["rows"].size() == 1);
+    }
+
+    TEST_ASSERT(store.execute("data.aggregate", R"({"dataset":"dataset://local/orders","group_by":["region"],"measures":[{"function":"count","column":"*","as":"count"},{"function":"sum","column":"value","as":"total"}]})", output, error));
+    auto aggregate = json::parse(output);
+    TEST_ASSERT(aggregate["row_count"] == 2 && aggregate["scan_mode"] == "native_bounded" && aggregate["scanned_rows"] == 3 && aggregate["scan_truncated"] == false);
+
+    TEST_ASSERT(store.execute("data.aggregate", R"({"dataset":"dataset://local/orders","group_by":["region"],"measures":[{"function":"count","column":"*","as":"count"}],"max_scan_rows":2})", output, error));
+    auto bounded_aggregate = json::parse(output);
+    TEST_ASSERT(bounded_aggregate["scan_mode"] == "native_bounded" && bounded_aggregate["scanned_rows"] == 2 && bounded_aggregate["scan_truncated"] == true);
+
+    TEST_ASSERT(store.execute("statistics.describe", R"({"dataset":"dataset://local/orders","columns":["value"]})", output, error));
+    auto statistics = json::parse(output);
+    TEST_ASSERT(statistics["columns"].size() == 1 && statistics["columns"][0]["count"] == 3 &&
+        statistics["columns"][0]["null_count"] == 0 && statistics["columns"][0]["min"] == 4.0 &&
+        statistics["columns"][0]["max"] == 12.0 && statistics["columns"][0]["mean"] == 8.0 &&
+        std::abs(statistics["columns"][0]["stddev"].get<double>() - 3.265986323710904) < 1e-9);
+    TEST_ASSERT(store.execute("statistics.describe", R"({"dataset":"dataset://local/orders"})", output, error));
+    statistics = json::parse(output);
+    TEST_ASSERT(statistics["columns"].size() == 3);
+    TEST_ASSERT(store.execute("statistics.describe", R"({"dataset":"dataset://local/orders","columns":["value"],"group_by":["region"]})", output, error));
+    auto grouped_statistics = json::parse(output);
+    TEST_ASSERT(grouped_statistics["group_by"].size() == 1 && grouped_statistics["groups"].size() == 2);
+    for (const auto & group : grouped_statistics["groups"]) {
+        if (group["region"] == "north") {
+            TEST_ASSERT(group["columns"][0]["count"] == 2 && group["columns"][0]["mean"] == 8.0);
+        }
+    }
+    TEST_ASSERT(store.execute("statistics.outliers", R"({"dataset":"dataset://local/metrics","column":"value","group_by":["region"]})", output, error));
+    auto outliers = json::parse(output);
+    TEST_ASSERT(outliers["method"] == "iqr" && outliers["columns"].size() == 1 &&
+        outliers["columns"][0]["groups"].size() == 1 &&
+        outliers["columns"][0]["groups"][0]["outliers"].size() == 1 &&
+        outliers["columns"][0]["groups"][0]["outliers"][0]["value"] == 100.0);
+
+    TEST_ASSERT(store.put_row("dataset://local/orders", "4", R"({"id":4,"customer_id":12,"region":"north","value":null})", error));
+    TEST_ASSERT(store.execute("statistics.value_counts", R"({"dataset":"dataset://local/orders","column":"region","limit":2})", output, error));
+    auto value_counts = json::parse(output);
+    TEST_ASSERT(value_counts["column"] == "region" && value_counts["distinct_count"] == 2 &&
+        value_counts["null_count"] == 0 && value_counts["values"].size() == 2 &&
+        value_counts["values"][0]["value"] == "north" && value_counts["values"][0]["count"] == 3 &&
+        value_counts["result_truncated"] == false);
+    TEST_ASSERT(store.execute("statistics.value_counts", R"({"dataset":"dataset://local/orders","column":"value"})", output, error));
+    value_counts = json::parse(output);
+    TEST_ASSERT(value_counts["null_count"] == 1 && value_counts["distinct_count"] == 3);
+
+    TEST_ASSERT(store.execute("data.join", R"({"left":"dataset://local/orders","right":"dataset://local/customers","type":"inner","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
+    auto inner_join = json::parse(output);
+    TEST_ASSERT(inner_join["row_count"] == 2 && inner_join["scan_mode"] == "native_bounded" && inner_join["scanned_rows"] == 5 && inner_join["scan_truncated"] == false && inner_join["rows"][0].contains("name"));
+
+    TEST_ASSERT(store.execute("data.join", R"({"left":"dataset://local/orders","right":"dataset://local/customers","type":"left","on":[{"left":"customer_id","right":"customer_id"}]})", output, error));
+    auto join = json::parse(output);
+    TEST_ASSERT(join["row_count"] == 4 && join["scan_mode"] == "native_bounded" && join["scanned_rows"] == 5 && join["scan_truncated"] == false && join["rows"][0].contains("name"));
+    bool found_unmatched = false;
+    for (const auto & row : join["rows"]) if (row.value("customer_id", 0) == 11) found_unmatched = !row.contains("name");
+    TEST_ASSERT(found_unmatched);
+
+    TEST_ASSERT(store.execute("data.join", R"({"left":"dataset://local/orders","right":"dataset://local/customers","type":"left","on":[{"left":"customer_id","right":"customer_id"}],"max_scan_rows":2})", output, error));
+    auto bounded_join = json::parse(output);
+    TEST_ASSERT(bounded_join["row_count"] == 2 && bounded_join["scanned_rows"] == 3 && bounded_join["scan_truncated"] == true);
+
+    TEST_ASSERT(!store.execute("data.join", R"({"dataset":"dataset://local/orders","right":"dataset://local/customers","on":[]})", output, error));
+    TEST_ASSERT(error.find("left") != std::string::npos);
+
+    TEST_ASSERT(store.execute("data.filter", R"({"dataset":"dataset://local/orders","conditions":[{"field":"region","operator":"=","value":"north"}],"materialize":true,"result_dataset":"dataset://derived/north-orders"})", output, error));
+    const auto materialized = json::parse(output);
+    TEST_ASSERT(materialized["materialized"] == true && materialized["dataset"] == "dataset://derived/north-orders" && materialized["rows"] == 3);
+    common_agent_dataset_descriptor derived;
+    TEST_ASSERT(store.get_dataset_descriptor("dataset://derived/north-orders", derived, error));
+    TEST_ASSERT(derived.lineage.parent_dataset_uris.size() == 1 && derived.lineage.parent_dataset_uris[0] == "dataset://local/orders" &&
+        derived.lineage.operation == "data.filter" && derived.ref.source_resource_uri == "resource://uploads/orders.csv");
+    TEST_ASSERT(store.execute("data.aggregate", R"({"dataset":"dataset://derived/north-orders","measures":[{"function":"count","column":"*","as":"count"}]})", output, error));
+    const auto derived_aggregate = json::parse(output);
+    TEST_ASSERT(derived_aggregate["row_count"] == 1 && derived_aggregate["rows"][0]["count"] == 3);
+    TEST_ASSERT(!store.execute("data.filter", R"({"dataset":"dataset://local/orders","conditions":[],"max_scan_rows":1,"materialize":true,"result_dataset":"dataset://derived/truncated"})", output, error));
+    TEST_ASSERT(error.find("truncated") != std::string::npos);
+
+    common_investigation_report_index_entry report_entry;
+    report_entry.case_id = "case-persist-1";
+    report_entry.case_revision = 1; // Historical reports remain independently indexed.
+    report_entry.source_id = "elastic-a";
+    report_entry.case_fingerprint = first_case_fingerprint;
+    report_entry.content_fingerprint = "sha256:report-fixture";
+    report_entry.report_uri = "resource://reports/case-persist-1-r1.json";
+    report_entry.markdown_uri = "resource://reports/case-persist-1-r1.md";
+    report_entry.source_manifest_uri = "resource://reports/case-persist-1-r1-sources.json";
+    report_entry.visualization_uris = {"resource://snapshots/one.png"};
+    report_entry.complete = false;
+    report_entry.limitations = {"Coverage is partial."};
+    report_entry.created_at_ms = 1234;
+    common_investigation_report_index_entry indexed_report;
+    TEST_ASSERT(store.publish_investigation_report(investigation.scope, report_entry, indexed_report, error));
+    TEST_ASSERT(indexed_report.report_uri == report_entry.report_uri);
+    // Publishing the same content fingerprint is idempotent and returns the original frozen references.
+    auto retry_entry = report_entry;
+    retry_entry.report_uri = "resource://reports/retry-must-not-replace.json";
+    TEST_ASSERT(store.publish_investigation_report(investigation.scope, retry_entry, indexed_report, error));
+    TEST_ASSERT(indexed_report.report_uri == report_entry.report_uri);
+    std::vector<common_investigation_report_index_entry> indexed_reports;
+    TEST_ASSERT(store.list_investigation_reports(investigation.scope, report_entry.case_id, 1, indexed_reports, error));
+    TEST_ASSERT(indexed_reports.size() == 1 && indexed_reports[0].content_fingerprint == report_entry.content_fingerprint);
+    auto report_other_scope = investigation.scope;
+    report_other_scope.namespace_id = "tenant-b";
+    TEST_ASSERT(store.list_investigation_reports(report_other_scope, report_entry.case_id, 1, indexed_reports, error));
+    TEST_ASSERT(indexed_reports.empty());
+
+    store.close();
+    // Recreate a pre-index database while preserving the original graph data.
+    int32_t raw_db = -1;
+    char * open_error = cozo_open_db("sqlite", (root / "data.cozo").string().c_str(), "{}", &raw_db);
+    TEST_ASSERT(open_error == nullptr);
+    for (const char * table : {"agent_context_edge_forward", "agent_context_edge_reverse", "agent_context_edge_relation"}) {
+        const auto command = std::string("::remove ") + table;
+        char * result = cozo_run_query(raw_db, command.c_str(), "{}", false);
+        const auto response = json::parse(result, nullptr, false); cozo_free_str(result);
+        TEST_ASSERT(response.is_object() && response.value("ok", false));
+    }
+    TEST_ASSERT(cozo_close_db(raw_db));
+    TEST_ASSERT(store.open((root / "data.cozo").string(), error));
+    TEST_ASSERT(store.get_context_graph(graph_scope, published_graph, error) && published_graph.revision == 3 &&
+        published_graph.edges.size() == 2 && published_graph.edges[0].status == "retraction_proposed" && published_graph.edges[0].version == 2 &&
+        published_graph.edges[0].rationale == "inspect this seam" && published_graph.edges[0].retraction_rationale == "recheck");
+    {
+        auto source_scope = graph_scope; source_scope.project_id = "source-roundtrip";
+        common_context_graph_state reopened;
+        TEST_ASSERT(store.get_context_graph(source_scope, reopened, error));
+        TEST_ASSERT(reopened.nodes[0].sources[0].revision == "2" && reopened.edges[0].assertions[0].sources.size() == 2);
+    }
+    common_context_graph_state reloaded_symbols;
+    TEST_ASSERT(store.get_context_graph(symbol_scope, reloaded_symbols, error) && reloaded_symbols.revision == 2 &&
+        reloaded_symbols.nodes.size() == 1 && reloaded_symbols.nodes[0].symbol_key == "clang:usr:f-int" &&
+        reloaded_symbols.nodes[0].observations.size() == 2 && reloaded_symbols.nodes[0].observations[1].line == 20);
+    common_context_graph_state reloaded_assertions;
+    TEST_ASSERT(store.get_context_graph(assertion_scope, reloaded_assertions, error) && reloaded_assertions.revision == 4 &&
+        reloaded_assertions.edges.size() == 1 && reloaded_assertions.edges[0].assertions.size() == 2 &&
+        reloaded_assertions.edges[0].assertions[1].evidence_refs == std::vector<std::string>{"source:two"} &&
+        reloaded_assertions.nodes[0].descriptions.size() == 2 && reloaded_assertions.nodes[0].descriptions[1].text == "revised description");
+    TEST_ASSERT(std::any_of(published_graph.nodes.begin(), published_graph.nodes.end(), [](const auto & node) {
+        return node.kind == "actor" && node.source_ref == "case:a/entity:alice";
+    }));
+    TEST_ASSERT(store.find_context_graph_edges(graph_scope, 3, "", "associated_with", "", graph_ids, error) && graph_ids.size() == 1);
+    TEST_ASSERT(store.get_research_revision("research-shared", 0, investigation.scope,
+        reloaded_research, error));
+    TEST_ASSERT(reloaded_research.revision == 2 &&
+        reloaded_research.payload_uri == conflicting_research.payload_uri);
+    TEST_ASSERT(store.get_research_draft(draft_ref.draft_id, investigation.scope, loaded_draft, error));
+    TEST_ASSERT(loaded_draft.draft_revision == 1 && loaded_draft.base_revision == 2 &&
+        loaded_draft.payload_uri == draft_ref.payload_uri);
+    TEST_ASSERT(store.list_investigation_cases(investigation.scope, 10, "",
+        listed_cases, case_cursor, error));
+    TEST_ASSERT(listed_cases.size() == 2 && listed_cases[0].case_id == "case-persist-1" &&
+        listed_cases[0].revision == 2 && listed_cases[1].case_id == "case-persist-2");
+    TEST_ASSERT(store.list_investigation_reports(investigation.scope, report_entry.case_id, 1, indexed_reports, error));
+    TEST_ASSERT(indexed_reports.size() == 1 && indexed_reports[0].report_uri == report_entry.report_uri &&
+        indexed_reports[0].case_fingerprint == first_case_fingerprint);
+    common_agent_dataset_descriptor unknown_numeric;
+    unknown_numeric.ref.uri = "dataset://local/unknown-numeric";
+    unknown_numeric.ref.name = "unknown numeric";
+    unknown_numeric.ref.source_resource_uri = "resource://test/unknown-numeric.csv";
+    unknown_numeric.ref.row_count = 1;
+    unknown_numeric.ref.column_count = 1;
+    unknown_numeric.columns = {{"amount", common_agent_dataset_column_type::unknown, true}};
+    unknown_numeric.import_processor_id = "test-importer";
+    TEST_ASSERT(store.put_dataset_descriptor(unknown_numeric, error));
+    TEST_ASSERT(store.put_row(unknown_numeric.ref.uri, "1", R"({"amount":12})", error));
+    TEST_ASSERT(!store.execute("statistics.describe", json{{"dataset",unknown_numeric.ref.uri}}.dump(), output, error));
+    TEST_ASSERT(error.find("explicit columns") != std::string::npos);
+    error.clear();
+    TEST_ASSERT(store.execute("statistics.describe", json{{"dataset",unknown_numeric.ref.uri},{"columns",{"amount"}}}.dump(), output, error));
+    TEST_ASSERT(json::parse(output)["columns"][0]["mean"] == 12);
+    common_agent_dataset_descriptor empty_numeric = unknown_numeric;
+    empty_numeric.ref.uri = "dataset://local/empty-numeric";
+    empty_numeric.ref.name = "empty numeric";
+    empty_numeric.ref.row_count = 0;
+    empty_numeric.columns[0].type = common_agent_dataset_column_type::decimal;
+    TEST_ASSERT(store.put_dataset_descriptor(empty_numeric, error));
+    TEST_ASSERT(store.execute("statistics.describe", json{{"dataset",empty_numeric.ref.uri}}.dump(), output, error));
+    const auto empty_statistics = json::parse(output);
+    TEST_ASSERT(empty_statistics["selected_columns"] == json::array({"amount"}));
+    TEST_ASSERT(empty_statistics["columns"][0]["count"] == 0 && empty_statistics["columns"][0]["mean"].is_null());
+    store.close();
+    raw_db = -1;
+    open_error = cozo_open_db("sqlite", (root / "data.cozo").string().c_str(), "{}", &raw_db);
+    TEST_ASSERT(open_error == nullptr);
+    char * partial_result = cozo_run_query(raw_db, "::remove agent_context_edge_reverse", "{}", false);
+    const auto partial_response = json::parse(partial_result, nullptr, false); cozo_free_str(partial_result);
+    TEST_ASSERT(partial_response.is_object() && partial_response.value("ok", false));
+    TEST_ASSERT(cozo_close_db(raw_db));
+    TEST_ASSERT(!store.open((root / "data.cozo").string(), error));
+    TEST_ASSERT(error.find("index schema is incomplete") != std::string::npos);
+    fs::remove_all(root, ec);
+    return 0;
+}
+
+#undef TEST_ASSERT

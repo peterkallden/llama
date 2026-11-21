@@ -22,6 +22,8 @@
 The main goal of `llama.cpp` is to enable LLM (and MLLM) inference with minimal setup and state-of-the-art performance on a wide range of hardware - locally and in the cloud.
 
 The `llama.cpp` project is built on top of the [ggml](https://github.com/ggml-org/ggml) library.
+> This fork includes the [llama-agent runtime](docs/agent/README.md) with persistent sessions, host-controlled tools, memory, planning, research, and daemon support.
+> It also provides MCP integration for exposing agent capabilities to clients and connecting approved external tools and services.
 
 ## Quick start
 

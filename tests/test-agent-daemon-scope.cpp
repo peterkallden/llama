@@ -1,0 +1,177 @@
+#include "tools/agent/daemon/agent-daemon-scope.h"
+#include "tools/agent/daemon/agent-daemon-adapter.h"
+
+#include <cassert>
+#include <cstdio>
+
+int main() {
+    agent_mcp_caller_policy policy;
+    policy.caller_id = "web-client";
+    policy.namespace_id = "local";
+    policy.project_id = "default";
+    policy.tool_profile = "all-configured";
+
+    nlohmann::ordered_json upload = {{"command", "put_resource"}};
+    common_agent_daemon_bind_caller_scope(upload, policy);
+    assert(upload.value("namespace_id", "") == "local");
+    assert(upload.value("project_id", "") == "default");
+
+    nlohmann::ordered_json read = {
+        {"command", "read_resource"},
+        {"namespace_id", "attacker-namespace"},
+        {"project_id", "attacker-project"},
+    };
+    common_agent_daemon_bind_caller_scope(read, policy);
+    assert(read.value("namespace_id", "") == "local");
+    assert(read.value("project_id", "") == "default");
+
+    nlohmann::ordered_json turn = {
+        {"command", "run_turn"},
+        {"namespace_id", "attacker-namespace"},
+        {"project_id", "attacker-project"},
+    };
+    common_agent_daemon_bind_caller_scope(turn, policy);
+    assert(turn.value("namespace_id", "") == "local");
+    assert(turn.value("project_id", "") == "default");
+    assert(turn.value("session_id", "") == "web-client-session");
+
+    nlohmann::ordered_json tool = {{"command", "execute_tool"}};
+    common_agent_daemon_bind_caller_scope(tool, policy);
+    assert(tool.value("namespace_id", "") == "local");
+    assert(tool.value("project_id", "") == "default");
+    assert(tool.value("tool_profile", "") == "all-configured");
+
+    daemon_options options;
+    common_agent_daemon_command parsed_app_call;
+    std::string error;
+    const nlohmann::ordered_json app_call = {
+        {"command", "execute_tool"},
+        {"tool_name", "document.open"},
+        {"mcp_app_call", true},
+        {"mcp_app_tool_name", "document.open"},
+        {"_caller_allow_policy_gated_writes", true},
+        {"arguments", nlohmann::ordered_json::object()},
+    };
+    assert(parse_agent_daemon_command(app_call, options,
+        common_agent_runtime_host_mode::chat, parsed_app_call, error));
+    assert(parsed_app_call.tool.has_value());
+    assert(parsed_app_call.tool->allow_policy_gated_writes.value_or(false));
+
+    common_agent_daemon_command parsed_read_only_app_call;
+    auto read_only_app_call = app_call;
+    read_only_app_call["_caller_allow_policy_gated_writes"] = false;
+    assert(parse_agent_daemon_command(read_only_app_call, options,
+        common_agent_runtime_host_mode::chat, parsed_read_only_app_call, error));
+    assert(parsed_read_only_app_call.tool.has_value());
+    assert(parsed_read_only_app_call.tool->allow_policy_gated_writes.has_value() &&
+        !parsed_read_only_app_call.tool->allow_policy_gated_writes.value());
+
+    common_agent_daemon_command parsed_direct_call;
+    const nlohmann::ordered_json direct_call = {
+        {"command", "execute_tool"},
+        {"tool_name", "document.save"},
+        {"arguments", nlohmann::ordered_json::object()},
+    };
+    assert(parse_agent_daemon_command(direct_call, options,
+        common_agent_runtime_host_mode::chat, parsed_direct_call, error));
+    assert(parsed_direct_call.tool.has_value());
+    assert(parsed_direct_call.tool->allow_policy_gated_writes.has_value() &&
+        !parsed_direct_call.tool->allow_policy_gated_writes.value());
+
+    common_agent_daemon_command parsed_authorized_direct_call;
+    auto authorized_direct_call = direct_call;
+    authorized_direct_call["_caller_allow_policy_gated_writes"] = true;
+    assert(parse_agent_daemon_command(authorized_direct_call, options,
+        common_agent_runtime_host_mode::chat, parsed_authorized_direct_call, error));
+    assert(parsed_authorized_direct_call.tool.has_value());
+    assert(parsed_authorized_direct_call.tool->allow_policy_gated_writes.value_or(false));
+
+    common_agent_daemon_command orientation;
+    const nlohmann::ordered_json orientation_request = {
+        {"command", "run_turn"}, {"mode", "agent"}, {"prompt", "client supplied text is ignored"},
+        {"session_id", "s1"}, {"namespace_id", "local"}, {"turn_id", "orient-1"},
+        {"attachment_orientation", true}, {"resource_refs", nlohmann::ordered_json::array({"resource://upload/1"})},
+    };
+    assert(parse_agent_daemon_command(orientation_request, options,
+        common_agent_runtime_host_mode::agent, orientation, error));
+    assert(orientation.turn.has_value());
+    assert(orientation.turn->request.turn.attachment_orientation);
+    assert(orientation.turn->request.turn.resource_read_binding.has_value());
+    assert(orientation.turn->request.turn.resource_read_binding->intent == common_agent_resource_read_intent::orientation);
+    assert(orientation.turn->request.turn.resource_read_binding->require_full_coverage);
+    assert(orientation.turn->request.turn.require_tool_execution);
+    assert(orientation.turn->request.turn.prompt.find("initial orientation") != std::string::npos);
+    assert(orientation.turn->request.turn.allowed_exposed_tool_names.size() == 7);
+    assert(orientation.turn->request.turn.input_resources.size() == 1);
+    common_agent_daemon_command attachment_question;
+    auto attachment_question_request = orientation_request;
+    attachment_question_request.erase("attachment_orientation");
+    attachment_question_request["attachment_context_required"] = true;
+    attachment_question_request["prompt"] = "Who is this document about?";
+    assert(parse_agent_daemon_command(attachment_question_request, options,
+        common_agent_runtime_host_mode::agent, attachment_question, error));
+    assert(attachment_question.turn.has_value());
+    assert(attachment_question.turn->request.turn.prompt == "Who is this document about?");
+    assert(attachment_question.turn->request.turn.require_tool_execution);
+    assert(attachment_question.turn->request.turn.resource_read_binding.has_value());
+    assert(attachment_question.turn->request.turn.resource_read_binding->intent == common_agent_resource_read_intent::question);
+    assert(!attachment_question.turn->request.turn.resource_read_binding->require_full_coverage);
+    assert(attachment_question.turn->request.turn.input_resources.front().required);
+    auto chat_orientation = orientation_request;
+    chat_orientation["mode"] = "chat";
+    common_agent_daemon_command rejected_orientation;
+    assert(!parse_agent_daemon_command(chat_orientation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+    auto multi_resource_orientation = orientation_request;
+    multi_resource_orientation["resource_refs"].push_back("resource://upload/2");
+    assert(!parse_agent_daemon_command(multi_resource_orientation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+
+    const nlohmann::ordered_json investigation_request = {
+        {"command", "run_turn"}, {"mode", "agent"}, {"prompt", "Follow this evidence."},
+        {"session_id", "s1"}, {"namespace_id", "local"}, {"turn_id", "investigation-1"},
+        {"investigation_context", {{"case_id", "case-1"}, {"revision", 3},
+            {"entity_ids", nlohmann::ordered_json::array({"host:one"})},
+            {"relation_ids", nlohmann::ordered_json::array({"rel:one"})},
+            {"event_ids", nlohmann::ordered_json::array({"event:one"})},
+            {"source_ids", nlohmann::ordered_json::array({"source:doc", "source:logs"})},
+            {"analysis_profile", "narrative_comparison"}}},
+    };
+    common_agent_daemon_command investigation;
+    if (!parse_agent_daemon_command(investigation_request, options,
+            common_agent_runtime_host_mode::agent, investigation, error)) {
+        std::fprintf(stderr, "valid signed investigation revision was rejected: %s\n", error.c_str());
+        assert(false);
+    }
+    assert(investigation.turn && investigation.turn->request.turn.investigation_context);
+    assert(investigation.turn->request.turn.investigation_context->case_id == "case-1");
+    assert(investigation.turn->request.turn.investigation_context->revision == 3);
+    assert(investigation.turn->request.turn.investigation_context->entity_ids == std::vector<std::string>{"host:one"});
+    assert(investigation.turn->request.turn.investigation_context->source_ids ==
+        (std::vector<std::string>{"source:doc", "source:logs"}));
+    assert(investigation.turn->request.turn.investigation_context->analysis_profile == "narrative_comparison");
+    auto invalid_investigation = investigation_request;
+    invalid_investigation["investigation_context"]["revision"] = 0;
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+    invalid_investigation = investigation_request;
+    invalid_investigation["investigation_context"]["revision"] = -1;
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+    invalid_investigation = investigation_request;
+    invalid_investigation["investigation_context"]["revision"] = 1.5;
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+    invalid_investigation = investigation_request;
+    invalid_investigation["investigation_context"]["event_ids"] = nlohmann::ordered_json::array({"event:one", "event:one"});
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+    invalid_investigation = investigation_request;
+    auto too_many_sources = nlohmann::ordered_json::array();
+    for (size_t i = 0; i < 33; ++i) too_many_sources.push_back("source:doc");
+    invalid_investigation["investigation_context"]["source_ids"] = std::move(too_many_sources);
+    assert(!parse_agent_daemon_command(invalid_investigation, options,
+        common_agent_runtime_host_mode::agent, rejected_orientation, error));
+
+    return 0;
+}

@@ -1,0 +1,246 @@
+#pragma once
+
+#include "agent/adaptation/flydelta/flydelta-teaching-relation.h"
+#include "agent/adaptation/lifecycle-store.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+// Host-owned compatibility identity for reusable teaching material.  The
+// store keeps references only; it never owns prompts, activations or model
+// contexts.
+struct common_flydelta_teaching_material_identity {
+    int schema_version = 1;
+    std::string model_profile_fingerprint;
+    std::string tokenizer_fingerprint;
+    std::string template_fingerprint;
+    std::string capture_layout_revision;
+    std::string execution_context_fingerprint;
+    std::string scope_fingerprint;
+    std::string verifier_revision;
+};
+
+bool common_flydelta_teaching_material_identity_validate(
+        const common_flydelta_teaching_material_identity & identity,
+        std::string & error);
+
+// Compare recorded identities without changing old captures or treating
+// placeholders from different producers as equivalent.
+bool common_flydelta_teaching_material_execution_matches(
+        const common_flydelta_teaching_material_identity & identity,
+        const std::string & model, const std::string & tokenizer,
+        const std::string & chat_template, const std::string & execution_context,
+        const std::string & capture_layout, std::string & error);
+
+std::string common_flydelta_teaching_material_compatibility_key(
+        const common_flydelta_teaching_material_identity & identity);
+
+struct common_flydelta_layer_trajectory {
+    int32_t layer_index = 0;
+    std::string relation_ref;
+    std::string trajectory_ref;
+    std::string capture_set_ref;
+};
+
+struct common_flydelta_teaching_material_group {
+    std::string group_ref;
+    std::string teaching_key;
+    std::string behavior_key;
+    std::string compatibility_key;
+    common_flydelta_teaching_material_identity identity;
+    std::vector<std::string> relation_refs;
+    std::vector<std::string> trajectory_refs;
+    // Separate from legacy single-layer material; readiness is per layer.
+    std::vector<common_flydelta_layer_trajectory> layer_trajectories;
+    size_t minimum_relations = 2;
+    size_t minimum_trajectories = 2;
+    bool relation_set_ready = false;
+    bool trajectory_material_ready = false;
+    bool positive_only = false;
+    common_agent_scope scope;
+    // Authorized source references whose extraction contrast still lacks a
+    // control. They are not capture-ready and never count as trajectories.
+    std::vector<std::string> pending_relation_refs;
+};
+
+// Fingerprint of the immutable source reference set, independent of whether
+// hidden-state captures have already completed.
+std::string common_flydelta_teaching_material_revision(const common_flydelta_teaching_material_group & group);
+
+// Selection is host-owned; automatic preserves the established contrast route.
+enum class common_flydelta_teaching_material_mode { automatic, contrast, positive_only };
+
+// A small idempotent host-side accumulator.  It is deliberately independent
+// of inference and can later be backed by the existing artifact store.
+class common_flydelta_teaching_material_store {
+public:
+    bool observe(
+            const common_flydelta_teaching_relation & relation,
+            const common_flydelta_teaching_material_identity & identity,
+            std::string & error);
+
+    bool group_ready(
+            const std::string & teaching_key,
+            const std::string & behavior_key,
+            const common_flydelta_teaching_material_identity & identity,
+            size_t minimum_relations,
+            common_flydelta_teaching_material_group & group,
+            std::string & error) const;
+
+    bool observe_trajectory(
+            const std::string & group_ref,
+            const std::string & trajectory_ref,
+            const common_flydelta_teaching_material_identity & identity,
+            std::string & error);
+
+    bool observe_layer_trajectory(
+            const std::string & group_ref, int32_t layer_index,
+            const std::string & relation_ref, const std::string & trajectory_ref,
+            const common_flydelta_teaching_material_identity & identity,
+            std::string & error, const std::string & capture_set_ref = {});
+
+    bool resolve_layer_group(const std::string & group_ref, int32_t layer_index,
+            common_flydelta_teaching_material_group & group, std::string & error,
+            const std::string & capture_set_ref = {}) const;
+
+    // Resolves only a group with complete trajectory material. Relation and
+    // trajectory payloads remain in the host's existing artifact store.
+    bool resolve_ready_group(
+            const std::string & group_ref,
+            common_flydelta_teaching_material_group & group,
+            std::string & error) const;
+
+    // Resolves a relation-ready group for the bounded capture-planning step.
+    bool resolve_relation_set(
+            const std::string & group_ref,
+            common_flydelta_teaching_material_group & group,
+            std::string & error) const;
+
+    const std::vector<common_flydelta_teaching_material_group> & groups() const {
+        return groups_;
+    }
+
+private:
+    friend bool common_flydelta_teaching_material_store_from_json(
+            const std::string &, common_flydelta_teaching_material_store &, std::string &);
+    std::vector<common_flydelta_teaching_material_group> groups_;
+};
+
+// Optional host-owned persistence seam. The core keeps the compatibility and
+// readiness rules; a backend only loads/saves the reference-only store
+// snapshot. This keeps Cozo/SQLite out of the common agent core.
+struct common_flydelta_teaching_material_persistence {
+    std::function<bool(std::string &, std::string &)> load;
+    std::function<bool(const std::string &, std::string &)> save;
+};
+
+// Host-owned façade used when the same material index must be observed by
+// the runtime learning path and inspected by the FlyDelta model host. It
+// keeps the compatibility identity in one place and still stores references,
+// not prompts, tensors or model contexts.
+class common_flydelta_teaching_material_runtime {
+public:
+    explicit common_flydelta_teaching_material_runtime(
+            common_flydelta_teaching_material_identity identity,
+            common_flydelta_teaching_material_persistence persistence = {})
+        : identity_(std::move(identity)), persistence_(std::move(persistence)) {}
+
+    bool load(std::string & error);
+    // Append-only assessment of immutable source material, independent of
+    // representation readiness. A changed material revision needs a new,
+    // explicit assessment before an earlier rejection can be superseded.
+    void bind_assessment_journal(std::shared_ptr<common_learning_lifecycle_store> journal);
+    bool assess_contrast(const std::string & group_ref, const std::string & verifier_ref,
+            const std::vector<std::string> & evidence_refs, bool rejected, std::string & error,
+            const std::string & expected_material_revision, const std::string & verifier_revision);
+    bool contrast_admissible(const common_flydelta_teaching_material_group & group,
+            std::string & error, const std::string & verifier_revision = {}) const;
+
+
+    bool observe_relation(
+            const common_flydelta_teaching_relation & relation,
+            std::string & error);
+    bool inspect_group(
+            const std::string & group_ref,
+            bool & relation_set_ready,
+            bool & trajectory_material_ready,
+            std::string & error) const;
+    // Resolve the one compatible teaching-material family for a production
+    // search job. Ambiguous families fail closed rather than cross-wiring
+    // concept material between behaviors.
+    bool resolve_group_for_behavior(
+        const std::string & behavior_key,
+        common_flydelta_teaching_material_group & group,
+        bool & available,
+        std::string & error,
+        common_flydelta_teaching_material_mode mode = common_flydelta_teaching_material_mode::automatic,
+        const common_agent_scope * scope = nullptr) const;
+    bool resolve_group_for_family(
+            const std::string & teaching_key,
+            const std::string & behavior_key,
+            common_flydelta_teaching_material_group & group,
+            bool & available,
+            std::string & error,
+            common_flydelta_teaching_material_mode mode = common_flydelta_teaching_material_mode::automatic,
+        const common_agent_scope * scope = nullptr) const;
+    bool observe_trajectory(
+            const std::string & group_ref,
+            const std::string & trajectory_ref,
+            std::string & error);
+
+    bool observe_layer_trajectory(const std::string & group_ref, int32_t layer_index,
+            const std::string & relation_ref, const std::string & trajectory_ref,
+            std::string & error, const std::string & capture_set_ref = {});
+
+    bool resolve_relation_set(const std::string & group_ref,
+            common_flydelta_teaching_material_group & group, std::string & error) const;
+    bool resolve_ready_group(const std::string & group_ref,
+            common_flydelta_teaching_material_group & group, std::string & error) const;
+    bool resolve_layer_group(const std::string & group_ref, int32_t layer_index,
+            common_flydelta_teaching_material_group & group, std::string & error,
+            const std::string & capture_set_ref = {}) const;
+
+    const common_flydelta_teaching_material_identity & identity() const {
+        return identity_;
+    }
+    // Legacy direct access is intended for single-threaded setup/tests only.
+    // Runtime callers should use the synchronized facade above.
+    const common_flydelta_teaching_material_store & store() const {
+        return store_;
+    }
+    common_flydelta_teaching_material_store & store() {
+        return store_;
+    }
+
+private:
+    bool persist(const common_flydelta_teaching_material_store & store,
+            std::string & error) const;
+
+    bool append_contrast_assessment_locked(const common_flydelta_teaching_material_group & group,
+            const std::string & verifier_ref, const std::vector<std::string> & evidence_refs,
+            bool rejected, std::string & error, const std::string & expected_material_revision,
+            const std::string & verifier_revision);
+    bool contrast_admissible_locked(const common_flydelta_teaching_material_group & group,
+            std::string & error, const std::string & verifier_revision = {}) const;
+    std::shared_ptr<common_learning_lifecycle_store> assessment_journal_;
+    common_flydelta_teaching_material_identity identity_;
+    common_flydelta_teaching_material_persistence persistence_;
+    common_flydelta_teaching_material_store store_;
+    mutable std::mutex mutex_;
+};
+
+// Reference-only snapshot helpers. The host may place this JSON in the
+// existing lifecycle/artifact persistence layer; this component does not
+// create a second filesystem store.
+std::string common_flydelta_teaching_material_store_to_json(
+        const common_flydelta_teaching_material_store & store);
+bool common_flydelta_teaching_material_store_from_json(
+        const std::string & text,
+        common_flydelta_teaching_material_store & store,
+        std::string & error);

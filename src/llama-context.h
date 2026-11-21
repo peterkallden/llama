@@ -63,7 +63,7 @@ struct llama_context {
     const llama_model   & get_model()   const;
     const llama_cparams & get_cparams() const;
 
-    ggml_backend_sched_t get_sched() const;
+    LLAMA_API ggml_backend_sched_t get_sched() const;
 
     uint32_t n_ctx()     const;
     uint32_t n_ctx_seq() const;
@@ -83,6 +83,10 @@ struct llama_context {
 
     float * get_logits();
     float * get_logits_ith(int32_t i);
+    float get_teacher_forced_logprob_ith(int32_t i);
+    bool get_teacher_forced_logprob_is_device(int32_t i);
+    void set_teacher_forced_targets(
+            const llama_seq_id * seq_ids, const llama_token * target_tokens, size_t n_targets);
 
     float * get_embeddings();
     float * get_embeddings_ith(int32_t i);
@@ -92,6 +96,7 @@ struct llama_context {
     float * get_embeddings_nextn_ith(int32_t i);
 
     float * get_embeddings_layer_inp(uint32_t lid);
+    float * get_embeddings_layer_inp_row(uint32_t lid, llama_seq_id seq_id, llama_pos pos);
 
     ggml_tensor * get_layer_inp_dev() const { return layer_inp_dev; }
     ggml_tensor * get_h_nextn_dev()   const { return h_nextn_dev; }
@@ -149,6 +154,13 @@ struct llama_context {
                 int32_t   n_embd,
                 int32_t   il_start,
                 int32_t   il_end);
+
+    // Opt-in graph hook for a backend-owned per-sequence cvec table. The
+    // reference is non-owning and must remain valid until graph execution
+    // has completed. Passing nullptr restores the scalar cvec path.
+    LLAMA_API void set_adapter_cvec_batch(const llama_adapter_cvec_batch_ref * ref);
+    LLAMA_API void set_residual_patch(const llama_residual_patch_ref * ref);
+    LLAMA_API void set_layer_reductions(llama_layer_reduction_ref * ref);
 
     // process a single ubatch with a specific graph type
     // if memory_context is provided, it will be applied first to the context's memory
@@ -256,7 +268,8 @@ private:
 
     // async-copy enabled layer-input tensors (per cparams.output_layer_inp)
     // from backend into host-side embd_layer_inp buffers
-    bool extract_layer_inputs(const llm_graph_result * res, size_t token_offset, size_t n_tokens);
+    bool extract_layer_inputs(const llm_graph_result * res, size_t token_offset, const llama_ubatch & ubatch);
+    void extract_layer_reductions(const llm_graph_result * res);
 
     // (re)allocate the device buffer for cparams.embeddings_layer_inp_dev
     void layer_inp_dev_alloc();
@@ -339,6 +352,9 @@ private:
     llama_cparams cparams;
 
     llama_adapter_cvec_ptr  cvec;
+    const llama_adapter_cvec_batch_ref * cvec_batch = nullptr;
+    const llama_residual_patch_ref * residual_patch = nullptr;
+    llama_layer_reduction_ref * layer_reductions = nullptr;
     llama_adapter_loras_ptr loras;
 
     llama_cross cross; // TODO: tmp for handling cross-attention - need something better probably
@@ -348,6 +364,9 @@ private:
 
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     buffer_view<float> logits = {nullptr, 0};
+    buffer_view<float> teacher_logprobs = {nullptr, 0};
+    std::vector<uint8_t> teacher_score_device;
+    std::map<llama_seq_id, llama_token> teacher_score_targets;
 
     // embeddings output (2-dimensional array: [n_outputs][n_embd])
     // populated only when pooling_type == LLAMA_POOLING_TYPE_NONE
@@ -362,6 +381,11 @@ private:
     // populated when cparams.output_layer_inp[il] is true
     std::vector<buffer_view<float>> embd_layer_inp;
     std::vector<int32_t> embd_batch_idxs; // extracted index -> original batch index
+    struct layer_input_row {
+        llama_pos pos;
+        std::vector<llama_seq_id> seq_ids;
+    };
+    std::vector<layer_input_row> embd_layer_inp_rows;
 
     struct sampling_info {
         // !samplers.empty() to check if any samplers are active

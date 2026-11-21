@@ -85,6 +85,8 @@ ggml_tensor * llama_model_qwen3::graph::build_backbone() {
     for (int il = 0; il < n_layer; ++il) {
         res->t_layer_inp[il] = inpL;
 
+        inpL = build_residual_patch(inpL, il);
+
         ggml_tensor * inpSA = inpL;
 
         // norm

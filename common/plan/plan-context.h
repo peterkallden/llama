@@ -1,0 +1,22 @@
+#pragma once
+#include "plan/plan-types.h"
+struct common_plan_context_config {
+    size_t char_budget = 2048;
+    // Full runtime renderers retain raw observations for host diagnostics.
+    // Model-facing renderers normally carry the bounded verified projection
+    // separately, so they can disable this section and avoid duplication.
+    bool include_observations = true;
+};
+// Match the complete host-generated identity; step IDs may contain colons.
+const common_plan_step * common_plan_find_tool_observation_step(
+    const common_plan_state & plan, const common_plan_observation & observation);
+std::string common_plan_escape_context_text(const std::string & text);
+std::string common_plan_render_context(const common_plan_state & plan, const common_plan_context_config & config = {});
+std::string common_plan_render_tool_observations(
+        const common_plan_state & plan,
+        const common_plan_context_config & config = {});
+std::string common_plan_render_step_context(const common_plan_state & plan, const common_plan_step & step, const common_plan_context_config & config = {});
+
+// Retain the complete original method outline as provenance, never evidence.
+common_plan_observation common_plan_make_blueprint_outline(
+    const common_plan_state & blueprint, const std::string & instance_id);

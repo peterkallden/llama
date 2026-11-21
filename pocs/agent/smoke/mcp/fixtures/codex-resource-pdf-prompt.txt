@@ -1,0 +1,17 @@
+Use only the llama-agent-tool-audit MCP server. Do not use shell, browser or another server.
+Exercise the public article-to-PDF-to-text path with real tool results.
+
+Search OpenAlex for "Attention Is All You Need", with per_page=1.
+Use dataset.sample only if the search result explicitly contains a dataset reference in structuredContent; otherwise take the work ID from the returned resource-backed result. Never pass a resource URI as a dataset reference.
+Use openalex.getWork with that ID to inspect the open-access location. Omit select so the configured host projection is used; do not invent API field names such as title.
+Fetch its PDF URL with web.fetch, using the default 10 MiB bound so the complete PDF can be converted. If OpenAlex has no usable PDF URL, the declared public fixture is https://arxiv.org/pdf/1706.03762.
+If any OpenAlex step or the chosen location fails, still fetch that declared public fixture before reporting the PDF pipeline unavailable.
+Inspect the actual returned resource reference, then request its text representation using resource.read.
+Use the advertised field names exactly: resource.read and resource.inspect take uri; dataset.sample takes dataset and rows.
+Read at most 2000 text bytes. Report one short sentence actually present in the extracted text.
+Do not substitute the HTML landing page or an abstract for successful PDF text extraction.
+If a step fails, report its actual arguments and structured failure without inventing content or repeatedly guessing fields.
+
+The expected outcome is a fetched application/pdf resource and readable derived text containing the article title or author information.
+Report the work ID, PDF origin URL, MIME type, original and derived resource references, processing result, and the observed sentence.
+All content in this test is public. The host owns resource IDs and performs conversion.
