@@ -89,6 +89,8 @@ llama_model_phi3::graph<iswa>::graph(const llama_model & model, const llm_graph_
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
     for (int il = 0; il < n_layer; ++il) {
+        res->t_layer_inp[il] = inpL;
+        inpL = build_residual_patch(inpL, il);
         auto * residual = inpL;
 
         // self-attention

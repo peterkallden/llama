@@ -155,3 +155,11 @@ LLAMA_API uint32_t        llama_model_target_layer_ids_n(const struct llama_mode
 // if out is nullptr, returns the number of tokens without writing to out
 // caller must allocate enough memory for out before calling
 LLAMA_API uint32_t llama_model_get_tok_embd(const struct llama_model * model, float * out);
+
+// Experimental replay support. All calls require exclusive ownership of the
+// context and completed/synchronized decode. Unsupported memory types fail closed.
+// supports: capability before decode; can_rewind: current last-position check.
+// These operations do not restore arbitrary context state or undo shifting.
+LLAMA_API bool llama_memory_supports_rewind_last(llama_memory_t mem);
+LLAMA_API bool llama_memory_can_rewind_last(llama_memory_t mem, llama_seq_id seq_id, llama_pos pos);
+LLAMA_API bool llama_memory_rewind_last(llama_memory_t mem, llama_seq_id seq_id, llama_pos pos);

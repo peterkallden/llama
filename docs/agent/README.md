@@ -211,6 +211,10 @@ remote MCP providers, status/readiness, and Docker usage.
   session-scoped placement games and exact one-variable linear algebra, with
   explicit provenance and a bridge into the existing FlyDelta teaching
   relation: [Semi-oracle RuleSets](agent-semi-oracle.md).
+- **Tokenwise recirculation PoC (experimental)** - opt-in CPU/Qwen2/Qwen3/Phi3 same-token
+  replay with frozen weights, independent KV replay checks and model-free
+  contracts. Quality benefit remains under evaluation. See the
+  [PoC contract and commands](../../pocs/agent/recirculation/README.md).
 - **FlyDelta sideband learning (experimental)** — resident-model capture,
   bounded counterfactual search and steering overlays for a frozen model,
   with host verification and lifecycle gates. Historical outcome guidance

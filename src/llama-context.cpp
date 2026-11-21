@@ -4640,6 +4640,18 @@ bool llama_memory_seq_rm(
     return mem->seq_rm(seq_id, p0, p1);
 }
 
+bool llama_memory_supports_rewind_last(llama_memory_t mem) {
+    return mem && mem->supports_rewind_last();
+}
+
+bool llama_memory_can_rewind_last(llama_memory_t mem, llama_seq_id seq_id, llama_pos pos) {
+    return mem && mem->can_rewind_last(seq_id, pos);
+}
+
+bool llama_memory_rewind_last(llama_memory_t mem, llama_seq_id seq_id, llama_pos pos) {
+    return mem && mem->rewind_last(seq_id, pos);
+}
+
 void llama_memory_seq_cp(
         llama_memory_t mem,
           llama_seq_id seq_id_src,

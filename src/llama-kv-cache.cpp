@@ -466,6 +466,29 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
     return true;
 }
 
+bool llama_kv_cache::supports_rewind_last() const {
+    if (other || n_seq_max != 1 || n_stream != 1 || n_swa != 0 ||
+            swa_type != LLAMA_SWA_TYPE_NONE || get_has_shift() || !sc_info.empty() ||
+            v_cells_impl.use_count() != 1) {
+        return false;
+    }
+    const auto & cells = v_cells[0];
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (!cells.is_empty(i) && (cells.seq_count(i) != 1 || !cells.seq_has(i, 0))) return false;
+    }
+    return true;
+}
+
+bool llama_kv_cache::can_rewind_last(llama_seq_id seq_id, llama_pos pos) const {
+    return supports_rewind_last() && seq_id == 0 && pos >= 0 &&
+        pos < std::numeric_limits<llama_pos>::max() && seq_pos_max(seq_id) == pos;
+}
+
+bool llama_kv_cache::rewind_last(llama_seq_id seq_id, llama_pos pos) {
+    return can_rewind_last(seq_id, pos) && seq_rm(seq_id, pos, pos + 1) &&
+        seq_pos_max(seq_id) < pos;
+}
+
 void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {

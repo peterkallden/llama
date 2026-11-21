@@ -1,6 +1,11 @@
 # Agent POC, smoke and CTest definitions. Production targets are owned by
 # tools/agent and are consumed here only as dependencies.
 
+option(LLAMA_RECIRCULATION_POC "Build experimental recirculation PoC" OFF)
+if (LLAMA_RECIRCULATION_POC)
+    add_subdirectory(recirculation)
+endif()
+
 set(TARGET llama-agent-openapi-provider-smoke)
 add_executable(${TARGET}
     smoke/openapi/agent-openapi-provider-smoke.cpp
