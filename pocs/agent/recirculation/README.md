@@ -209,7 +209,9 @@ Evaluation reports now include `expected_path_lag_effects` for each case. All ar
 
 Inspect the full lag curve and regressions before claiming useful propagation. Select layer pairs and dose on development data only and freeze them for evaluation. The curve does not establish resonance or general model improvement.
 
-### Complete bounded experiment
+### Original bounded experiment
+
+The following describes the original experiment and its historical results. The current wrapper runs the v2 comparison described below.
 
 Run `bash pocs/agent/recirculation/experiment.sh BUILD_DIR MODEL.gguf OUTPUT_DIR` after building `llama-recirculation-poc` and the three contract targets. This serial CPU experiment archives input hashes and experiment sources, runs development selection, then evaluates locked configurations and extracts `report.json`. It can take substantial time because each answer branch uses a fresh context.
 
@@ -220,3 +222,26 @@ Three layer pairs are derived from model depth (source at one, two and three qua
 Use `--experiment-mode repair --eval-cases-file FILE --selection-file LOCKED_SELECTION` with `--model` and `--trace`. The locked development selection is reused; overlapping development/evaluation IDs are rejected. Each case runs baseline and an every-token persistent connection. Baseline failures (answer margin <= 0) additionally run a plain deterministic retry, a single-position recirculation retry and a reflection prompt containing the predetermined failed candidate and generic failure feedback. The expected answer is never included in feedback. All retries use fresh contexts and replay the same prefix. The report records rescues, persistent regressions and scoring costs. Plain deterministic retry is an identity control, not an exploration baseline.
 
 This is a forced-choice proxy on the existing state-tracking fixtures, not a generated-code refactoring benchmark. A positive margin is the experimental verifier. Reflection is a prompted reconsideration, not the agent reflection runtime. `reflection_avoided_proxy` describes a margin sign change only. `retry_chain_us` includes baseline, recirculation retry and reflection when needed; it excludes external verification. The report is emitted as a `repair_scenario` JSONL event. Do not promote a persistent connection from these small fixtures.
+
+### Low-dose response comparison (v2)
+
+`experiment.sh` now uses the separate authored `development-v2.jsonl` and `evaluation-v2.jsonl` sets (24 cases each, eight per task type). Original fixtures remain historical references. These sets share task templates but use distinct scenarios; this is still a small mechanism probe with limited independence, not a general reasoning benchmark.
+
+Tuning includes alpha 0.01, 0.03, 0.1 and 0.2 over the same three candidate pairs. `analysis.py lock` creates six frozen comparisons: cosine, development margin winner and `low_dose_response`, each at common alpha 0.01 and its development-selected dose. Low-dose response ranks observed margin gain at 0.01. Dividing by 0.01 yields the same ranking; this is not a general derivative or Jacobian. Higher-dose rank agreement is reported from development measurements only. Evaluation reuses identical configurations without repeated inference and rejects overlapping development/evaluation IDs. Older selection files retain their previous evaluation behavior.
+
+`analysis.py report` reports both continuation branches, token and cumulative effects, continuation boundaries, first numerical effect lag, median and mean paired gains, negative outcomes per task type, and paired exploratory percentile bootstrap intervals (10,000 resamples, seed 1729, no multiple-comparison correction). Lag 1 equality applies only to targeted interventions with identical prior KV, not every-token replay. Curves on diverging answer paths remain separate. Retention ratios with nonpositive selected-dose gain are null; negative cases remain in the report.
+
+The locked holdout is evaluated once per model after data and choices are frozen. Do not retune from its results. A necessary implementation correction requires an explicitly documented replacement run. Use CPU inference for comparability with historical results. No production activation, concept reference, adaptive dose or resonance model is added.
+
+#### Preliminary Qwen3 v2 results
+
+The locked v2 evaluation for Qwen3 0.6B Q8_0 completed on 24 held-out authored cases. The two primary comparisons below report expected-versus-incorrect answer margin changes against the no-intervention baseline. They are paired, fixed-path measurements, not free-generation accuracy.
+
+| Method | Comparison | Source -> destination | Alpha | Mean gain | Median gain | Improved / regressed | Exploratory 95% paired bootstrap interval |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Cosine | Common dose | 21 -> 7 | 0.01 | +0.0536 | +0.0357 | 14 / 10 | [-0.0241, +0.1300] |
+| Low-dose response | Common dose | 21 -> 7 | 0.01 | +0.0536 | +0.0357 | 14 / 10 | [-0.0241, +0.1300] |
+| Development margin | Common dose | 7 -> 2 | 0.01 | +0.0383 | +0.0957 | 15 / 9 | [-0.0220, +0.0938] |
+| Development margin | Selected dose | 7 -> 2 | 0.10 | +0.0463 | +0.0353 | 14 / 10 | [-0.0378, +0.1487] |
+
+Cosine and low-dose response selected the same pair and selected dose, so this run cannot distinguish their outcomes. The difference between the cosine and margin-selected pairs at the common dose was +0.0154 in favor of cosine. The intervals above include zero and are exploratory without multiple-comparison correction. The small, templated fixtures do not establish a general improvement, resonance, or saved reflection round. Qwen2.5's v2 experiment is still running; no cross-model conclusion is available yet. The original six-case findings above are a separate historical experiment.

@@ -315,36 +315,56 @@ int main(int argc, char ** argv) {
                         const auto report = evaluate_repair_scenario(model.get(), opt.config.model_identity, cases, config, trace);
                         trace << experiment_json{{"event", "repair_scenario"}, {"report", report}}.dump() << '\n';
                     } else {
-                    for (const auto & role : {std::string("geometry_ranked_pair"), std::string("fixed_control_pair")}) {
-                        auto pair = selection.at("geometry_ranked_pair");
-                        if (role == "fixed_control_pair") {
-                            for (const auto & candidate_pair : selection.at("geometry_ranking")) {
-                                if (candidate_pair.at("source_layer_input") != pair.at("source_layer_input") ||
-                                    candidate_pair.at("destination_layer_input") != pair.at("destination_layer_input")) {
-                                    pair = candidate_pair;
-                                    break;
+                    if (selection.contains("locked_comparisons")) {
+                        std::unordered_map<std::string, experiment_json> cached;
+                        for (const auto & comparison : selection.at("locked_comparisons")) {
+                            const auto chosen_comparison = comparison.at("configuration");
+                            const auto comparison_config = experiment_config(opt.config.model_identity,
+                                chosen_comparison.at("source_layer_input").get<size_t>(),
+                                chosen_comparison.at("destination_layer_input").get<size_t>(),
+                                chosen_comparison.at("alpha").get<float>());
+                            if (!recirculation_config_valid(comparison_config, llama_model_n_layer(model.get()),
+                                    llama_model_n_embd(model.get())) || chosen_comparison.at("beta") != 1.0) {
+                                throw std::runtime_error("invalid locked comparison");
+                            }
+                            const auto key = chosen_comparison.dump();
+                            if (!cached.count(key)) cached.emplace(key,
+                                evaluate_experiment(model.get(), opt.config.model_identity, cases, comparison_config, trace));
+                            trace << experiment_json{{"event", "locked_comparison"}, {"method", comparison.at("method")},
+                                {"comparison", comparison.at("comparison")}, {"report", cached.at(key)}}.dump() << '\n';
+                        }
+                    } else {
+                        for (const auto & role : {std::string("geometry_ranked_pair"), std::string("fixed_control_pair")}) {
+                            auto pair = selection.at("geometry_ranked_pair");
+                            if (role == "fixed_control_pair") {
+                                for (const auto & candidate_pair : selection.at("geometry_ranking")) {
+                                    if (candidate_pair.at("source_layer_input") != pair.at("source_layer_input") ||
+                                        candidate_pair.at("destination_layer_input") != pair.at("destination_layer_input")) {
+                                        pair = candidate_pair;
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        double best_margin = -std::numeric_limits<double>::infinity();
-                        recirculation_config pair_config;
-                        for (const auto & candidate : selection.at("candidates")) {
-                            if (candidate.at("source_layer_input") != pair.at("source_layer_input") ||
-                                candidate.at("destination_layer_input") != pair.at("destination_layer_input")) continue;
-                            const double margin = candidate.at("mean_margin_change").get<double>();
-                            if (margin > best_margin) {
-                                best_margin = margin;
-                                pair_config = experiment_config(opt.config.model_identity,
-                                    pair.at("source_layer_input").get<size_t>(), pair.at("destination_layer_input").get<size_t>(),
-                                    candidate.at("alpha").get<float>());
+                            double best_margin = -std::numeric_limits<double>::infinity();
+                            recirculation_config pair_config;
+                            for (const auto & candidate : selection.at("candidates")) {
+                                if (candidate.at("source_layer_input") != pair.at("source_layer_input") ||
+                                    candidate.at("destination_layer_input") != pair.at("destination_layer_input")) continue;
+                                const double margin = candidate.at("mean_margin_change").get<double>();
+                                if (margin > best_margin) {
+                                    best_margin = margin;
+                                    pair_config = experiment_config(opt.config.model_identity,
+                                        pair.at("source_layer_input").get<size_t>(), pair.at("destination_layer_input").get<size_t>(),
+                                        candidate.at("alpha").get<float>());
+                                }
                             }
+                            if (!std::isfinite(best_margin)) throw std::runtime_error("missing development dose selection");
+                            const auto pair_report = evaluate_experiment(model.get(), opt.config.model_identity, cases, pair_config, trace);
+                            trace << experiment_json{{"event", "pair_comparison"}, {"role", role}, {"report", pair_report}}.dump() << '\n';
                         }
-                        if (!std::isfinite(best_margin)) throw std::runtime_error("missing development dose selection");
-                        const auto pair_report = evaluate_experiment(model.get(), opt.config.model_identity, cases, pair_config, trace);
-                        trace << experiment_json{{"event", "pair_comparison"}, {"role", role}, {"report", pair_report}}.dump() << '\n';
+                        const auto report = evaluate_experiment(model.get(), opt.config.model_identity, cases, config, trace);
+                        trace << experiment_json{{"event", "held_out_evaluation"}, {"selection_file", opt.selection_file}, {"report", report}}.dump() << '\n';
                     }
-                    const auto report = evaluate_experiment(model.get(), opt.config.model_identity, cases, config, trace);
-                    trace << experiment_json{{"event", "held_out_evaluation"}, {"selection_file", opt.selection_file}, {"report", report}}.dump() << '\n';
                     }
                 }
             } catch (const std::exception & e) {

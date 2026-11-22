@@ -257,6 +257,7 @@ inline scored_continuation score_experiment_continuation(llama_model * model, co
 
 struct scored_case {
     std::vector<double> future_logprobs;
+    std::vector<double> incorrect_future_logprobs;
     double margin = 0;
     double positive = 0;
     double negative = 0;
@@ -272,13 +273,14 @@ inline scored_case score_experiment_case(llama_model * model, const experiment_c
         const recirculation_config & config, experiment_arm arm, std::ostream & trace, const std::vector<float> & donor_source = {}) {
     const auto positive = score_experiment_continuation(model, item, item.expected, config, arm, donor_source, trace);
     const auto negative = score_experiment_continuation(model, item, item.incorrect, config, arm, donor_source, trace);
-    return {positive.future_logprobs, recirculation_answer_margin(positive.logprob, negative.logprob), positive.logprob, negative.logprob,
+    return {positive.future_logprobs, negative.future_logprobs, recirculation_answer_margin(positive.logprob, negative.logprob), positive.logprob, negative.logprob,
         positive.elapsed_us + negative.elapsed_us, std::max(positive.context_memory_bytes, negative.context_memory_bytes),
         positive.source_norm, positive.destination_norm, positive.patch_delta_norm, positive.patch_applied};
 }
 
 inline experiment_json score_record(const scored_case & value) {
     return {{"expected_path_future_logprobs", value.future_logprobs},
+        {"incorrect_path_future_logprobs", value.incorrect_future_logprobs},
         {"relative_patch_norm", value.destination_norm > 0 ? experiment_json(value.patch_delta_norm / value.destination_norm) : experiment_json(nullptr)},
         {"positive_total_logprob", value.positive}, {"negative_total_logprob", value.negative},
         {"answer_margin", value.margin}, {"prefers_expected", value.margin > 0},
@@ -338,7 +340,7 @@ inline experiment_json tune_experiment(llama_model * model, const std::string & 
         geometry.push_back({{"source_layer_input", pair.first}, {"destination_layer_input", pair.second}, {"score", novelty}});
         if (novelty > best_geometry) { best_geometry = novelty; geometry_pair = pair; }
     }
-    const float doses[] = {0.03f, 0.1f, 0.2f};
+    const float doses[] = {0.01f, 0.03f, 0.1f, 0.2f};
     experiment_json candidates = experiment_json::array();
     double best_objective = -std::numeric_limits<double>::infinity();
     recirculation_config best;

@@ -23,3 +23,12 @@ if (BUILD_TESTING)
         set_tests_properties(llama-agent-recirculation-${part}-ctest PROPERTIES LABELS "agent;recirculation")
     endforeach()
 endif()
+
+if (BUILD_TESTING)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if (Python3_Interpreter_FOUND)
+        add_test(NAME llama-agent-recirculation-analysis-ctest
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test-analysis.py)
+        set_tests_properties(llama-agent-recirculation-analysis-ctest PROPERTIES LABELS "agent;recirculation")
+    endif()
+endif()
