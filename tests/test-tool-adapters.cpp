@@ -1619,6 +1619,39 @@ int main() {
     const std::string crlf_result((std::istreambuf_iterator<char>(crlf_file)), std::istreambuf_iterator<char>());
     assert(crlf_result == "first\r\nupdated\r\n");
     crlf_file.close();
+    {
+        common_tool_registry brief_registry;
+        bool brief_installed = false;
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.change_impact"),
+            foundation_bindings, brief_registry, brief_installed, error) && brief_installed);
+        auto brief = brief_registry.execute({"code.change_impact", R"({"path":"src/sample.txt","symbol":"needle","intent":"Inspect consumers"})"});
+        assert(brief.ok);
+        auto output = nlohmann::json::parse(brief.output);
+        assert(output["schema"] == "code-change-impact.v1");
+        assert(output["coverage"]["complete"] == false && output["coverage"]["revision_bound"] == false);
+        assert(output["intent"] == "Inspect consumers" && !output["evidence"].empty());
+        assert(output["target"]["resolution"] == "unresolved");
+        assert(output["affected_symbols"].empty());
+        brief = brief_registry.execute({"code.change_impact", R"({"path":"../outside.txt","symbol":"needle"})"});
+        assert(!brief.ok);
+        brief = brief_registry.execute({"code.change_impact", R"({"path":"src/sample.txt","symbol":"needle","max_depth":4})"});
+        assert(!brief.ok);
+        brief = brief_registry.execute({"code.change_impact", R"({"path":"src/sample.txt","symbol":"needle","line":1})"});
+        assert(brief.ok && nlohmann::json::parse(brief.output)["target"]["resolution"] == "explicit_location");
+        auto semantic_bindings = foundation_bindings;
+        semantic_bindings.code_symbols = [](const std::string &) {
+            return common_tool_execution_result::success(R"({"backend":"clangd","semantic":true,"definitions":[{"path":"src/sample.txt","name":"needle","line":1,"column":1},{"path":"src/sample.txt","name":"needle","line":2,"column":1}],"count":2,"complete":true,"truncated":false})");
+        };
+        common_tool_registry ambiguous_registry;
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.change_impact"),
+            semantic_bindings, ambiguous_registry, brief_installed, error) && brief_installed);
+        brief = ambiguous_registry.execute({"code.change_impact", R"({"path":"src/sample.txt","symbol":"needle"})"});
+        assert(brief.ok);
+        output = nlohmann::json::parse(brief.output);
+        assert(output["target"]["resolution"] == "unresolved" && output["target"]["candidates"].size() == 2);
+        assert(output["affected_symbols"].empty());
+
+    }
     result = foundation_registry.execute({"code.inspect", "{}"});
     assert(result.ok && result.output.find("code-capabilities.v1") != std::string::npos &&
            result.output.find("semantic") != std::string::npos && result.output.find("bounded_semantic") != std::string::npos);

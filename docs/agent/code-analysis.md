@@ -317,3 +317,21 @@ ordinary result remains compact. The clangd client advertises hierarchical
 `DocumentSymbol` support. If a provider nevertheless returns flat
 `SymbolInformation`, the reported function range is used and its projected
 position is marked `position_kind: range_start`; it is not a name position.
+
+## Change impact brief
+
+`code.change_impact` is a read-only member of `developer-read` and `code-analysis`, available through the same native registry and MCP projection as other code tools.
+
+```json
+{"path":"src/example.cpp","symbol":"execute_plan","line":42,"column":1,"intent":"Modify execution behavior","max_depth":2}
+```
+
+`path` and `symbol` are required. Locations use one-based lines and UTF-16 columns. Without an explicit line, the brief proceeds with relationship analysis only when a complete semantic symbol result identifies exactly one matching definition in the requested file. Text fallback does not resolve identity. Intent is returned unchanged for model interpretation and never selects host behavior.
+
+The host composes existing read adapters using the same repository root, scope and providers. It collects symbol definitions, references, bounded call relationships, a target excerpt, graph node/edge candidates and bounded symbol text matches under `tests`. Each retained observation records its tool and arguments. Graph proposals and text test candidates are observations, not verified contracts, test coverage or safety conclusions. `contracts` remains empty when no authoritative contract extraction is available.
+
+The brief limits traversal to 16 nodes and 24 edges, references to 16, graph nodes to two and outgoing graph edges to four per node. At most 12 subqueries are attempted and 48,000 bytes of observations retained. The shared deadline prevents starting further subqueries; an active provider call retains its own timeout and cannot be forcibly cancelled by this composition. Provider errors and budget omissions appear in `knowledge_gaps`. Partial results never assert complete project coverage. Tests elsewhere than `tests` are an explicit coverage gap.
+
+The target file is read before and after collection using the repository adapter's exact-byte SHA-256, together with Git observations. `target_content_unchanged_during_query` requires matching hashes and observed Git revisions. This detects endpoint changes but does not establish an atomic snapshot or bind a semantic index to those bytes; `coverage.revision_bound` remains false. Retained child observations preserve their own source metadata. Do not interpret stable HEAD or a dirty-worktree flag as proof of stable contents of all related files.
+
+The model interprets the returned evidence and identifies invariants. The tool does not execute tests, modify files, promote graph proposals or declare a change safe. Existing development and comprehension-refresh workflows remain separate explicit actions.

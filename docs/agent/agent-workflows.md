@@ -56,7 +56,11 @@ there is no separate callable framework-research workflow or subworkflow stack.
 Model-backed route choice and execution need separate verification in a host
 with the corresponding tools and permissions.
 
-### Current development methods (starter v49)
+### Current development methods (starter v50)
+
+Version 50 integrates optional `code.change_impact` briefs into the existing shared analysis instructions. Repository change methods consider a brief after locating the target and before design; regression repair considers it after localizing the failure. Entry-point investigation inherits the shared evidence and handoff guidance. The model chooses whether the tool adds useful evidence, and the ordinary phase review records sufficiency or remaining gaps. No new phase, execution authority or mandatory tool call is introduced.
+
+Brief observations, hashes and coverage gaps travel through existing plan evidence. Test matches and graph notes remain candidates for model interpretation. Successful collection does not verify a change or establish complete impact; changed source requires rechecking affected evidence. Existing authorized comprehension-refresh methods may propose durable notes after verification. The brief itself performs no writes. The tool is available in the `developer-read` and `code-analysis` profiles; explicitly configured tool lists must expose it to make it selectable. Import the updated starter through the existing bootstrap path; repository changes alone do not update an already running daemon's imported methods.
 
 Version 49 adds `repository-change-v5`, `regression-repair-v5`,
 `repository-investigation-v3`, `development-compile-diagnosis-v2` and

@@ -554,6 +554,9 @@ int main() {
         return definition.name == "code.calls" && definition.risk_class == common_tool_risk_class::local_read;
     }));
     assert(std::any_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
+        return definition.name == "code.change_impact" && definition.risk_class == common_tool_risk_class::local_read && !definition.requires_confirmation;
+    }));
+    assert(std::any_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {
         return definition.name == "code.impact" && definition.risk_class == common_tool_risk_class::local_read;
     }));
     assert(std::any_of(developer_read.begin(), developer_read.end(), [](const auto & definition) {

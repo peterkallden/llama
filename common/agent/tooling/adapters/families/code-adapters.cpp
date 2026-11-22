@@ -15,6 +15,8 @@
 #include <optional>
 #include <set>
 
+#include "agent/tooling/adapters/families/change-impact.h"
+
 namespace {
 
 using json = common_adapter_json;
@@ -692,9 +694,24 @@ bool common_try_register_code_tool_adapter(
     const bool references = has_executor(id, "builtin.code.references", "builtin.diagnostics.references");
     const bool calls = has_executor(id, "builtin.code.calls", "builtin.diagnostics.call_hierarchy");
     const bool impact = id == "builtin.code.impact";
-    if (!inspect && !refresh && !symbols && !references && !calls && !impact) return false;
+    const bool change_impact = id == "builtin.code.change_impact";
+    if (!inspect && !refresh && !symbols && !references && !calls && !impact && !change_impact) return false;
 
-    if (refresh) {
+    if (change_impact) {
+        installed = common_adapter_register_definition(definition, registry,
+            [bindings, timeout_ms = definition.timeout_ms](const std::string & input) {
+                json args;
+                std::string reason;
+                if (!common_adapter_parse_object(input, args, reason))
+                    return common_adapter_validation_failure("tool.code.change_impact.invalid_arguments", reason);
+                if (args.contains("column") && !args.contains("line"))
+                    return common_adapter_validation_failure("tool.code.change_impact.invalid_arguments", "column requires line");
+                std::filesystem::path resolved;
+                if (!resolve_repository_path(bindings.repository_root, args.at("path").get<std::string>(), resolved, reason))
+                    return common_adapter_validation_failure("tool.code.change_impact.invalid_path", reason);
+                return common_change_impact(bindings, args, timeout_ms);
+            }, error);
+    } else if (refresh) {
         installed = register_code_definition(bindings, definition, registry, [bindings](const std::string & input) {
             json args;
             std::string parse_error;
