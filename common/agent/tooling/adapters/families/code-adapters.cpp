@@ -710,7 +710,7 @@ bool common_try_register_code_tool_adapter(
                 std::filesystem::path resolved;
                 if (!resolve_repository_path(bindings.repository_root, args.at("path").get<std::string>(), resolved, reason))
                     return common_adapter_validation_failure("tool.code.change_impact.invalid_path", reason);
-                auto result = common_change_impact(bindings, args, timeout_ms);
+                auto result = common_change_impact(bindings, args, timeout_ms, !contracts);
                 if (!contracts || !result.ok) return result;
                 auto brief = json::parse(result.output);
                 json observations = json::array();

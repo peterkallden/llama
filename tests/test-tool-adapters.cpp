@@ -1683,6 +1683,13 @@ int main() {
         assert(!selected_registry.execute({"development.test_select", R"({"changed_files":["../escape"]})"}).ok);
         auto contracts = selected_registry.execute({"code.contracts", R"({"path":"src/sample.txt","symbol":"needle","line":1})"});
         assert(contracts.ok && nlohmann::json::parse(contracts.output)["schema"] == "code-contracts.v1");
+        const auto contract_output = nlohmann::json::parse(contracts.output);
+        assert(contract_output["queries_used"] == 3);
+        for (const auto & section : contract_output["sections"]) {
+            assert(section.contains("elapsed_ms"));
+            assert(section["tool"] == "code.symbols" || section["tool"] == "repository.read");
+        }
+
         assert(!selected_registry.execute({"diagnostics.failure_summary", R"({"receipt_ref":"resource://missing"})"}).ok);
         agent_resource_put_request put; put.name = "failure-output"; put.mime_type = "text/plain";
         put.text = "src/example.cpp:3:2: error: broken contract\n";

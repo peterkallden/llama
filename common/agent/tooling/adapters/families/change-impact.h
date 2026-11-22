@@ -5,7 +5,7 @@
 
 // Compose existing read adapters with the same host scope and repository binding.
 inline common_tool_execution_result common_change_impact(const common_native_tool_bindings & bindings,
-        const common_adapter_json & args, uint32_t timeout_ms) {
+        const common_adapter_json & args, uint32_t timeout_ms, bool collect_impact = true) {
     using json = common_adapter_json;
     common_tool_catalog catalog;
     common_tool_bootstrap_result boot;
@@ -30,6 +30,7 @@ inline common_tool_execution_result common_change_impact(const common_native_too
         if (++requests > 12 || std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(timeout_ms)) {
             gaps.push_back({{"tool", name}, {"reason", "shared_query_budget_exhausted"}}); return nullptr;
         }
+        const auto query_started = std::chrono::steady_clock::now();
         const auto result = tools.execute({name, input.dump()});
         if (!result.ok) {
             gaps.push_back({{"tool", name}, {"reason", "unavailable_or_failed"}}); return nullptr;
@@ -38,7 +39,7 @@ inline common_tool_execution_result common_change_impact(const common_native_too
         if (!output.is_object() || result.output.size() > 48000 - retained) {
             gaps.push_back({{"tool", name}, {"reason", "invalid_result_or_output_budget"}}); return nullptr;
         }
-        sections.push_back({{"tool", name}, {"evidence_ref", "e" + std::to_string(evidence.size() + 1)},
+        sections.push_back({{"tool", name}, {"elapsed_ms", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - query_started).count()}, {"evidence_ref", "e" + std::to_string(evidence.size() + 1)},
             {"complete", output.value("complete", false)}, {"truncated", output.value("truncated", false)},
             {"limitations", output.value("limitations", json::array())},
             {"continuations", output.value("continuations", json::array())}});
@@ -69,7 +70,7 @@ inline common_tool_execution_result common_change_impact(const common_native_too
     const auto read_args = json{{"path", path}, {"start_line", std::max(1, line - 3)}, {"end_line", line + 12}};
     const auto source = query("repository.read", read_args);
     json affected = json::array(), referenced_tests = json::array();
-    if (target.contains("line")) {
+    if (collect_impact && target.contains("line")) {
         const json location = {{"symbol", symbol}, {"path_hint", path}, {"line", target["line"]}, {"column", target["column"]}};
         auto refs = location; refs["max_results"] = 16; refs["include_context"] = true;
         const auto references = query("code.references", refs);
@@ -95,9 +96,9 @@ inline common_tool_execution_result common_change_impact(const common_native_too
                     affected.push_back(std::move(node));
                 }
         }
-    } else gaps.push_back({{"reason", "provide_explicit_line_and_column_for_relationship_analysis"}});
+    } else if (collect_impact) gaps.push_back({{"reason", "provide_explicit_line_and_column_for_relationship_analysis"}});
     const auto basename = std::filesystem::path(path).filename().generic_string();
-    auto knowledge = query("graph.find", {{"query", basename}, {"limit", 8}});
+    auto knowledge = collect_impact ? query("graph.find", {{"query", basename}, {"limit", 8}}) : json(nullptr);
     if (knowledge.is_object() && knowledge.contains("nodes") && knowledge["nodes"].is_array()) {
         json matched = json::array();
         for (const auto & node : knowledge["nodes"])
@@ -113,7 +114,7 @@ inline common_tool_execution_result common_change_impact(const common_native_too
                 query("graph.search", {{"from", node["id"]}, {"limit", 4}});
         }
     }
-    auto tests = query("repository.search", {{"query", symbol}, {"path", "tests"}, {"max_results", 8}, {"context_lines", 2}});
+    auto tests = collect_impact ? query("repository.search", {{"query", symbol}, {"path", "tests"}, {"max_results", 8}, {"context_lines", 2}}) : json(nullptr);
 
     if (tests.is_object()) tests["semantic_reference_candidates"] = referenced_tests;
 
@@ -124,7 +125,8 @@ inline common_tool_execution_result common_change_impact(const common_native_too
         before.value("status", std::string{}) == "observed" && after.value("status", std::string{}) == "observed" &&
         before["revision"] == after["revision"];
     gaps.push_back({{"reason", "Project-wide semantic index coverage and freshness are unknown; source checks are not an atomic snapshot."}});
-    gaps.push_back({{"reason", "Contracts require interpretation. Test candidates are text matches under tests, not verified test coverage; tests in other directories are not searched."}});
+    if (collect_impact) gaps.push_back({{"reason", "Contracts require interpretation. Test candidates are text matches under tests, not verified test coverage; tests in other directories are not searched."}});
+    if (!collect_impact) gaps.push_back({{"reason", "Contract collection reads only the bounded target excerpt and symbol candidates; callers, tests and saved graph notes are not collected."}});
     return common_adapter_success_json({{"schema", "code-change-impact.v1"}, {"target", target},
         {"intent", args.value("intent", std::string{})}, {"affected_symbols", affected},
         {"contracts", json::array()}, {"test_candidates", tests}, {"knowledge_candidates", knowledge},
