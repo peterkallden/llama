@@ -97,7 +97,7 @@ establishing factual truth, independent corroboration or causality.
   ```
 
   Windows artifact names use the short backend labels `cuda13` and `vulkan1.4`;
-  the exact toolkit/SDK versions (`13.4` and `1.4.357.0`) are recorded in the
+  the exact toolkit/SDK versions (`13.5` and `1.4.357.0`) are recorded in the
   release manifest.
 
   The Debian package names are `llama-agent-cpu`, `llama-agent-cuda`, and

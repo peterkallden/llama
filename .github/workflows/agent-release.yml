@@ -25,7 +25,7 @@ concurrency:
 
 env:
   COZO_VERSION: '0.7.6'
-  CUDA_TOOLKIT_PACKAGE: cuda-toolkit-13-4
+  CUDA_TOOLKIT_PACKAGE: cuda-toolkit-13-5
   VULKAN_SDK_VERSION: '1.4.350.1'
   VULKAN_SDK_SHA256: 6cce33c7e5383814150c5041820769d93c65a1fd883002e5949b067045a07daa
   CMAKE_BUILD_PARALLEL_LEVEL: 4
@@ -471,7 +471,7 @@ jobs:
           text = control.read_text()
           if backend == "cuda":
               generic_depends = "Depends: ${shlibs:Depends}, ${misc:Depends}, libgomp1, adduser, python3, ca-certificates"
-              cuda_depends = generic_depends + ", cuda-cudart-13-4"
+              cuda_depends = generic_depends + ", cuda-cudart-13-5"
               if text.count(generic_depends) != 1:
                   raise SystemExit("expected exactly one generic Debian dependency stanza")
               text = text.replace(generic_depends, cuda_depends, 1)
@@ -646,7 +646,7 @@ jobs:
         if: matrix.backend == 'cuda'
         uses: ./.github/actions/windows-setup-cuda
         with:
-          cuda_version: '13.4'
+          cuda_version: '13.5'
           cuda_arch: x64
 
       - name: Verify CUDA Toolkit
@@ -699,7 +699,7 @@ jobs:
           }
           $backendExactVersion = switch ('${{ matrix.backend }}') {
             'cpu' { 'native' }
-            'cuda' { '13.4' }
+            'cuda' { '13.5' }
             'vulkan' { '1.4.357.0' }
             default { throw 'Unsupported Windows release backend' }
           }
