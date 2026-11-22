@@ -25,7 +25,7 @@ inline common_tool_execution_result common_change_impact(const common_native_too
     }
     const auto started = std::chrono::steady_clock::now();
     size_t requests = 0, retained = 0;
-    json gaps = json::array(), evidence = json::array();
+    json gaps = json::array(), evidence = json::array(), sections = json::array();
     auto query = [&](const std::string & name, const json & input) -> json {
         if (++requests > 12 || std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(timeout_ms)) {
             gaps.push_back({{"tool", name}, {"reason", "shared_query_budget_exhausted"}}); return nullptr;
@@ -38,6 +38,12 @@ inline common_tool_execution_result common_change_impact(const common_native_too
         if (!output.is_object() || result.output.size() > 48000 - retained) {
             gaps.push_back({{"tool", name}, {"reason", "invalid_result_or_output_budget"}}); return nullptr;
         }
+        sections.push_back({{"tool", name}, {"evidence_ref", "e" + std::to_string(evidence.size() + 1)},
+            {"complete", output.value("complete", false)}, {"truncated", output.value("truncated", false)},
+            {"limitations", output.value("limitations", json::array())},
+            {"continuations", output.value("continuations", json::array())}});
+        if (output.value("truncated", false) || (output.contains("complete") && !output.value("complete", false)))
+            gaps.push_back({{"tool", name}, {"reason", "partial_child_coverage"}, {"section", sections.size() - 1}});
         retained += result.output.size();
         evidence.push_back({{"id", "e" + std::to_string(evidence.size() + 1)}, {"tool", name}, {"arguments", input}, {"observation", output}});
         return output;
@@ -62,16 +68,43 @@ inline common_tool_execution_result common_change_impact(const common_native_too
     const int line = target.value("line", 1);
     const auto read_args = json{{"path", path}, {"start_line", std::max(1, line - 3)}, {"end_line", line + 12}};
     const auto source = query("repository.read", read_args);
-    json affected = json::array();
+    json affected = json::array(), referenced_tests = json::array();
     if (target.contains("line")) {
         const json location = {{"symbol", symbol}, {"path_hint", path}, {"line", target["line"]}, {"column", target["column"]}};
         auto refs = location; refs["max_results"] = 16; refs["include_context"] = true;
-        query("code.references", refs);
-        auto impact = location; impact["max_depth"] = args.value("max_depth", 2); impact["max_nodes"] = 16; impact["max_edges"] = 24;
-        const auto calls = query("code.impact", impact);
-        if (calls.is_object() && calls.contains("visualization")) affected = calls["visualization"].value("nodes", json::array());
+        const auto references = query("code.references", refs);
+        if (references.is_object() && references.value("semantic", false))
+            for (const auto & item : references.value("items", json::array())) {
+                const auto file = item.value("path", std::string{});
+                if (file.compare(0, 6, "tests/") == 0)
+                    referenced_tests.push_back({{"location", item}, {"evidence_ref", "e" + std::to_string(evidence.size())},
+                        {"basis", "semantic_reference_in_tests_directory"}});
+            }
+        // Reserve separate traversal budgets so outgoing library calls cannot crowd out callers.
+        std::set<std::string> seen;
+        for (const auto * direction : {"callers", "callees"}) {
+            auto impact = location; impact["direction"] = direction;
+            impact["max_depth"] = args.value("max_depth", 2); impact["max_nodes"] = 12; impact["max_edges"] = 16;
+            const auto calls = query("code.impact", impact);
+            if (calls.is_object() && calls.contains("visualization"))
+                for (auto node : calls["visualization"].value("nodes", json::array())) {
+                    const auto id = node.value("id", std::string{});
+                    if (!seen.insert(id).second) continue;
+                    node["discovery_direction"] = direction;
+                    node["evidence_ref"] = "e" + std::to_string(evidence.size());
+                    affected.push_back(std::move(node));
+                }
+        }
     } else gaps.push_back({{"reason", "provide_explicit_line_and_column_for_relationship_analysis"}});
-    const auto knowledge = query("graph.find", {{"query", path}, {"limit", 2}});
+    const auto basename = std::filesystem::path(path).filename().generic_string();
+    auto knowledge = query("graph.find", {{"query", basename}, {"limit", 8}});
+    if (knowledge.is_object() && knowledge.contains("nodes") && knowledge["nodes"].is_array()) {
+        json matched = json::array();
+        for (const auto & node : knowledge["nodes"])
+            if (node.value("path", std::string{}) == path) matched.push_back(node);
+        knowledge["nodes"] = std::move(matched);
+        knowledge["matching"] = "exact_repository_path";
+    }
     if (knowledge.is_object() && knowledge.contains("nodes") && knowledge["nodes"].is_array()) {
         size_t expanded = 0;
         for (const auto & node : knowledge["nodes"]) {
@@ -80,7 +113,9 @@ inline common_tool_execution_result common_change_impact(const common_native_too
                 query("graph.search", {{"from", node["id"]}, {"limit", 4}});
         }
     }
-    const auto tests = query("repository.search", {{"query", symbol}, {"path", "tests"}, {"max_results", 8}, {"context_lines", 2}});
+    auto tests = query("repository.search", {{"query", symbol}, {"path", "tests"}, {"max_results", 8}, {"context_lines", 2}});
+
+    if (tests.is_object()) tests["semantic_reference_candidates"] = referenced_tests;
 
     const auto after_source = query("repository.read", read_args);
     const auto after = common_repository_observation(bindings.repository_root, path);
@@ -95,5 +130,6 @@ inline common_tool_execution_result common_change_impact(const common_native_too
         {"contracts", json::array()}, {"test_candidates", tests}, {"knowledge_candidates", knowledge},
         {"knowledge_gaps", gaps}, {"evidence", evidence}, {"source", before}, {"source_after", after},
         {"target_content_unchanged_during_query", unchanged}, {"queries_used", requests},
+        {"sections", sections},
         {"coverage", {{"complete", false}, {"revision_bound", false}, {"limitations", gaps}}}});
 }

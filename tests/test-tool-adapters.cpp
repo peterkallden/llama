@@ -1650,6 +1650,21 @@ int main() {
         output = nlohmann::json::parse(brief.output);
         assert(output["target"]["resolution"] == "unresolved" && output["target"]["candidates"].size() == 2);
         assert(output["affected_symbols"].empty());
+        std::vector<std::string> brief_directions;
+        semantic_bindings.code_calls = [&](const std::string & input) {
+            brief_directions.push_back(nlohmann::json::parse(input).at("direction").get<std::string>());
+            return common_tool_execution_result::success(R"({"backend":"clangd","semantic":true,"callers":[],"callees":[],"count":0,"complete":false,"truncated":false,"limitations":["index incomplete"]})");
+        };
+        common_tool_registry directional_registry;
+        assert(common_try_register_code_tool_adapter(*foundation_catalog.find_definition("code.change_impact"),
+            semantic_bindings, directional_registry, brief_installed, error) && brief_installed);
+        brief = directional_registry.execute({"code.change_impact", R"({"path":"src/sample.txt","symbol":"needle","line":1})"});
+        assert(brief.ok && brief_directions == std::vector<std::string>({"callers", "callees"}));
+        output = nlohmann::json::parse(brief.output);
+        assert(output.contains("sections") && !output["sections"].empty());
+        assert(std::any_of(output["knowledge_gaps"].begin(), output["knowledge_gaps"].end(), [](const auto & gap) {
+            return gap.value("reason", std::string{}) == "partial_child_coverage";
+        }));
 
     }
     result = foundation_registry.execute({"code.inspect", "{}"});
