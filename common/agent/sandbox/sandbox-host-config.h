@@ -17,6 +17,7 @@ struct common_agent_development_target_profile {
     std::vector<std::string> build_arguments;
     std::string test_program;
     std::vector<std::string> test_arguments;
+    std::vector<std::string> source_paths;
     std::string working_directory = "/workspace/source";
     std::map<std::string, std::vector<std::string>> configurations;
     std::map<std::string, std::vector<std::string>> test_filters;

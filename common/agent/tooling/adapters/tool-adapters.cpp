@@ -1374,6 +1374,34 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                 if (!persist_tool_resource(bindings, arguments["name"].get<std::string>(), "Exported tool artifact", mime, arguments["content"].get<std::string>(), "artifact.export", make_tool_resource_metadata("artifact", "Exported tool result", "Read as an artifact resource", "Bounded host-owned export"), resource, err)) return tool_execution_failure("tool.artifact.export.failed", std::move(err), "Artifact export failed.");
                 return tool_success_json({{"resource", resource.uri}, {"name", resource.name}, {"mime_type", resource.mime_type}});
             }, error, false, true);
+        } else if (definition.executor_id == "builtin.development.test_select") {
+            installed = register_definition(definition, registry, [bindings](const std::string & input) {
+                const auto args = json::parse(input);
+                json candidates = json::array(), unmatched = json::array();
+                for (const auto & value : args.at("changed_files")) {
+                    const auto file = value.get<std::string>();
+                    const auto normalized = std::filesystem::path(file).lexically_normal().generic_string();
+                    if (file.empty() || normalized != file || std::filesystem::path(file).is_absolute() || file == ".." || file.rfind("../", 0) == 0)
+                        return tool_validation_failure("tool.development.test_select.invalid_path", "changed_files must contain normalized repository-relative paths");
+                    bool matched = false;
+                    for (const auto & target : bindings.development_test_metadata) {
+                        for (const auto & value_path : target.at("source_paths")) {
+                            const auto path = value_path.get<std::string>();
+                            if (file == path || file.rfind(path + "/", 0) == 0) {
+                                candidates.push_back({{"target", target.at("target")}, {"filters", target.at("filters")},
+                                    {"changed_file", file}, {"source_path", path}, {"basis", "host_declared_source_mapping"},
+                                    {"confidence", "candidate"}});
+                                matched = true; break;
+                            }
+                        }
+                    }
+                    if (!matched) unmatched.push_back(file);
+                }
+                return tool_success_json({{"schema", "test-selection.v1"}, {"test_candidates", candidates}, {"unmapped_files", unmatched},
+                    {"complete", false}, {"execution_authorized", false}, {"coverage_gaps", json::array({
+                        "Only host-declared source mappings are used; dynamic behavior and unregistered tests are unknown.",
+                        "Historical results are not verification of the current source state."})}});
+            }, error);
         } else if ((definition.executor_id == "sandbox.development.build" || definition.executor_id == "sandbox.development.test") && bindings.sandbox_execute) {
             installed = register_definition(definition, registry, [bindings, tool_name = definition.name](const std::string & input) {
                 common_agent_sandbox_request request;

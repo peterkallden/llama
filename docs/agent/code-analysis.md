@@ -337,3 +337,21 @@ The target file is read before and after collection using the repository adapter
 The model interprets the returned evidence and identifies invariants. The tool does not execute tests, modify files, promote graph proposals or declare a change safe. Existing development and comprehension-refresh workflows remain separate explicit actions.
 
 Change-impact traversal collects callers before callees with separate per-direction budgets (12 nodes and 16 edges each). This prevents outgoing library calls from consuming the caller budget; it does not guarantee complete incoming coverage. Each affected symbol records its discovery direction and evidence reference. The top-level `sections` array exposes child completeness, truncation, limitations and continuation arguments. Partial child coverage is also listed in knowledge gaps. Graph discovery searches the file basename and retains only exact repository-path matches before expanding saved relations; broad rejected candidates remain visible only in raw discovery evidence. Test candidates combine bounded symbol text matches with semantically resolved references located under `tests`, with their evidence references. Neither source establishes behavioral test coverage.
+
+## Development evidence tools
+
+`development.test_select` is a read-only selection helper. Supply `changed_files` as up to 32 normalized repository-relative paths. It returns only host-approved targets with declared `source_paths` matching a changed file or its directory prefix. Returned filters are registered aliases, not generated commands or regular expressions. It never runs tests or grants execution authority. Missing mappings produce `unmapped_files`; semantic dependency-based selection and historical result ranking are not implemented in this first version.
+
+Host configuration can add optional source mappings to existing `sandbox.development_targets` entries:
+
+```json
+{"agent-contracts":{"build_program":"cmake","build_arguments":["--build","build"],"test_program":"ctest","test_arguments":["--test-dir","build"],"source_paths":["common/agent","tools/agent"],"test_filters":{"contracts":["-R","contract"]}}}
+```
+
+This snippet illustrates the target entry only. Ordinary host sandbox policy and test execution authorization still apply. Existing configurations without `source_paths` remain valid and supply no mappings.
+
+`diagnostics.failure_summary` accepts `receipt_ref` and optional `previous_receipt_ref`. References must resolve under the current resource authority to retained `development-execution-receipt.v1` resources with development receipt metadata/lineage. It reads at most two retained output resources of 64 KiB each per receipt and reuses compiler and failure-group parsers. It compares normalized retained diagnostics, source snapshots, target, configuration and filter. A missing snapshot is not a matching context. Output size is bounded; oversized inputs or summaries fail explicitly. Missing diagnostics are not proof of repair, and stream order does not identify a root cause. Hypothesis synthesis remains model-owned. Crash artifacts are not executed or reanalyzed here; native crash analysis remains a separate tool.
+
+`code.contracts` uses the bounded change-impact evidence collector. It adds provider signature candidates and text occurrences of `assert` or `requires` in the retained target excerpt. These are explicitly source-expression candidates: function scope, macro expansion and active compilation are not established. It retains test and graph candidates for model inspection. It is not an AST contract verifier, does not enumerate an entire function body, and does not claim to extract all language constraints or documented preconditions. Text fallback symbols are labeled separately from semantic signature candidates. Source hashes and coverage gaps have the same limitations as `code.change_impact`.
+
+All three tools are included in the `developer-read` and `code-analysis` profiles. Hosts with explicit custom capability lists must opt them in. The native registry supplies the same implementation to MCP; no new execution authority or workflow engine is added.

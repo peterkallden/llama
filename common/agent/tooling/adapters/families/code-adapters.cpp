@@ -694,12 +694,13 @@ bool common_try_register_code_tool_adapter(
     const bool references = has_executor(id, "builtin.code.references", "builtin.diagnostics.references");
     const bool calls = has_executor(id, "builtin.code.calls", "builtin.diagnostics.call_hierarchy");
     const bool impact = id == "builtin.code.impact";
-    const bool change_impact = id == "builtin.code.change_impact";
+    const bool contracts = id == "builtin.code.contracts";
+    const bool change_impact = id == "builtin.code.change_impact" || contracts;
     if (!inspect && !refresh && !symbols && !references && !calls && !impact && !change_impact) return false;
 
     if (change_impact) {
         installed = common_adapter_register_definition(definition, registry,
-            [bindings, timeout_ms = definition.timeout_ms](const std::string & input) {
+            [bindings, contracts, timeout_ms = definition.timeout_ms](const std::string & input) {
                 json args;
                 std::string reason;
                 if (!common_adapter_parse_object(input, args, reason))
@@ -709,7 +710,27 @@ bool common_try_register_code_tool_adapter(
                 std::filesystem::path resolved;
                 if (!resolve_repository_path(bindings.repository_root, args.at("path").get<std::string>(), resolved, reason))
                     return common_adapter_validation_failure("tool.code.change_impact.invalid_path", reason);
-                return common_change_impact(bindings, args, timeout_ms);
+                auto result = common_change_impact(bindings, args, timeout_ms);
+                if (!contracts || !result.ok) return result;
+                auto brief = json::parse(result.output);
+                json observations = json::array();
+                bool source_collected = false;
+                for (const auto & entry : brief["evidence"]) {
+                    if (entry["tool"] == "code.symbols")
+                        for (const auto & item : entry["observation"].value("items", json::array()))
+                            observations.push_back({{"kind", entry["observation"].value("semantic", false) ? "provider_signature_candidate" : "text_symbol_candidate"}, {"location", item}, {"evidence_ref", entry["id"]}});
+                    if (entry["tool"] == "repository.read" && !source_collected) {
+                        source_collected = true;
+                        for (const auto & line : entry["observation"].value("lines", json::array())) {
+                            const auto text = line.value("text", std::string{});
+                            if (text.find("assert") != std::string::npos || text.find("requires") != std::string::npos)
+                                observations.push_back({{"kind", "source_expression_candidate"}, {"path", args["path"]},
+                                    {"source_line", line}, {"evidence_ref", entry["id"]}, {"interpretation", "Text occurrence only; lexical scope and active compilation are not established."}});
+                        }
+                    }
+                }
+                brief["schema"] = "code-contracts.v1"; brief["contract_candidates"] = observations;
+                return common_adapter_success_json(brief);
             }, error);
     } else if (refresh) {
         installed = register_code_definition(bindings, definition, registry, [bindings](const std::string & input) {

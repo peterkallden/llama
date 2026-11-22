@@ -1201,6 +1201,15 @@ bool parse_agent_host_config_json(
                 read_optional(value, "working_directory", profile.working_directory);
                 read_optional(value, "max_timeout_ms", profile.max_timeout_ms);
                 if (value.contains("build_arguments") && !read_string_array(value["build_arguments"], profile.build_arguments, "sandbox.development_targets.build_arguments", error)) return false;
+                if (value.contains("source_paths") && !read_string_array(value["source_paths"], profile.source_paths, "sandbox.development_targets.source_paths", error)) return false;
+                if (profile.source_paths.size() > 128) { error = "too many development source paths"; return false; }
+                for (const auto & source_path : profile.source_paths) {
+                    const std::filesystem::path candidate(source_path);
+                    if (source_path.empty() || source_path.size() > 512 || source_path.find('\0') != std::string::npos || candidate.is_absolute() ||
+                            candidate.lexically_normal().generic_string() != source_path || source_path == ".." || source_path.rfind("../", 0) == 0) {
+                        error = "development source_paths must be normalized repository-relative paths"; return false;
+                    }
+                }
                 if (value.contains("test_arguments") && !read_string_array(value["test_arguments"], profile.test_arguments, "sandbox.development_targets.test_arguments", error)) return false;
                 const auto read_argument_map = [&](const char * key, auto & target) {
                     if (!value.contains(key)) return true;
@@ -1758,6 +1767,7 @@ nlohmann::ordered_json agent_host_config_to_json(
             {"build_arguments", entry.second.build_arguments},
             {"test_program", entry.second.test_program},
             {"test_arguments", entry.second.test_arguments},
+            {"source_paths", entry.second.source_paths},
             {"working_directory", entry.second.working_directory},
             {"configurations", std::move(configurations)},
             {"test_filters", std::move(test_filters)},

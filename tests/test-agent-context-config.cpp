@@ -31,4 +31,14 @@ int main() {
             roundtrip.context_budgets.configured_prompt_values.count("resource_chunk_max_bytes") != 1) return 5;
     explicit_config["runtime"]["context_budgets"]["resource_chunk_max_bytes"] = 0;
     if (parse_agent_host_config_json(explicit_config, config, error) && validate_agent_host_config(config, error)) return 6;
+    config = agent_host_config{};
+    roundtrip = agent_host_config{};
+    json source_config = json::object();
+    source_config["sandbox"]["development_targets"]["contracts"] = {
+        {"build_program", "cmake"}, {"test_program", "ctest"}, {"source_paths", {"common/agent", "tools/agent"}}};
+    if (!parse_agent_host_config_json(source_config, config, error) ||
+            !parse_agent_host_config_json(agent_host_config_to_json(config), roundtrip, error) ||
+            roundtrip.sandbox.development_targets.at("contracts").source_paths.size() != 2) { std::cerr << "source metadata roundtrip: " << error << "\n"; return 7; }
+    source_config["sandbox"]["development_targets"]["contracts"]["source_paths"] = {"../outside"};
+    if (parse_agent_host_config_json(source_config, config, error)) return 8;
 }

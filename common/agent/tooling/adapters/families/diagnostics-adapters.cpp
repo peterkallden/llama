@@ -8,6 +8,7 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include "agent/tooling/adapters/families/development-evidence.h"
 
 namespace {
 
@@ -51,6 +52,13 @@ bool common_try_register_diagnostics_tool_adapter(
     installed = false;
     const auto id = definition.executor_id;
     const bool is_diagnostics = id == "builtin.diagnostics.compile" || id == "builtin.diagnostics.test_failures" || id == "builtin.diagnostics.format" || id == "builtin.diagnostics.include_graph" || id == "builtin.diagnostics.native_crash";
+    if (id == "builtin.diagnostics.failure_summary") {
+        installed = common_adapter_register_definition(definition, registry, [bindings](const std::string & input) {
+            const auto args = json::parse(input);
+            return common_failure_summary(bindings, args);
+        }, error);
+        return installed;
+    }
     if (!is_diagnostics) return false;
     if (id == "builtin.diagnostics.compile") {
         installed = common_adapter_register_definition(definition, registry, [](const std::string & input) {

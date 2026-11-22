@@ -1667,6 +1667,41 @@ int main() {
         }));
 
     }
+    {
+        auto selected_bindings = foundation_bindings;
+        selected_bindings.development_test_metadata = nlohmann::ordered_json::array({
+            {{"target", "agent-contracts"}, {"source_paths", {"common/agent"}}, {"filters", {"unit"}}}});
+        common_tool_registry selected_registry;
+        common_tool_adapter_result selected_adapters;
+        assert(common_register_native_tool_adapters(foundation_catalog, "developer-read", selected_bindings,
+            selected_registry, selected_adapters, error));
+        auto selected = selected_registry.execute({"development.test_select", R"({"changed_files":["common/agent/example.cpp","docs/readme.md"]})"});
+        assert(selected.ok);
+        auto selection = nlohmann::json::parse(selected.output);
+        assert(selection["test_candidates"].size() == 1 && selection["unmapped_files"].size() == 1);
+        assert(selection["execution_authorized"] == false && selection["test_candidates"][0]["target"] == "agent-contracts");
+        assert(!selected_registry.execute({"development.test_select", R"({"changed_files":["../escape"]})"}).ok);
+        auto contracts = selected_registry.execute({"code.contracts", R"({"path":"src/sample.txt","symbol":"needle","line":1})"});
+        assert(contracts.ok && nlohmann::json::parse(contracts.output)["schema"] == "code-contracts.v1");
+        assert(!selected_registry.execute({"diagnostics.failure_summary", R"({"receipt_ref":"resource://missing"})"}).ok);
+        agent_resource_put_request put; put.name = "failure-output"; put.mime_type = "text/plain";
+        put.text = "src/example.cpp:3:2: error: broken contract\n";
+        agent_resource_descriptor output;
+        assert(foundation_resources.put_text(put, output, error));
+        const nlohmann::ordered_json receipt = {{"schema", "development-execution-receipt.v1"}, {"logical_target", "agent-contracts"},
+            {"status", "failed"}, {"source_snapshot", nullptr},
+            {"output_resources", nlohmann::ordered_json::array({{{"uri", output.uri}}})}};
+        put.name = "failure-receipt"; put.mime_type = "application/json";
+        put.metadata.purpose = "development_execution_receipt"; put.lineage.derivation = "development-execution-receipt:v1"; put.text = receipt.dump();
+        agent_resource_descriptor receipt_resource;
+        assert(foundation_resources.put_text(put, receipt_resource, error));
+        auto summary = selected_registry.execute({"diagnostics.failure_summary", nlohmann::json{
+            {"receipt_ref", receipt_resource.uri}, {"previous_receipt_ref", receipt_resource.uri}}.dump()});
+        assert(summary.ok);
+        const auto report = nlohmann::json::parse(summary.output);
+        assert(report["comparison"]["added"].empty() && !report["comparison"]["persisting"].empty());
+        assert(report["comparison"]["same_context"] == false && report["hypotheses"].empty());
+    }
     result = foundation_registry.execute({"code.inspect", "{}"});
     assert(result.ok && result.output.find("code-capabilities.v1") != std::string::npos &&
            result.output.find("semantic") != std::string::npos && result.output.find("bounded_semantic") != std::string::npos);

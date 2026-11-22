@@ -884,6 +884,13 @@ bool resolve_agent_host_tool_selection(
         std::shared_ptr<common_agent_sandbox_lxc_runtime> lxc_runtime;
 #endif
         std::shared_ptr<common_agent_workspace_manager> workspace_manager;
+        for (const auto & entry : sandbox_config.development_targets) {
+            if (entry.second.test_program.empty()) continue;
+            nlohmann::ordered_json filters = nlohmann::ordered_json::array();
+            for (const auto & filter : entry.second.test_filters) filters.push_back(filter.first);
+            bindings.development_test_metadata.push_back({{"target", entry.first},
+                {"source_paths", entry.second.source_paths}, {"filters", filters}});
+        }
         if (needs_sandbox_assembly()) {
             auto sandbox_assembly = make_agent_host_sandbox_assembly({
                 sandbox_config,

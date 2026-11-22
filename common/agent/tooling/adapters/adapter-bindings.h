@@ -27,6 +27,7 @@ struct common_native_tool_bindings {
     common_memory_query memory_query;
     const std::string * plan_id = nullptr;
     std::string repository_root;
+    nlohmann::ordered_json development_test_metadata = nlohmann::ordered_json::array();
     std::function<common_tool_execution_result(const std::string &)> web_search;
     std::function<common_tool_execution_result(const std::string &)> web_fetch;
     std::function<common_tool_execution_result(const std::string &)> openapi_connect;
