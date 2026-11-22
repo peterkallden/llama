@@ -217,6 +217,8 @@ jobs:
         id: android_sqlite_smoke_primary
         continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
         with:
           api-level: 35
           target: default
@@ -229,6 +231,7 @@ jobs:
           # renderer so native Vulkan loading is exercised in CI.
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -wipe-data -no-metrics -gpu swiftshader_indirect
           force-avd-creation: true
+          emulator-boot-timeout: 900
           disable-spellchecker: true
           disable-animations: false
           working-directory: examples/llama.android
@@ -261,6 +264,8 @@ jobs:
         id: android_sqlite_smoke_retry
         if: steps.android_sqlite_retry.outputs.required == 'true'
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
         with:
           api-level: 35
           target: default
@@ -271,6 +276,7 @@ jobs:
           heap-size: 512M
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -no-snapshot-save -wipe-data -no-metrics -gpu swiftshader_indirect
           force-avd-creation: true
+          emulator-boot-timeout: 900
           disable-spellchecker: true
           disable-animations: false
           working-directory: examples/llama.android
