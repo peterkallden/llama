@@ -788,7 +788,8 @@ bool run_agent_web_server(
                 {"session_id", session_id}, {"project_id", project_id}}, listing, error) || !listing.value("ok", false)) {
             set_json_error(response, 502, error.empty() ? listing.value("error", "resource authorization failed") : error); return;
         }
-        if (!listing.contains("resources") || !listing["resources"].is_array()) { set_json_error(response, 502, "resource authorization response is invalid"); return; }
+        if (!listing.contains("resources")) listing["resources"] = json::array();
+        if (!listing["resources"].is_array()) { set_json_error(response, 502, "resource authorization response is invalid"); return; }
         bool authorized = false;
         for (const auto & item : listing.value("resources", json::array()))
             if (item.is_object() && item.value("uri", std::string()) == uri && item.value("scope", std::string()) == resource_scope) authorized = true;
@@ -1021,11 +1022,13 @@ bool run_agent_web_server(
         }
         std::string session_id, project_id, scope_error;
         if (!parse_chat_scope(command, session_id, project_id, scope_error)) { set_json_error(response, 400, scope_error); return; }
-        if (command.contains("scope") && (!command["scope"].is_string() || command["scope"] != "session")) {
-            set_json_error(response, 400, "web attachments must use session scope"); return;
+        if (command.contains("scope") && (!command["scope"].is_string() ||
+                (command["scope"] != "session" && command["scope"] != "project"))) {
+            set_json_error(response, 400, "invalid attachment scope"); return;
         }
         json chat;
         if (!validate_chat_scope(options, session_id, project_id, chat, scope_error)) { set_json_error(response, 403, scope_error); return; }
+        command["scope"] = project_id.empty() ? "session" : "project";
         command["namespace_id"] = k_web_namespace;
         command["command"] = "put_resource";
         json result;

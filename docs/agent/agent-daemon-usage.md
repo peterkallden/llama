@@ -1607,3 +1607,9 @@ session-scoped attachments listed their respective attachments; cross-chat reads
 of the other attachment returned 404. This checks session attachment isolation,
 not isolation between users with namespace-wide credentials. The complete Luna
 investigation still ended with continuation-budget exhaustion.
+
+New web attachments created in a project chat are stored at project scope and
+can be listed and attached by other chats in that project. Attachments in chats
+without a project use session scope. Existing session-scoped attachments retain
+their original scope and are not automatically migrated. Availability does not
+insert an attachment into another chat's active context; attach it when needed.

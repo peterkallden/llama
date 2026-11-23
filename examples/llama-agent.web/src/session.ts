@@ -672,7 +672,7 @@ async function upload(file: File, options: { scope?: "session" | "project"; orie
         : extensionIsMarkdown ? "text/markdown" : isText ? "text/plain" : "application/octet-stream"
       : file.type;
     const resource: UploadedResource = {
-      name: file.name, mime_type: mimeType, scope: options.scope ?? "session",
+      name: file.name, mime_type: mimeType, scope: uploadProjectId ? "project" : "session",
       description: `Web attachment: ${file.name}`, session_id: uploadSessionId,
       namespace_id: "web", project_id: uploadProjectId,
       ...(isText
