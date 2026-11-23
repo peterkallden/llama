@@ -151,6 +151,22 @@ int main() {
         "phase accepted invented evidence");
     require(!common_agent_method_review(pending,{{"invented-phase","blocked","Not available",{}}},progress,error),
         "phase identity was model-created");
+    common_agent_method_phase_review advisory{pending.id+":orient", "remaining", "Inspect a discovered entry point", {}};
+    advisory.next_work_kind="inspect_source";
+    advisory.next_work_goal="Read the observed source path and inspect its callers";
+    require(common_agent_method_review(pending,{advisory},progress,error) &&
+        progress[advisory.phase_id]["next_work_goal"]==advisory.next_work_goal &&
+        progress[advisory.phase_id]["status"]=="remaining",
+        "advisory continuation was lost or promoted to phase completion");
+    auto handed_off=pending;
+    handed_off.observations.push_back({"advisory-review", "method_phase_review",
+        json{{"schema","method-phase-review.v1"},{"method_revision",pending.source_revision},{"phases",progress}}.dump(),0.0f});
+    require(common_agent_render_method_progress(handed_off).find(advisory.next_work_goal)!=std::string::npos &&
+        common_agent_method_ready_phases(handed_off)==common_agent_method_ready_phases(pending),
+        "saved advisory was not presented to the planner or changed dependency eligibility");
+    advisory.next_work_goal=std::string(513,'x');
+    require(!common_agent_method_review(pending,{advisory},progress,error),
+        "unbounded advisory continuation was accepted");
     const auto ready=common_agent_method_ready_phases(pending);
     require(ready.size()==1 && ready[0]["phase_id"]==pending.id+":orient",
         "ready frontier exposed a phase before its prerequisite");

@@ -25,8 +25,8 @@ struct common_agent_method_phase_review {
     std::string status; // satisfied, not_needed, blocked, remaining
     std::string reason;
     std::vector<std::string> evidence_ids;
-    // Legacy optional annotations. Accepted on input, never used to select
-    // executable work; the normal planner owns continuation selection.
+    // Optional advisory annotations retained with phase evidence.
+    // The normal planner owns executable continuation selection.
     std::string next_work_kind; // inspect_source, external_lookup, reason
     std::string next_work_goal;
 };

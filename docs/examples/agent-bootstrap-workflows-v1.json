@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v53",
+  "version": "v54",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -3183,7 +3183,7 @@
     },
     {
       "id": "repository-change-v5",
-      "source_revision": "agent-workflows-starter@v53",
+      "source_revision": "agent-workflows-starter@v54",
       "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed.",
       "purpose": "Implement the requested repository change.",
       "goal": "Implement the requested repository change.",
@@ -3266,7 +3266,7 @@
     },
     {
       "id": "regression-repair-v5",
-      "source_revision": "agent-workflows-starter@v53",
+      "source_revision": "agent-workflows-starter@v54",
       "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses.",
       "purpose": "Diagnose the reported regression and repair it when warranted.",
       "goal": "Diagnose the reported regression and repair it when warranted.",
@@ -3350,7 +3350,7 @@
     },
     {
       "id": "development-compile-diagnosis-v2",
-      "source_revision": "agent-workflows-starter@v53",
+      "source_revision": "agent-workflows-starter@v54",
       "selection_description": "Investigate a compiler or linker failure and repair it when requested.",
       "purpose": "Diagnose the reported build failure.",
       "goal": "Diagnose the reported build failure.",
@@ -3425,7 +3425,7 @@
     },
     {
       "id": "development-runtime-diagnosis-v2",
-      "source_revision": "agent-workflows-starter@v53",
+      "source_revision": "agent-workflows-starter@v54",
       "selection_description": "Investigate a runtime failure or unexpected behavior and repair it when requested.",
       "purpose": "Diagnose the reported runtime behavior.",
       "goal": "Diagnose the reported runtime behavior.",
@@ -3500,7 +3500,7 @@
     },
     {
       "id": "repository-investigation-v3",
-      "source_revision": "agent-workflows-starter@v53",
+      "source_revision": "agent-workflows-starter@v54",
       "selection_description": "Investigate a code or architecture question without changing files; inspect local evidence and authorized primary documentation when needed.",
       "purpose": "Establish repository evidence before proposing a change.",
       "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
@@ -3538,7 +3538,7 @@
         {
           "id": "orient",
           "title": "Orient",
-          "objective": "Identify the bounded question and relevant repository area. Result: inspected paths and source revision when available."
+          "objective": "Identify the bounded question, relevant source entry points and open questions from supplied evidence or focused discovery. Result: candidate repository paths with evidence references, and source revision when available. Full implementation tracing belongs to the trace phase; an empty saved graph does not prevent completing orientation once relevant entry points are identified."
         },
         {
           "id": "trace",
@@ -3635,7 +3635,7 @@
     },
     {
       "id": "repository-change-v5-with-comprehension",
-      "source_revision": "agent-workflows-starter@v53",
+      "source_revision": "agent-workflows-starter@v54",
       "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed. Includes explicitly requested bounded comprehension maintenance after verification.",
       "purpose": "Implement the requested repository change. Preserve reusable project understanding after verification.",
       "goal": "Implement the requested repository change.",
@@ -3759,7 +3759,7 @@
     },
     {
       "id": "regression-repair-v5-with-comprehension",
-      "source_revision": "agent-workflows-starter@v53",
+      "source_revision": "agent-workflows-starter@v54",
       "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses. Includes explicitly requested bounded comprehension maintenance after verification.",
       "purpose": "Diagnose the reported regression and repair it when warranted. Preserve reusable project understanding after verification.",
       "goal": "Diagnose the reported regression and repair it when warranted.",

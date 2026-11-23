@@ -373,3 +373,17 @@ runtime excerpt covered all 116 requested lines (3090-3205) with
 `model_content_complete: true`. The overall investigation still exhausted its
 continuation budget while remaining in orientation. This validates the corrected
 source delivery, not completion of the full development workflow.
+
+### Phase handoff follow-up
+
+Starter v54 defines repository-investigation orientation as identifying the bounded
+question, candidate source entry points and open questions. Full source tracing
+belongs to the following phase. Method phase reviews retain optional bounded
+`next_work_kind` and `next_work_goal` annotations as untrusted planner guidance;
+they do not select tools, grant authority or alter dependency eligibility.
+
+The method-phase and bootstrap CTests passed. The Luna v54 run accepted orientation
+at its second review and subsequently planned source tracing. The overall run still
+exhausted its continuation budget: later plans kept searching without the source
+reads needed to establish implementation behavior. This is evidence of phase
+progress in one run, not a completed investigation or a general efficiency result.

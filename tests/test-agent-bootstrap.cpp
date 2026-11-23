@@ -294,7 +294,7 @@ int main() {
     assert(common_agent_package_parse_json(starter_file_text.str(), checked_in_starter, error));
     assert(error.empty());
     assert(checked_in_starter.name == "agent-workflows-starter" &&
-        checked_in_starter.version == "v53");
+        checked_in_starter.version == "v54");
     const auto has_workflow = [&](const std::string & ref) {
         return std::any_of(checked_in_starter.workflows.begin(), checked_in_starter.workflows.end(),
             [&](const auto & workflow) { return workflow.definition.workflow_ref == ref; });
@@ -370,7 +370,7 @@ int main() {
             [&](const auto & item){return item.id==id;});
         assert(blueprint!=checked_in_starter.blueprints.end() && blueprint->phase_review_required &&
             blueprint->workflow_bindings.empty() && blueprint->supersedes_blueprints.empty() &&
-            blueprint->source_revision=="agent-workflows-starter@v53");
+            blueprint->source_revision=="agent-workflows-starter@v54");
         for (const auto * shared : {"code-orientation-v1", "code-phase-handoff-v1", "development-knowledge-gap-v1"}) {
             assert(has_procedure(shared));
             assert(std::find(blueprint->procedure_refs.begin(), blueprint->procedure_refs.end(), shared) != blueprint->procedure_refs.end());
