@@ -340,7 +340,7 @@ Change-impact traversal collects callers before callees with separate per-direct
 
 ## Development evidence tools
 
-`development.test_select` is a read-only selection helper. Supply `changed_files` as up to 32 normalized repository-relative paths. It returns only host-approved targets with declared `source_paths` matching a changed file or its directory prefix. Returned filters are registered aliases, not generated commands or regular expressions. It never runs tests or grants execution authority. Missing mappings produce `unmapped_files`; semantic dependency-based selection and historical result ranking are not implemented in this first version.
+`development.test_select` assembles model-selected test candidates discovered through repository/code analysis or the existing research workflow. Supply `changed_files` and optional `candidates`, each with `name`, repository-relative `path`, one-based `line`, `reason` and retained `evidence_refs`. The tool labels their origin as model-proposed and does not claim to validate the referenced evidence or relevance. A candidate is retained even without an execution route. Optional `execution_target` is checked against host-registered targets; this does not grant execution authorization. Host `source_paths` mappings are returned separately as `host_source_suggestions`, not used as the boundary of test discovery. Requests without candidates remain valid and return any optional host suggestions. Historical results do not verify current changes.
 
 Host configuration can add optional source mappings to existing `sandbox.development_targets` entries:
 

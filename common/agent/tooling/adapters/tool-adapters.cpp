@@ -1377,7 +1377,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
         } else if (definition.executor_id == "builtin.development.test_select") {
             installed = register_definition(definition, registry, [bindings](const std::string & input) {
                 const auto args = json::parse(input);
-                json candidates = json::array(), unmatched = json::array();
+                json candidates = json::array(), suggestions = json::array(), unmatched = json::array();
                 for (const auto & value : args.at("changed_files")) {
                     const auto file = value.get<std::string>();
                     const auto normalized = std::filesystem::path(file).lexically_normal().generic_string();
@@ -1388,7 +1388,7 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                         for (const auto & value_path : target.at("source_paths")) {
                             const auto path = value_path.get<std::string>();
                             if (file == path || file.rfind(path + "/", 0) == 0) {
-                                candidates.push_back({{"target", target.at("target")}, {"filters", target.at("filters")},
+                                suggestions.push_back({{"target", target.at("target")}, {"filters", target.at("filters")},
                                     {"changed_file", file}, {"source_path", path}, {"basis", "host_declared_source_mapping"},
                                     {"confidence", "candidate"}});
                                 matched = true; break;
@@ -1397,9 +1397,22 @@ bool common_register_native_tool_adapters(const common_tool_catalog & catalog, c
                     }
                     if (!matched) unmatched.push_back(file);
                 }
-                return tool_success_json({{"schema", "test-selection.v1"}, {"test_candidates", candidates}, {"unmapped_files", unmatched},
+                for (auto candidate : args.value("candidates", json::array())) {
+                    const auto file = candidate.at("path").get<std::string>();
+                    if (std::filesystem::path(file).is_absolute() || std::filesystem::path(file).lexically_normal().generic_string() != file || file == ".." || file.rfind("../", 0) == 0)
+                        return tool_validation_failure("tool.development.test_select.invalid_path", "candidate path must be repository-relative");
+                    const auto target = candidate.value("execution_target", std::string{});
+                    bool registered = false;
+                    for (const auto & metadata : bindings.development_test_metadata)
+                        if (metadata.at("target") == target) registered = true;
+                    candidate["execution_route_status"] = registered ? "registered_target_requires_execution_authorization" : "unavailable";
+                    candidate["selection_origin"] = "model_proposed";
+                    candidate["evidence_status"] = "references_retained_not_validated_by_this_tool";
+                    candidates.push_back(std::move(candidate));
+                }
+                return tool_success_json({{"schema", "test-selection.v1"}, {"test_candidates", candidates}, {"host_source_suggestions", suggestions}, {"unmapped_files", unmatched},
                     {"complete", false}, {"execution_authorized", false}, {"coverage_gaps", json::array({
-                        "Only host-declared source mappings are used; dynamic behavior and unregistered tests are unknown.",
+                        "Model-proposed relevance and evidence references require review; host source mappings are optional suggestions and do not establish coverage.",
                         "Historical results are not verification of the current source state."})}});
             }, error);
         } else if ((definition.executor_id == "sandbox.development.build" || definition.executor_id == "sandbox.development.test") && bindings.sandbox_execute) {

@@ -56,7 +56,9 @@ there is no separate callable framework-research workflow or subworkflow stack.
 Model-backed route choice and execution need separate verification in a host
 with the corresponding tools and permissions.
 
-### Current development methods (starter v50)
+### Current development methods (starter v51)
+
+Version 51 keeps test discovery and relevance model-owned through existing repository/code analysis and research escalation. `development.test_select` preserves proposed tests with source locations and evidence references even without registered execution routes. Host mappings are optional suggestions; host authorization remains a separate execution check.
 
 Version 50 integrates optional `code.change_impact` briefs into the existing shared analysis instructions. Repository change methods consider a brief after locating the target and before design; regression repair considers it after localizing the failure. Entry-point investigation inherits the shared evidence and handoff guidance. The model chooses whether the tool adds useful evidence, and the ordinary phase review records sufficiency or remaining gaps. No new phase, execution authority or mandatory tool call is introduced.
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "name": "agent-workflows-starter",
-  "version": "v50",
+  "version": "v51",
   "procedures": [
     {
       "id": "code-orientation-v1",
@@ -13,7 +13,7 @@
     {
       "id": "code-analysis-evidence-v1",
       "summary": "code analysis evidence",
-      "content": "Use code.inspect before semantic analysis to confirm host capabilities. Use code.symbols and code.references to navigate declarations; use code.calls for one-hop and code.impact for bounded multi-hop semantic call neighborhoods. Preserve the returned source locations, depth, analysis method and coverage. Text fallback results are text matches only. Static call relations are not proof that a path is feasible, was executed, or captures every dependency of a change. Report missing provider support and incomplete results explicitly. code.change_impact can collect a bounded brief for a selected path and symbol; provide line and UTF-16 column when resolution is ambiguous. Retain its evidence references, file hashes, source observations and knowledge gaps in the existing plan. Treat affected symbols as static relations, graph notes as candidate knowledge and test text matches as candidates requiring inspection. A successful brief is not complete impact analysis, a safety decision or verification. Its target hash checks do not establish an atomic code/index snapshot. Recheck affected evidence when source contents change.",
+      "content": "Use code.inspect before semantic analysis to confirm host capabilities. Use code.symbols and code.references to navigate declarations; use code.calls for one-hop and code.impact for bounded multi-hop semantic call neighborhoods. Preserve the returned source locations, depth, analysis method and coverage. Text fallback results are text matches only. Static call relations are not proof that a path is feasible, was executed, or captures every dependency of a change. Report missing provider support and incomplete results explicitly. code.change_impact can collect a bounded brief for a selected path and symbol; provide line and UTF-16 column when resolution is ambiguous. Retain its evidence references, file hashes, source observations and knowledge gaps in the existing plan. Treat affected symbols as static relations, graph notes as candidate knowledge and test text matches as candidates requiring inspection. A successful brief is not complete impact analysis, a safety decision or verification. Its target hash checks do not establish an atomic code/index snapshot. Recheck affected evidence when source contents change. For test selection, use deliberate analysis or the existing research escalation when useful to inspect repository test declarations, CMake/CTest metadata, test code and symbol relations. The model selects and motivates candidates with exact source locations and retained evidence references. Use development.test_select to assemble these proposals; candidates remain useful without a registered execution target. Host source mappings are optional suggestions, not the boundary of discoverable tests. Check execution separately through the existing host-approved development.test path; unavailable execution is a limitation, not evidence that a test is irrelevant. Do not invent commands, evidence receipts or coverage.",
       "importance": 0.9,
       "confidence": 1.0
     },
@@ -188,7 +188,7 @@
     {
       "id": "development-verification-authority-v1",
       "summary": "development execution authority and evidence",
-      "content": "Use only operations, targets and environments authorized by the host and the user. Treat a denied or unavailable operation as a limitation rather than inventing a command or claiming success. Keep baseline and post-change source identities, patch receipts, execution outputs and provenance where available. A build verifies only its recorded source and target; test results and behavioral evidence are separate. Preserve unrelated work. Graph lookup and proposals are optional; verify consequential graph claims against current evidence and propose durable relations only when useful and permitted.",
+      "content": "Use only operations, targets and environments authorized by the host and the user. Treat a denied or unavailable operation as a limitation rather than inventing a command or claiming success. Keep baseline and post-change source identities, patch receipts, execution outputs and provenance where available. A build verifies only its recorded source and target; test results and behavioral evidence are separate. Preserve unrelated work. Graph lookup and proposals are optional; verify consequential graph claims against current evidence and propose durable relations only when useful and permitted. For test selection, use deliberate analysis or the existing research escalation when useful to inspect repository test declarations, CMake/CTest metadata, test code and symbol relations. The model selects and motivates candidates with exact source locations and retained evidence references. Use development.test_select to assemble these proposals; candidates remain useful without a registered execution target. Host source mappings are optional suggestions, not the boundary of discoverable tests. Check execution separately through the existing host-approved development.test path; unavailable execution is a limitation, not evidence that a test is irrelevant. Do not invent commands, evidence receipts or coverage.",
       "importance": 0.95,
       "confidence": 1.0
     },
@@ -3183,7 +3183,7 @@
     },
     {
       "id": "repository-change-v5",
-      "source_revision": "agent-workflows-starter@v50",
+      "source_revision": "agent-workflows-starter@v51",
       "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed.",
       "purpose": "Implement the requested repository change.",
       "goal": "Implement the requested repository change.",
@@ -3266,7 +3266,7 @@
     },
     {
       "id": "regression-repair-v5",
-      "source_revision": "agent-workflows-starter@v50",
+      "source_revision": "agent-workflows-starter@v51",
       "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses.",
       "purpose": "Diagnose the reported regression and repair it when warranted.",
       "goal": "Diagnose the reported regression and repair it when warranted.",
@@ -3350,7 +3350,7 @@
     },
     {
       "id": "development-compile-diagnosis-v2",
-      "source_revision": "agent-workflows-starter@v50",
+      "source_revision": "agent-workflows-starter@v51",
       "selection_description": "Investigate a compiler or linker failure and repair it when requested.",
       "purpose": "Diagnose the reported build failure.",
       "goal": "Diagnose the reported build failure.",
@@ -3425,7 +3425,7 @@
     },
     {
       "id": "development-runtime-diagnosis-v2",
-      "source_revision": "agent-workflows-starter@v50",
+      "source_revision": "agent-workflows-starter@v51",
       "selection_description": "Investigate a runtime failure or unexpected behavior and repair it when requested.",
       "purpose": "Diagnose the reported runtime behavior.",
       "goal": "Diagnose the reported runtime behavior.",
@@ -3500,7 +3500,7 @@
     },
     {
       "id": "repository-investigation-v3",
-      "source_revision": "agent-workflows-starter@v50",
+      "source_revision": "agent-workflows-starter@v51",
       "selection_description": "Investigate a code or architecture question without changing files; inspect local evidence and authorized primary documentation when needed.",
       "purpose": "Establish repository evidence before proposing a change.",
       "goal": "Answer a repository investigation from inspected contracts, callers and tests.",
@@ -3635,7 +3635,7 @@
     },
     {
       "id": "repository-change-v5-with-comprehension",
-      "source_revision": "agent-workflows-starter@v50",
+      "source_revision": "agent-workflows-starter@v51",
       "selection_description": "Implement a scoped feature or repository change using local evidence and targeted external knowledge when needed. Includes explicitly requested bounded comprehension maintenance after verification.",
       "purpose": "Implement the requested repository change. Preserve reusable project understanding after verification.",
       "goal": "Implement the requested repository change.",
@@ -3759,7 +3759,7 @@
     },
     {
       "id": "regression-repair-v5-with-comprehension",
-      "source_revision": "agent-workflows-starter@v50",
+      "source_revision": "agent-workflows-starter@v51",
       "selection_description": "Investigate and, when authorized, repair a reported regression using evidence and competing hypotheses. Includes explicitly requested bounded comprehension maintenance after verification.",
       "purpose": "Diagnose the reported regression and repair it when warranted. Preserve reusable project understanding after verification.",
       "goal": "Diagnose the reported regression and repair it when warranted.",

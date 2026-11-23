@@ -1678,8 +1678,13 @@ int main() {
         auto selected = selected_registry.execute({"development.test_select", R"({"changed_files":["common/agent/example.cpp","docs/readme.md"]})"});
         assert(selected.ok);
         auto selection = nlohmann::json::parse(selected.output);
-        assert(selection["test_candidates"].size() == 1 && selection["unmapped_files"].size() == 1);
-        assert(selection["execution_authorized"] == false && selection["test_candidates"][0]["target"] == "agent-contracts");
+        assert(selection["host_source_suggestions"].size() == 1 && selection["unmapped_files"].size() == 1);
+        assert(selection["execution_authorized"] == false && selection["host_source_suggestions"][0]["target"] == "agent-contracts");
+        auto discovered = selected_registry.execute({"development.test_select", R"({"changed_files":["docs/readme.md"],"candidates":[{"name":"newly-discovered-test","path":"tests/discovered.cpp","line":4,"reason":"asserts the changed behavior","evidence_refs":["read:tests/discovered.cpp:4"]}]})"});
+        assert(discovered.ok);
+        auto proposal = nlohmann::json::parse(discovered.output);
+        assert(proposal["test_candidates"].size() == 1 && proposal["test_candidates"][0]["execution_route_status"] == "unavailable");
+        assert(proposal["execution_authorized"] == false);
         assert(!selected_registry.execute({"development.test_select", R"({"changed_files":["../escape"]})"}).ok);
         auto contracts = selected_registry.execute({"code.contracts", R"({"path":"src/sample.txt","symbol":"needle","line":1})"});
         assert(contracts.ok && nlohmann::json::parse(contracts.output)["schema"] == "code-contracts.v1");
