@@ -87,7 +87,9 @@ bool common_agent_method_review(const common_plan_state & plan,
         for (const auto & phase:phases) {
             for (const auto & dependency:phase.value("depends_on",json::array())) {
                 if (!dependency.is_string() || !closed(progress,dependency.get<std::string>())) {
-                    removed=progress.erase(phase.value("id",std::string{}))>0 || removed; break;
+                    const auto id=phase.value("id",std::string{});
+                    if (updated.count(id) && progress.contains(id) && progress[id].value("status",std::string{})=="remaining") break;
+                    removed=progress.erase(id)>0 || removed; break;
                 }
             }
         }

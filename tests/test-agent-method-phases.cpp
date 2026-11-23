@@ -167,6 +167,21 @@ int main() {
     advisory.next_work_goal=std::string(513,'x');
     require(!common_agent_method_review(pending,{advisory},progress,error),
         "unbounded advisory continuation was accepted");
+    common_agent_method_phase_review future{pending.id+":knowledge", "remaining", "Further investigation needed", {}};
+    future.next_work_kind="inspect_source";
+    future.next_work_goal="Trace the discovered implementation";
+    require(common_agent_method_review(pending,{{pending.id+":orient","remaining","Entry point pending",{}},future},progress,error) &&
+        progress.contains(future.phase_id) && progress[future.phase_id]["next_work_goal"]==future.next_work_goal,
+        "future phase guidance was discarded");
+    auto carried=pending;
+    carried.observations.push_back({"future-review", "method_phase_review",
+        json{{"schema","method-phase-review.v1"},{"method_revision",pending.source_revision},{"phases",progress}}.dump(),0.0f});
+    require(common_agent_method_ready_phases(carried).size()==1 &&
+        common_agent_method_ready_phases(carried)[0]["phase_id"]==pending.id+":orient",
+        "future guidance bypassed phase dependencies");
+    require(common_agent_method_review(carried,{{pending.id+":orient","satisfied","Entry point found",{}}},progress,error) &&
+        progress.contains(future.phase_id) && progress[future.phase_id]["next_work_goal"]==future.next_work_goal,
+        "next phase guidance was lost on prerequisite completion");
     const auto ready=common_agent_method_ready_phases(pending);
     require(ready.size()==1 && ready[0]["phase_id"]==pending.id+":orient",
         "ready frontier exposed a phase before its prerequisite");
