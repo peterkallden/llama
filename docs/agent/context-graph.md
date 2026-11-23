@@ -276,3 +276,100 @@ native view; it is not a model-quality or project-index coverage benchmark.
 Restart graph writers and reconnect MCP clients when upgrading so that both
 storage writers and advertised input schemas understand `sources`. Older
 writers do not preserve fields they do not understand.
+
+## Project context in development workflows
+
+`context.resolve` exposes the same bounded graph projection used by automatic
+project orientation. It adds optional, model-selected source reads through the
+resolved native tool view. It is read-only and never starts research, selects a
+workflow, updates memory or promotes graph proposals.
+
+```json
+{
+  "query": "plan recovery",
+  "budget_chars": 6000,
+  "sources": [
+    {"tool": "memory.search", "arguments": {"query": "plan recovery", "limit": 2}},
+    {"tool": "repository.read", "arguments": {"path": "common/agent/thinking/deliberation-policy.cpp", "start_line": 130, "end_line": 170}}
+  ]
+}
+```
+
+The query is model-selected focus, not a semantic routing rule. At most four
+source reads are admitted. Supported sources are `graph.get`, `graph.search`,
+`memory.search`, `memory.get`, `repository.read`, `code.symbols`, `plan.get`,
+`resource.inspect` and `resource.read`. Each must also be exposed, read-only and
+not policy-gated in the same view. Each delegated read uses its own input
+validation, source scope and the shared tool-call budget. A bare adapter registry
+can return the graph projection but rejects delegated source requests.
+
+The output has schema `project-context.v1`, graph nodes, optional graph revision,
+`sections`, `limitations`, `truncated`, `complete: false` and `persisted: false`.
+Sections preserve provider data and call IDs, or report unavailable, failed or
+omitted reads. The character budget bounds the serialized result, not tokens;
+the existing inference context allocator remains responsible for token limits.
+Whole source observations are omitted rather than returning fragments as complete
+evidence. A provider call already admitted can finish after the admission timeout.
+No atomic source snapshot or complete project coverage is claimed.
+
+Saved descriptions and assertions retain their proposal status. Authorized source
+checks add currentness without establishing truth. Automatic startup orientation
+retains its small 1800-character graph footprint and does not perform extra source
+reads; the resolved tool view checks structured graph sources when explicitly
+resolving context. The initial projection includes nodes only; choose `graph.search`
+explicitly for relationships. Missing graph results can mean no match, unavailable
+data or exhausted space; they do not establish absence. Source payloads remain
+untrusted data, including any instructions found in repository files or memories.
+
+The starter workflow procedures use the following ownership boundaries:
+
+| Component | Responsibility |
+| --- | --- |
+| Workflow | Phase objectives, evidence requirements and handoffs |
+| Deliberate | Interpret evidence, compare options and identify material gaps |
+| Research | Investigate selected gaps and return source-bound observations |
+| Context resolution | Assemble explicitly requested existing observations |
+| Outer plan | Retain task evidence and research completion references |
+| Graph and memory | Preserve useful knowledge through existing authorized proposals |
+| Host | Authorization, scope, validation, budgets and provenance |
+
+Reuse adequate evidence from the same source state before requesting more. Carry
+references, limitations and open questions through the existing phase handoff.
+Research completion continues through the existing outer-plan observation bridge;
+there is no separate context plan, cache or persistence lifecycle. Following an
+edit or failure, the model decides which affected sources need another read.
+Checking freshness does not delete notes or prove every claim about a changed file
+wrong. Durable capture remains an optional, authorized `comprehension-refresh-v1`
+proposal after useful evidence has been established. A passing test only supports
+its observed behavior, not every explanation offered for it.
+
+### Verification scope
+
+The initial implementation passed these eight focused CTests on 2026-11-23:
+`test-tool-adapters`, `test-tool-catalog`, `test-agent-bootstrap`,
+`test-agent-mcp-app-bridge`, `test-agent-research-driver`,
+`test-agent-context-allocation`, `test-agent-research-contract` and
+`test-agent-workflow-recovery`.
+
+The added cases check shared graph projection, read-only behavior, source
+visibility, delegated input validation, shared call limits, rejection of recursive
+resolution, currentness without truth promotion, bounded output and attachment of
+the existing shared procedures to the development methods. The research and
+workflow tests exercise existing contracts with controlled fixtures. These checks
+do not establish that a real model uses context effectively, or demonstrate a full
+model-driven development task with deliberate and research escalation. That
+behavioral evaluation remains separate.
+
+### Source-read retention correction
+
+Repository and workspace reads now use the same bounded durable retention path
+as resource reads (up to 65536 serialized bytes). Prompt projection owns the
+smaller model-visible range. Legacy observations marked `result_truncated` request
+a reread from their original start line rather than claiming the retained prefix
+is complete; source identity must be checked on reread.
+
+The source projection regression test passed. In the Luna retest, the model-visible
+runtime excerpt covered all 116 requested lines (3090-3205) with
+`model_content_complete: true`. The overall investigation still exhausted its
+continuation budget while remaining in orientation. This validates the corrected
+source delivery, not completion of the full development workflow.

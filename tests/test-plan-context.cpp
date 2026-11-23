@@ -310,5 +310,15 @@ int main() {
     require(metadata_excerpt.size()<=1800 && metadata_excerpt.find("model_next_start_line")!=std::string::npos &&
         metadata_excerpt.find("line 1:")!=std::string::npos,
         "source metadata forced a fallback that lost line continuation");
+    auto legacy_source = source_payload;
+    legacy_source["result_truncated"] = true;
+    legacy_source["result"]["requested_start_line"] = 1;
+    legacy_source["result"]["lines"].erase(legacy_source["result"]["lines"].begin()+4, legacy_source["result"]["lines"].end());
+    source_read.observations.front().summary = legacy_source.dump();
+    const auto legacy_excerpt = common_plan_render_tool_observations(source_read, {4000});
+    require(legacy_excerpt.find("model_requires_reread\":true") != std::string::npos &&
+        legacy_excerpt.find("model_next_start_line\":1") != std::string::npos &&
+        legacy_excerpt.find("model_content_complete\":false") != std::string::npos,
+        "legacy shortened source text must request a safe reread rather than skip unseen content");
     return 0;
 }

@@ -2648,9 +2648,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         return std::any_of(link.argument_bindings.begin(), link.argument_bindings.end(),
                             [](const auto & binding) { return !binding.candidate_id_json_pointer.empty(); });
                     });
-            // Resource text already has host paging bounds. Preserve its exact
+            // Resource and source reads already have host paging bounds. Preserve their exact
             // returned range durably; prompt projection owns any smaller view.
-            std::string tool_result = (contracted_result || continuation_candidates || tool_call->name == "resource.read") && full_tool_result.size() <= 65536
+            std::string tool_result = (contracted_result || continuation_candidates || tool_call->name == "resource.read" ||
+                tool_call->name == "repository.read" || tool_call->name == "workspace.read") && full_tool_result.size() <= 65536
                 ? full_tool_result : bounded_tool_observation_payload(
                     full_tool_result, context_budgets.tool_observation_chars);
             const std::string tool_observation_id = next_tool_observation_id(plan, tool_step_id, tool_call->name);

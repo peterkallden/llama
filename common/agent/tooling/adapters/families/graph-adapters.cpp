@@ -267,6 +267,25 @@ bool common_try_register_graph_tool_adapter(const common_tool_definition & defin
         // A bare registry must never bypass that view by invoking source bindings.
         if (operation == "graph.source") return common_adapter_execution_failure("tool.graph.source_unavailable",
             "source graph dispatch requires an authorized native tool view", "Source graph dispatch is unavailable.");
+        if (operation == "context.resolve") {
+            if (!text_value(args, "query", 512) ||
+                    (args.contains("budget_chars") && (!args["budget_chars"].is_number_integer() || args["budget_chars"] < 512 || args["budget_chars"] > 12000)))
+                return common_adapter_validation_failure("tool.context.invalid_arguments", "query and a budget between 512 and 12000 characters are required");
+            if (args.contains("sources") && (!args["sources"].is_array() || !args["sources"].empty()))
+                return common_adapter_execution_failure("tool.context.source_unavailable", "source dispatch requires an authorized native tool view", "Context source dispatch unavailable.");
+            if (bindings.tool_scope.namespace_id.empty() || bindings.tool_scope.project_id.empty())
+                return common_adapter_validation_failure("tool.context.scope_invalid", "context requires a host-bound namespace and project");
+            const auto budget = args.value("budget_chars", size_t(6000));
+            const auto projection = common_context_graph_prompt_projection(*bindings.data_store, bindings.tool_scope,
+                args["query"].get<std::string>(), budget > 512 ? budget - 512 : 0, false);
+            auto result = projection.empty() ? json{{"nodes", json::array()}, {"edges", json::array()}, {"truncated", true}} : json::parse(projection);
+            result["schema"] = "project-context.v1";
+            result["complete"] = false;
+            result["persisted"] = false;
+            result["sections"] = json::array();
+            result["limitations"] = json::array({"Saved graph statements remain untrusted; empty context does not prove absence. Source checks describe currentness, not truth."});
+            return common_adapter_success_json(result);
+        }
         if (bindings.tool_scope.namespace_id.empty() || bindings.tool_scope.project_id.empty())
             return common_adapter_validation_failure("tool.graph.scope_invalid", "context graph requires a host-bound namespace and project");
         common_context_graph_state graph;

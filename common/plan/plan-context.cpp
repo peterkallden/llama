@@ -243,14 +243,19 @@ static std::string render_flat_observation(
         std::string content;
         plan_context_json next = nullptr;
         size_t shown = 0;
+        const bool retained_truncated = payload.value("result_truncated",plan_context_json(false)) == true;
+        const auto reread_from = result.value("requested_start_line", result.value("returned_start_line", plan_context_json(nullptr)));
         const auto render = [&](const std::string & text, size_t count, const plan_context_json & cursor) {
             auto metadata=result;metadata.erase("lines");
             metadata["model_visible_lines"]=count;
             metadata["model_content_complete"]=count==result["lines"].size() &&
                 payload.value("result_truncated",plan_context_json(false))!=true;
-            metadata["model_next_start_line"]=cursor;
+            metadata["model_next_start_line"]=retained_truncated ? reread_from : cursor;
+            if (retained_truncated) metadata["model_requires_reread"] = true;
             return out.str()+"source_read_metadata: "+metadata.dump()+"\n"+text+
-                "Tool read completion does not establish model inspection. Continue from model_next_start_line when present.\n";
+                (retained_truncated
+                    ? "Retained text was shortened. Reread from model_next_start_line and check source identity.\n"
+                    : "Tool read completion does not establish model inspection. Continue from model_next_start_line when present.\n");
         };
         for (size_t index=0;index<result["lines"].size();++index) {
             const auto & line=result["lines"][index];

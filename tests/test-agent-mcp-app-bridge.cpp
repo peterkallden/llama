@@ -297,6 +297,44 @@ int main() {
         assert(content["result"]["node"]["sources"][0]["currentness"]["reason"] == "source_read_unavailable");
         assert(content["result"]["node"]["freshness"] == "unknown");
     }
+    {
+        auto context_only = graph_context;
+        context_only.allowed_exposed_tool_names = {"context.resolve"};
+        auto view = graph_provider.resolve_tools(context_only, error);
+        assert(view);
+        const auto revision = graph_store.graph.revision;
+        const auto request = R"({"query":"source","sources":[{"tool":"graph.get","arguments":{"id":"node:source"}}]})";
+        auto resolved = view->call({"context-denied", "context.resolve", request}, error);
+        assert(resolved.ok);
+        auto data = nlohmann::json::parse(resolved.content_json)["result"];
+        assert(data["sections"][0]["reason"] == "source_not_authorized_in_view");
+        context_only.allowed_exposed_tool_names.push_back("graph.get");
+        view = graph_provider.resolve_tools(context_only, error);
+        resolved = view->call({"context-read", "context.resolve", request}, error);
+        assert(resolved.ok);
+        data = nlohmann::json::parse(resolved.content_json)["result"];
+        assert(data["sections"][0]["status"] == "observed");
+        assert(data["sections"][0]["data"]["node"]["freshness"] == "unknown");
+        assert(data["sections"][0]["data"]["node"]["sources"][0]["currentness"]["reason"] == "source_read_unavailable");
+        assert(graph_store.graph.revision == revision);
+        resolved = view->call({"context-small", "context.resolve", R"({"query":"source","budget_chars":512,"sources":[{"tool":"graph.get","arguments":{"id":"node:source"}}]})"}, error);
+        assert(resolved.ok);
+        data = nlohmann::json::parse(resolved.content_json)["result"];
+        assert(data.dump().size() <= 512 && data["truncated"] == true);
+        assert(data["requested_sources"] == 1);
+        assert(data["omitted_sections"] == 1 || data["sections"][0]["status"] == "omitted");
+        assert(!view->call({"context-recursive", "context.resolve", R"({"query":"source","sources":[{"tool":"context.resolve","arguments":{"query":"source"}}]})"}, error).ok);
+        resolved = view->call({"context-invalid", "context.resolve", R"({"query":"source","sources":[{"tool":"graph.get","arguments":{}}]})"}, error);
+        assert(resolved.ok);
+        data = nlohmann::json::parse(resolved.content_json)["result"];
+        assert(data["sections"][0]["reason"] == "source_validation_or_call_budget");
+        context_only.max_calls = 1;
+        view = graph_provider.resolve_tools(context_only, error);
+        resolved = view->call({"context-budget", "context.resolve", request}, error);
+        assert(resolved.ok);
+        data = nlohmann::json::parse(resolved.content_json)["result"];
+        assert(data["sections"][0]["reason"] == "source_validation_or_call_budget");
+    }
     graph_context.allowed_exposed_tool_names = {"graph.source"};
     auto graph_view = graph_provider.resolve_tools(graph_context, error);
     if (!graph_view) return 41;

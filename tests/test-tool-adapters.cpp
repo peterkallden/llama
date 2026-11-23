@@ -899,6 +899,16 @@ int main() {
             projected_graph["edges"][0]["status"] == "proposed");
         assert(common_context_graph_prompt_projection(foundation_data, graph_bindings.tool_scope,
             "change planning selection", 0, true).empty());
+        const auto context_read = graph_registry.execute({"context.resolve", R"({"query":"change planning selection","budget_chars":6000})"});
+        assert(context_read.ok);
+        const auto context_data = nlohmann::json::parse(context_read.output);
+        assert(context_data["schema"] == "project-context.v1" && context_data["persisted"] == false);
+        assert(context_data["nodes"].size() == 2 && context_data["edges"].empty());
+        assert(context_data["nodes"] == nlohmann::json::parse(common_context_graph_prompt_projection(
+            foundation_data, graph_bindings.tool_scope, "change planning selection", 5488, false))["nodes"]);
+        assert(context_data["revision"] == projected_graph["revision"]);
+        assert(!graph_registry.execute({"context.resolve", R"({"query":"planning","sources":[{"tool":"memory.search","arguments":{"query":"planning"}}]})"}).ok);
+        assert(!graph_registry.execute({"context.resolve", R"({"query":"planning","budget_chars":-1})"}).ok);
         auto found = graph_registry.execute({"graph.find", R"({"query":"planning"})"});
         assert(found.ok && nlohmann::json::parse(found.output)["nodes"].size() == 1);
         auto contextual = graph_registry.execute({"graph.find", R"({"query":"Change the planning selection code"})"});

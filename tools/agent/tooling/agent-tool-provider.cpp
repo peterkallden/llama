@@ -17,6 +17,7 @@
 #include <future>
 #include <map>
 #include <mutex>
+#include <set>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::ordered_json;
@@ -763,11 +764,19 @@ private:
                 std::move(result.resource_refs), std::move(result.dataset_refs));
         }
 
+        auto registry_arguments = call.arguments_json;
+        json context_request;
+        if (call.name == "context.resolve") {
+            context_request = json::parse(call.arguments_json);
+            auto base = context_request;
+            base.erase("sources");
+            registry_arguments = base.dump();
+        }
         const auto started_at = std::chrono::steady_clock::now();
         auto execution = user_review && call.name == "investigate.association.review"
             ? user_review_registry.execute({call.name,call.arguments_json})
-            : registry.execute({call.name, call.arguments_json});
-        if (execution.ok && (call.name == "graph.get" || call.name == "graph.find" || call.name == "graph.search" || call.name == "graph.expand")) {
+            : registry.execute({call.name, registry_arguments});
+        if (execution.ok && (call.name == "graph.get" || call.name == "graph.find" || call.name == "graph.search" || call.name == "graph.expand" || call.name == "context.resolve")) {
             auto data = json::parse(execution.output, nullptr, false);
             if (data.is_object()) {
                 std::vector<std::string> readable;
@@ -776,6 +785,60 @@ private:
                 common_context_graph_check_sources(data, source_bindings, readable);
                 execution.output = data.dump();
             }
+        }
+        if (execution.ok && call.name == "context.resolve") {
+            auto data = json::parse(execution.output);
+            const size_t budget = context_request.value("budget_chars", size_t(6000));
+            data["requested_sources"] = context_request.value("sources", json::array()).size();
+            data["omitted_sections"] = 0;
+            for (const auto & source : context_request.value("sources", json::array())) {
+                const auto name = source.value("tool", std::string{});
+                json section = {{"tool", name}, {"status", "unavailable"}, {"epistemic_status", "source_reported"}};
+                std::vector<common_runtime_resource_ref> resource_refs;
+                std::vector<common_agent_dataset_ref> dataset_refs;
+                const bool exposed = std::any_of(model_tool_list.begin(), model_tool_list.end(),
+                    [&](const auto & tool) { return tool.name == name; });
+                const std::set<std::string> supported = {"graph.get", "graph.search", "memory.search", "memory.get",
+                    "repository.read", "code.symbols", "plan.get", "resource.inspect", "resource.read"};
+                if (!supported.count(name) || !exposed || !is_read_only(name) || registry.is_policy_gated(name)) {
+                    section["reason"] = "source_not_authorized_in_view";
+                } else if (execution_context.execution_control.should_stop() ||
+                        (effective_timeout_ms(execution_context, definition_it->second) > 0 &&
+                        std::chrono::steady_clock::now() - started_at >= std::chrono::milliseconds(effective_timeout_ms(execution_context, definition_it->second)))) {
+                    section["reason"] = "execution_budget_exhausted";
+                } else {
+                    agent_tool_call delegated{call.id + ":context:" + std::to_string(data["sections"].size()), name, source["arguments"].dump()};
+                    std::string delegated_error;
+                    if (!reserve_call_slot(delegated, delegated_error)) {
+                        section["reason"] = "source_validation_or_call_budget";
+                    } else {
+                        auto observed = execute_validated_call(delegated, execution_context, delegated_error);
+                        section["status"] = observed.ok ? "observed" : "failed";
+                        section["call_id"] = delegated.id;
+                        if (observed.ok) {
+                            resource_refs = observed.resource_refs;
+                            dataset_refs = observed.dataset_refs;
+                            auto envelope = json::parse(observed.content_json, nullptr, false);
+                            if (envelope.is_object() && envelope.contains("result")) section["data"] = envelope["result"];
+                            else { section["status"] = "failed"; section["reason"] = "invalid_source_result"; }
+                        } else section["reason"] = observed.failure_code;
+                    }
+                }
+                // Keep an explicit gap rather than a partial source observation.
+                if (data.dump().size() + section.dump().size() + 2 > budget) {
+                    section.erase("data"); section["status"] = "omitted"; section["reason"] = "output_budget";
+                    data["truncated"] = true;
+                }
+                if (section.contains("data")) {
+                    execution.resource_refs.insert(execution.resource_refs.end(), resource_refs.begin(), resource_refs.end());
+                    execution.dataset_refs.insert(execution.dataset_refs.end(), dataset_refs.begin(), dataset_refs.end());
+                }
+                data["sections"].push_back(std::move(section));
+            }
+            while (data.dump().size() > budget && !data["edges"].empty()) { data["edges"].erase(data["edges"].end() - 1); data["truncated"] = true; }
+            while (data.dump().size() > budget && !data["nodes"].empty()) { data["nodes"].erase(data["nodes"].end() - 1); data["truncated"] = true; }
+            while (data.dump().size() > budget && !data["sections"].empty()) { data["sections"].erase(data["sections"].end() - 1); data["truncated"] = true; data["omitted_sections"] = data["omitted_sections"].get<size_t>() + 1; }
+            execution.output = data.dump();
         }
         if (execution_context.execution_control.should_stop()) {
             auto result = make_execution_control_failure_result(execution_context, call);

@@ -296,10 +296,10 @@ bool common_agent_select_tool_families(
         const auto & method = *request.blueprint_definition;
         routing_prompt += "\n[Host-selected method for this turn]\nGoal: " + method.goal +
             "\nSuccess criteria: " + method.success_criteria +
-            "\nDecide whether the first dependency-ready phase needs an authorized operation "
-            "or can be completed using evidence already supplied. A phase that does not "
-            "edit or build may still need tools to inspect local sources. NO_TOOLS "
-            "keeps the method active; it does not complete the method or claim evidence.\n" +
+            "\nSelect capabilities needed across this method, including later source inspection phases. "
+            "This selection supplies the planner tool inventory for the turn, not only the first phase. "
+            "A reasoning-only orientation does not remove the need for tools in later phases. "
+            "Choose NO_TOOLS only when supplied evidence suffices for the requested method as a whole.\n" +
             common_plan_make_blueprint_outline(method, method.id).summary;
     }
     common_chat_msg user{"user", common_tool_family_selection_user_prompt(routing_prompt) +

@@ -1558,3 +1558,16 @@ Blocked collection and review outcomes use the existing validation and review co
 
 These contracts do not require a time interval or a particular entity type.
 The model selects an appropriate column from the configured source schema.
+
+### Project context across development phases
+
+Starter v52 integrates `context.resolve` into the existing code orientation,
+evidence analysis, diagnosis and phase handoff procedures. Context resolution is
+optional and model-directed. It reuses the graph projection and explicitly selected
+source reads; it does not create a workflow or initiate a thinking-mode change.
+Deliberate identifies material gaps, and existing research escalation investigates
+them before returning observations to the same outer plan. Adequate evidence is
+reused across phases and resume; a changed source, focus or unresolved coverage
+can justify a new read. Durable knowledge still uses the existing authorized
+comprehension-refresh procedure. See [project context](context-graph.md#project-context-in-development-workflows)
+for the contract and source authorization limits.
