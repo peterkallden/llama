@@ -54,6 +54,7 @@ bool common_agent_method_review(const common_plan_state & plan,
         return true;
     }
     const auto phases=outline(plan);
+    const auto previous=progress;
     if (phases.empty()) { error="phased method is missing its retained outline"; return false; }
     if (reviews.size()>16) { error="too many method phase reviews"; return false; }
     std::set<std::string> updated;
@@ -77,6 +78,24 @@ bool common_agent_method_review(const common_plan_state & plan,
         if (!review.next_work_kind.empty()) progress[review.phase_id]["next_work_kind"]=review.next_work_kind;
         if (!review.next_work_goal.empty()) progress[review.phase_id]["next_work_goal"]=review.next_work_goal;
     }
+    std::set<std::string> invalidated;
+    for (const auto & id:updated) if (closed(previous,id) && !closed(progress,id)) invalidated.insert(id);
+    bool expanded=false;
+    do {
+        expanded=false;
+        for (const auto & phase:phases) {
+            const auto id=phase.value("id",std::string{});
+            for (const auto & dependency:phase.value("depends_on",json::array())) {
+                if (dependency.is_string() && invalidated.count(dependency.get<std::string>())) {
+                    expanded=invalidated.insert(id).second || expanded;
+                    break;
+                }
+            }
+        }
+    } while (expanded);
+    for (const auto & id:invalidated) if (!updated.count(id) || closed(previous,id)) {
+        if (!(closed(previous,id) && !closed(progress,id) && updated.count(id))) progress.erase(id);
+    }
     // Downstream verdicts are provisional until their prerequisites close.
     // Keep the review and its evidence, but do not persist premature closure.
     // Reopening a prerequisite invalidates descendant completion; do not let
@@ -88,7 +107,7 @@ bool common_agent_method_review(const common_plan_state & plan,
             for (const auto & dependency:phase.value("depends_on",json::array())) {
                 if (!dependency.is_string() || !closed(progress,dependency.get<std::string>())) {
                     const auto id=phase.value("id",std::string{});
-                    if (updated.count(id) && progress.contains(id) && progress[id].value("status",std::string{})=="remaining") break;
+                    if (progress.contains(id) && progress[id].value("status",std::string{})=="remaining" && !invalidated.count(id)) break;
                     removed=progress.erase(id)>0 || removed; break;
                 }
             }

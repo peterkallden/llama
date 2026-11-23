@@ -179,6 +179,11 @@ int main() {
     require(common_agent_method_ready_phases(carried).size()==1 &&
         common_agent_method_ready_phases(carried)[0]["phase_id"]==pending.id+":orient",
         "future guidance bypassed phase dependencies");
+    require(common_agent_method_review(carried,{{pending.id+":orient","remaining","Still investigating",{}}},progress,error) &&
+        progress.contains(future.phase_id) && progress[future.phase_id]["next_work_goal"]==future.next_work_goal,
+        "future guidance disappeared during a further review");
+    carried.observations.push_back({"second-review", "method_phase_review",
+        json{{"schema","method-phase-review.v1"},{"method_revision",pending.source_revision},{"phases",progress}}.dump(),0.0f});
     require(common_agent_method_review(carried,{{pending.id+":orient","satisfied","Entry point found",{}}},progress,error) &&
         progress.contains(future.phase_id) && progress[future.phase_id]["next_work_goal"]==future.next_work_goal,
         "next phase guidance was lost on prerequisite completion");
@@ -290,6 +295,14 @@ int main() {
     common_plan_state reopened=*saved;
     require(common_agent_method_review(reopened,{{reopened.id+":orient","remaining","Source changed; inspect again",{}}},progress,error) &&
         !progress.contains(reopened.id+":knowledge"),"reopened prerequisite retained stale descendant completion");
+    auto reopen_guidance=pending;
+    json before_reopen=json::object();
+    before_reopen[pending.id+":orient"]={{"status","satisfied"}};
+    before_reopen[future.phase_id]={{"status","remaining"},{"reason","Trace source"},{"next_work_goal",future.next_work_goal}};
+    reopen_guidance.observations.push_back({"before-reopen", "method_phase_review",
+        json{{"schema","method-phase-review.v1"},{"method_revision",pending.source_revision},{"phases",before_reopen}}.dump(),0.0f});
+    require(common_agent_method_review(reopen_guidance,{{pending.id+":orient","remaining","Source changed",{}}},progress,error) &&
+        !progress.contains(future.phase_id), "reopened prerequisite retained stale downstream guidance");
     auto reversed=*saved;
     for (auto & observation:reversed.observations) {
         if (observation.source!="blueprint_outline") continue;
