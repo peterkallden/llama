@@ -41,4 +41,13 @@ int main() {
             roundtrip.sandbox.development_targets.at("contracts").source_paths.size() != 2) { std::cerr << "source metadata roundtrip: " << error << "\n"; return 7; }
     source_config["sandbox"]["development_targets"]["contracts"]["source_paths"] = {"../outside"};
     if (parse_agent_host_config_json(source_config, config, error)) return 8;
+    agent_host_config authority_config;
+    agent_host_mcp_inbound_token_config token;
+    token.id="web"; token.project_id="default"; token.token_env="TEST_WEB_TOKEN"; token.tool_profile="all-configured";
+    token.allow_project_selection=true;
+    authority_config.inbound_mcp_tokens.push_back(token);
+    authority_config.inbound_mcp_jwt_allow_project_selection=true;
+    if (!parse_agent_host_config_json(agent_host_config_to_json(authority_config), roundtrip, error) ||
+        !roundtrip.inbound_mcp_tokens.front().allow_project_selection ||
+        !roundtrip.inbound_mcp_jwt_allow_project_selection) { std::cerr << error; return 9; }
 }

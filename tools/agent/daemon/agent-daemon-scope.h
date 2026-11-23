@@ -17,7 +17,7 @@ inline void common_agent_daemon_bind_caller_scope(
         request["namespace_id"] = policy.namespace_id;
     }
     if (request.contains("project_id") || resource_command || command == "run_turn" || command == "execute_tool") {
-        request["project_id"] = policy.project_id;
+        if (!policy.allow_project_selection || !request.contains("project_id")) request["project_id"] = policy.project_id;
     }
     if (command == "run_turn") {
         if (request.value("session_id", std::string()).empty()) {

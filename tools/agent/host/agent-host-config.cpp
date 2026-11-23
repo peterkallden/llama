@@ -481,6 +481,7 @@ bool read_inbound_token(
     read_optional(value, "tool_profile", token.tool_profile);
     read_optional(value, "allow_writes", token.allow_writes);
     read_optional(value, "allow_admin", token.allow_admin);
+    read_optional(value, "allow_project_selection", token.allow_project_selection);
     if (value.contains("allowed_tools")) {
         if (!value["allowed_tools"].is_array()) {
             error = "MCP inbound token allowed_tools must be an array";
@@ -1402,6 +1403,7 @@ bool parse_agent_host_config_json(
                 read_optional(authorization, "tool_profile", config.inbound_mcp_jwt_tool_profile);
                 read_optional(authorization, "allow_writes", config.inbound_mcp_jwt_allow_writes);
                 read_optional(authorization, "allow_admin", config.inbound_mcp_jwt_allow_admin);
+                read_optional(authorization, "allow_project_selection", config.inbound_mcp_jwt_allow_project_selection);
                 if (authorization.contains("allowed_algorithms") &&
                         !read_string_array(authorization["allowed_algorithms"], config.inbound_mcp_jwt_allowed_algorithms, "mcp.inbound.authorization.allowed_algorithms", error)) {
                     return false;
@@ -2091,6 +2093,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                             {"allowed_tools", token.allowed_tools},
                             {"allow_writes", token.allow_writes},
                             {"allow_admin", token.allow_admin},
+                            {"allow_project_selection", token.allow_project_selection},
                         });
                     }
                     return tokens;
@@ -2106,6 +2109,7 @@ nlohmann::ordered_json agent_host_config_to_json(
                     {"allowed_tools", config.inbound_mcp_jwt_allowed_tools},
                     {"allow_writes", config.inbound_mcp_jwt_allow_writes},
                     {"allow_admin", config.inbound_mcp_jwt_allow_admin},
+                    {"allow_project_selection", config.inbound_mcp_jwt_allow_project_selection},
                 }},
             }},
         }},
@@ -2992,6 +2996,7 @@ void apply_agent_host_config_to_daemon_options(
     options.http_jwt_allowed_tools = config.inbound_mcp_jwt_allowed_tools;
     options.http_jwt_allow_writes = config.inbound_mcp_jwt_allow_writes;
     options.http_jwt_allow_admin = config.inbound_mcp_jwt_allow_admin;
+    options.http_jwt_allow_project_selection = config.inbound_mcp_jwt_allow_project_selection;
     options.tcp_enabled = config.jsonl_tcp_enabled;
     options.tcp_listen_address = config.jsonl_tcp_listen_address;
     options.tcp_port = config.jsonl_tcp_port;

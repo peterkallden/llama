@@ -387,3 +387,26 @@ at its second review and subsequently planned source tracing. The overall run st
 exhausted its continuation budget: later plans kept searching without the source
 reads needed to establish implementation behavior. This is evidence of phase
 progress in one run, not a completed investigation or a general efficiency result.
+
+### Remaining integrated evaluation
+
+The resource-inventory investigation reproduced a scope mismatch: a web turn
+requested its test project, but both execution scope and inventory authority used
+`__llama_agent_web_catalog__`. Authenticated daemon scope binding overrides the
+request with the caller's configured fixed project. The new explicit project
+selection policy is intended to correct that binding for authorized web clients;
+live verification with the setting enabled is still pending.
+
+Before evaluating model behavior again, verify separate project resources and
+catalog records through creation, listing, reading and turn execution. Confirm
+that graph, memory and plan identities follow the same selected project. Inventory
+presentation also still needs distinct roles for current attachments, prior scoped
+resources and internal navigation metadata using trusted provenance.
+
+The proposal to replace intermediate full answer drafts with compact phase work
+summaries is analysis only. It must reuse the existing reflection and continuation
+path while preserving final-answer verification, tool repair, research escalation
+and budget handling. Longer phase-guidance retention passed focused method and
+recovery tests, but has not been evaluated in Luna or after a real daemon restart.
+The full Luna investigation remains incomplete; source discovery still needs to
+lead to source reads and a verified final answer.

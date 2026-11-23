@@ -145,6 +145,7 @@ bool build_inbound_mcp_authenticator(
             options.http_jwt_allowed_tools,
             options.http_jwt_allow_writes,
             options.http_jwt_allow_admin,
+            options.http_jwt_allow_project_selection,
         };
         authenticator = std::make_shared<agent_mcp_jwt_authenticator>(std::move(jwt_options));
         error.clear();
@@ -171,6 +172,7 @@ bool build_inbound_mcp_authenticator(
             configured.allowed_tools,
             configured.allow_writes,
             configured.allow_admin,
+            configured.allow_project_selection,
         };
         if (!next->register_token(token, std::move(policy), error)) {
             return false;
@@ -191,7 +193,8 @@ bool inbound_token_profiles_equal(
         if (a.id != b.id || a.token_env != b.token_env || a.audience != b.audience ||
                 a.namespace_id != b.namespace_id || a.project_id != b.project_id ||
                 a.tool_profile != b.tool_profile || a.allowed_tools != b.allowed_tools ||
-                a.allow_writes != b.allow_writes) {
+                a.allow_writes != b.allow_writes || a.allow_admin != b.allow_admin ||
+                a.allow_project_selection != b.allow_project_selection) {
             return false;
         }
     }
@@ -210,7 +213,9 @@ bool inbound_auth_configuration_equal(
         left.http_jwt_required_scopes == right.http_jwt_required_scopes &&
         left.http_jwt_tool_profile == right.http_jwt_tool_profile &&
         left.http_jwt_allowed_tools == right.http_jwt_allowed_tools &&
-        left.http_jwt_allow_writes == right.http_jwt_allow_writes;
+        left.http_jwt_allow_writes == right.http_jwt_allow_writes &&
+        left.http_jwt_allow_admin == right.http_jwt_allow_admin &&
+        left.http_jwt_allow_project_selection == right.http_jwt_allow_project_selection;
 }
 
 bool tool_profile_equal(const common_tool_profile & left, const common_tool_profile & right) {

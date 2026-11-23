@@ -155,6 +155,7 @@ struct daemon_options {
     std::vector<std::string> http_jwt_allowed_tools;
     bool http_jwt_allow_writes = false;
     bool http_jwt_allow_admin = false;
+    bool http_jwt_allow_project_selection = false;
     size_t http_max_body_bytes = 1024 * 1024;
     size_t http_max_result_bytes = 1024 * 1024;
     bool tcp_enabled = false;

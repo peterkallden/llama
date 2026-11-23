@@ -17,6 +17,7 @@ struct agent_mcp_caller_policy {
     std::vector<std::string> allowed_tools;
     bool allow_writes = false;
     bool allow_admin = false;
+    bool allow_project_selection = false;
 };
 
 struct agent_mcp_authentication_request {

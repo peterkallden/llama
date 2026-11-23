@@ -41,6 +41,13 @@ int main() {
     assert(tool.value("project_id", "") == "default");
     assert(tool.value("tool_profile", "") == "all-configured");
 
+    policy.allow_project_selection = true;
+    nlohmann::ordered_json selected = {{"command","run_turn"},{"namespace_id","other"},{"project_id","project-b"}};
+    common_agent_daemon_bind_caller_scope(selected,policy);
+    assert(selected["namespace_id"]==policy.namespace_id && selected["project_id"]=="project-b");
+    nlohmann::ordered_json fallback={{"command","list_resources"}};
+    common_agent_daemon_bind_caller_scope(fallback,policy);
+    assert(fallback["project_id"]==policy.project_id);
     daemon_options options;
     common_agent_daemon_command parsed_app_call;
     std::string error;

@@ -474,6 +474,16 @@ bool prepare_available_resources(common_agent_runtime_driver_execution & executi
     // otherwise valid turn fail; normal binding still enforces read authority.
     if (!execution.tooling.resource_runtime.store->list(authority, listed, list_error)) return true;
     execution.available_resources.clear();
+    if (execution.policy.agent_trace) {
+        fprintf(stderr, "agent resource inventory: turn=%s scope=%s/%s/%s authority=%s/%s/%s count=%zu\n",
+            execution.scope.turn_id.c_str(), execution.scope.namespace_id.c_str(), execution.scope.project_id.c_str(),
+            execution.scope.session_id.c_str(), authority.namespace_id.c_str(), authority.project_id.c_str(),
+            authority.session_id.c_str(), listed.size());
+        for (const auto & descriptor : listed) fprintf(stderr,
+            "agent resource inventory item: name=%s scope=%d namespace=%s project=%s session=%s\n",
+            descriptor.name.c_str(), static_cast<int>(descriptor.scope), descriptor.namespace_id.c_str(),
+            descriptor.project_id.c_str(), descriptor.session_id.c_str());
+    }
     for (const auto & descriptor : listed) {
         if (descriptor.uri.empty()) continue;
         if (descriptor.metadata.purpose.rfind("agent.context.", 0) == 0) continue;

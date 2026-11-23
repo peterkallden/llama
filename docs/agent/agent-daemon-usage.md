@@ -1556,3 +1556,54 @@ these are model-free checks rather than a live browser end-to-end run.
   client/listener path; TLS termination is not part of the foreground daemon.
 - Unix socket mode is a foreground service transport, not an internal
   daemonization mechanism; systemd or another supervisor owns process lifetime.
+
+### Project selection authority
+
+Inbound token profiles and JWT authorization configuration support
+`allow_project_selection` (default `false`). When false, daemon commands retain
+the configured fixed project. When true, the authenticated client may select any
+project in the configured namespace; an omitted project uses the configured
+default. This is namespace-wide authority, not project membership or a JWT claim
+mapping. JWT required scopes still control admission, and the host policy template
+controls project selection. Namespace, tool and write restrictions still apply.
+Enable this only for clients authorized for all projects in that namespace.
+
+For the current local web installation, an authenticated key can represent the
+installation/client rather than a user account. Enabling project selection lets
+that client use newly created web projects immediately; no static project list
+needs updating. Projects in the same namespace are then organizational boundaries,
+not access isolation between users. Every key granted this setting has authority
+over every project in that namespace. The setting does not grant new tools,
+writes, administration rights, or access to another namespace. An explicit empty
+project selects the unprojected scope; an omitted project uses the policy default.
+
+Token entries under `mcp.inbound.tokens` accept the setting alongside `project`
+and `namespace`. JWT deployments set it in `mcp.inbound.authorization`; verified
+JWT scopes remain admission requirements, and project authority comes from the
+host template. Neither path requires a JWT project list. Future account support
+should associate project creation with a stable principal and check membership
+on project selection and every affected read/write path. Key and JWT
+credentials can resolve to that principal without embedding a static membership
+list in each credential. Account membership is not implemented by this setting.
+
+The web catalog project `__llama_agent_web_catalog__` stores navigation records.
+Catalog operations must retain that scope, while agent turns and their resource,
+graph, memory and plan operations must use the validated selected project. Merely
+renaming or hiding catalog records does not correct a wrong project binding.
+
+Implementation status (2026-11-23): config parsing, serialization, option mapping,
+caller policy and daemon scope binding include project selection. The focused
+`test-agent-daemon-scope` passed for fixed-project defaults, selected projects,
+namespace binding and omitted-project fallback. Config roundtrip, a full daemon
+build/startup and the live web cross-project evaluation remain to be verified for
+this change. The local web credential has not yet been switched to the new
+setting. Diagnostic inventory tracing is currently retained locally.
+
+Local verification follow-up: the production daemon and web adapter built, and
+config roundtrip plus daemon scope CTests passed. The local web token now enables
+project selection. Live tracing confirmed that the selected project, execution
+scope and resource inventory authority agree. Two separate web projects with
+session-scoped attachments listed their respective attachments; cross-chat reads
+of the other attachment returned 404. This checks session attachment isolation,
+not isolation between users with namespace-wide credentials. The complete Luna
+investigation still ended with continuation-budget exhaustion.
