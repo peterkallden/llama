@@ -410,3 +410,18 @@ and budget handling. Longer phase-guidance retention passed focused method and
 recovery tests, but has not been evaluated in Luna or after a real daemon restart.
 The full Luna investigation remains incomplete; source discovery still needs to
 lead to source reads and a verified final answer.
+
+### Bounded method work reviews
+
+Phased methods reserve up to two continuation slices per retained phase (at most
+16 phases) in addition to the configured execution allowance. Normal method
+continuation is counted separately from plan repair; tool-call and plan-capacity
+limits still apply. Intermediate ready phases with dependent phases use a compact
+host work-review prompt through the existing reflection engine instead of a full
+answer draft. That prompt cannot be accepted as a final response. Terminal work
+continues through ordinary draft generation and answer verification.
+
+The focused method-phase and workflow-recovery tests passed after this change.
+The changed runtime has not yet been deployed to the Luna daemon or evaluated for
+end-to-end investigation completion. The two-slices-per-phase allowance is an
+initial bounded policy, not an empirically established optimal budget.

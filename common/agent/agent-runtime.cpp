@@ -1969,7 +1969,16 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         return true;
     };
     size_t tool_batches = 0;
-    size_t runtime_iteration_limit = request.max_iterations;
+    size_t method_continuations = 0;
+    size_t method_continuation_limit = 0;
+    if (plan.phase_review_required && !plan.workflow_definition) {
+        for (const auto & observation : plan.observations) if (observation.source=="blueprint_outline") {
+            const auto phases=json::parse(observation.summary,nullptr,false);
+            if (phases.is_array()) method_continuation_limit=std::min<size_t>(phases.size(),16)*2;
+            break;
+        }
+    }
+    size_t runtime_iteration_limit = request.max_iterations + method_continuation_limit;
     for (size_t iteration = 0; iteration < runtime_iteration_limit; ++iteration) {
         if (request.cognitive_state.mode != common_agent_cognitive_mode::execute &&
                 !common_agent_runtime_transition_cognitive_mode(
@@ -3024,6 +3033,20 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // the tool step has been repaired and rerun.
         const bool draft_deferred_for_tool_repair =
             plan_has_failed_mandatory_tool_step(plan);
+        bool method_work_review = false;
+        if (method_continuation_limit && !draft_deferred_for_tool_repair) {
+            const auto ready=common_agent_method_ready_phases(plan);
+            for (const auto & candidate:ready) {
+                const auto id=candidate.value("phase_id",std::string{});
+                for (const auto & observation:plan.observations) if (observation.source=="blueprint_outline") {
+                    const auto phases=json::parse(observation.summary,nullptr,false);
+                    if (!phases.is_array()) break;
+                    for (const auto & phase:phases) for (const auto & dep:phase.value("depends_on",json::array()))
+                        if (dep.is_string() && dep.get<std::string>()==id) method_work_review=true;
+                    break;
+                }
+            }
+        }
 
         if (!draft_deferred_for_tool_repair && plan.workflow_definition &&
                 (!plan.workflow_definition->verification_checks.empty() || !plan.workflow_definition->result_contracts.empty())) {
@@ -3124,6 +3147,14 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 common_runtime_trace_kind::decided,
                 "draft deferred until failed mandatory tool step is repaired and rerun",
                 plan.id);
+        } else if (method_work_review) {
+            draft = "Intermediate method work review; this is not a final answer. Review executed steps, "
+                "verified observations and phase objectives. Decide phase progress and the next useful work. "
+                "Do not require final findings to complete an earlier phase.";
+            result.response_generation_status = common_agent_generation_status::completed;
+            result.response_stop_reason = common_agent_generation_stop_reason::none;
+            append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::decided,
+                "compact method work review; final draft deferred",plan.id);
         } else if (artifact_report_ready) {
             // The report sections have already been composed and validated,
             // and artifact.export returned the persisted resources. Do not
@@ -3171,7 +3202,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 break;
             }
         }
-        if (!draft_deferred_for_tool_repair) {
+        if (!draft_deferred_for_tool_repair && !method_work_review) {
             json claims = json::array();
             json verified_claim_records = json::array();
             common_agent_grounding_result grounded;
@@ -3388,7 +3419,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             break;
         }
         ++reflection_review_count;
-        if(!draft.empty() && result.response_generation_status==common_agent_generation_status::completed &&
+        if(!method_work_review && !draft.empty() && result.response_generation_status==common_agent_generation_status::completed &&
             result.response_stop_reason!=common_agent_generation_stop_reason::limit) {
             last_complete_draft=draft;
             last_complete_draft_evidence=common_agent_synthesis_evidence_fingerprint(plan);
@@ -3401,7 +3432,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         request.continuation_budget = common_agent_continuation_budget{
             runtime_iteration_limit > iteration + 1 ? runtime_iteration_limit - iteration - 1 : 0,
             request.max_tool_batches > tool_batches ? request.max_tool_batches - tool_batches : 0,
-            revision_limit > plan_revision_count ? revision_limit - plan_revision_count : 0,
+            method_continuation_limit > method_continuations ? method_continuation_limit - method_continuations :
+                (revision_limit > plan_revision_count ? revision_limit - plan_revision_count : 0),
             common_plan_remaining_capacity(plan, store.policy_limits()).steps};
         if (!evaluate_common_agent_reflection_phase(
                 turn, plan, draft, executed_step_ids, reflection)) {
@@ -3552,7 +3584,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
              reflection.next_action==common_agent_reflection_next_action::escalate_research ||
              reflection.next_action==common_agent_reflection_next_action::escalate_deliberate);
         if (method_continuation_requested && reflection_review_count) --reflection_review_count;
-        const bool review_accepted = checklist.blocking.empty() &&
+        const bool review_accepted = !method_work_review && checklist.blocking.empty() &&
             !common_agent_resolve_synthesis_state(plan,request.synthesis_state).mandatory_remaining &&
             reflection.decision == common_reflection_decision::accept &&
             reflection.next_action == common_agent_reflection_next_action::accept &&
@@ -3748,7 +3780,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 }) ||
             reflection.decision == common_reflection_decision::replan;
         if (requests_plan_revision) {
-            if (plan_revision_count >= revision_limit) {
+            if (method_continuation_requested ? method_continuations >= method_continuation_limit : plan_revision_count >= revision_limit) {
                 stop_unverified_response("deliberation plan revision limit reached before acceptance");
                 append_event(result, request, {
                     common_agent_event_type::plan_revision_limit_reached,
@@ -3764,7 +3796,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_event(result, request, {
                 common_agent_event_type::plan_revision_requested,
                 "deliberation requested a plan revision", {}, plan.id});
-            ++plan_revision_count;
+            if (method_continuation_requested) ++method_continuations;
+            else ++plan_revision_count;
         }
         const bool requests_reframe =
             reflection.decision == common_reflection_decision::replan ||
