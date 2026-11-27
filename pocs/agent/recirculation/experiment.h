@@ -152,13 +152,16 @@ inline donor_vector experiment_donor_source(llama_model * model, const recircula
     return {std::move(captured.source), elapsed, experiment_context_bytes(host.context())};
 }
 
-enum class experiment_arm { baseline, every_token, targeted, matched_control };
+enum class experiment_arm { baseline, every_token, targeted, matched_control, host_window, activation_novelty, random_control };
 inline const char * experiment_arm_name(experiment_arm arm) {
     switch (arm) {
         case experiment_arm::baseline: return "baseline";
         case experiment_arm::every_token: return "same_token_every_token";
         case experiment_arm::targeted: return "targeted_recirculation";
         case experiment_arm::matched_control: return "targeted_norm_matched_control";
+        case experiment_arm::host_window: return "host_window";
+        case experiment_arm::activation_novelty: return "activation_novelty";
+        case experiment_arm::random_control: return "random_control";
     }
     return "unknown";
 }
@@ -173,6 +176,8 @@ struct scored_continuation {
     float destination_norm = 0;
     float patch_delta_norm = 0;
     bool patch_applied = false;
+    int32_t selected_position = -1;
+    std::vector<double> token_path_logprobs;
 };
 
 inline size_t experiment_context_bytes(llama_context * context) {
@@ -183,7 +188,7 @@ inline size_t experiment_context_bytes(llama_context * context) {
 
 inline scored_continuation score_experiment_continuation(llama_model * model, const experiment_case & item,
         const std::string & continuation, const recirculation_config & config, experiment_arm arm,
-        const std::vector<float> & donor_source, std::ostream & trace) {
+        const std::vector<float> & donor_source, std::ostream & trace, float novelty_threshold = 0.15f) {
     if (arm == experiment_arm::matched_control && donor_source.empty()) {
         throw std::invalid_argument("matched control requires a donor vector");
     }
@@ -198,20 +203,30 @@ inline scored_continuation score_experiment_continuation(llama_model * model, co
     const uint32_t capacity = uint32_t(tokens.size() + 1);
     llama_backend host(model, config, capacity);
     const bool enabled = arm != experiment_arm::baseline;
-    const patch_policy policy = arm == experiment_arm::every_token ? patch_policy::every_token : patch_policy::selected_position;
+    patch_policy policy = arm == experiment_arm::every_token ? patch_policy::every_token : patch_policy::selected_position;
+    if (arm == experiment_arm::host_window) policy = patch_policy::host_window;
+    if (arm == experiment_arm::activation_novelty) policy = patch_policy::activation_novelty;
+    const int32_t window_start = std::max(0, item.target_position - 3);
+    const target_policy target{policy, window_start, item.target_position, novelty_threshold};
+    uint32_t hash = 2166136261u;
+    for (unsigned char ch : item.id) hash = (hash ^ ch) * 16777619u;
+    const int32_t random_position = window_start + int32_t(hash % uint32_t(item.target_position - window_start + 1));
     const std::vector<float> source = arm == experiment_arm::matched_control ? donor_source : std::vector<float>{};
     runner run(host, config, llama_model_n_layer(model), llama_model_n_embd(model), enabled,
-        policy, item.target_position, source);
+        policy, arm == experiment_arm::random_control ? random_position : item.target_position, source, target);
     observation obs;
     std::vector<float> logits;
     float source_norm = 0, destination_norm = 0, patch_delta_norm = 0;
     bool patch_applied = false;
+    int32_t selected_position = -1;
     std::vector<double> future_logprobs;
+    std::vector<double> token_path_logprobs(1, 0.0);
     for (size_t position = 0; position < item.prompt_tokens.size(); ++position) {
-        if (int32_t(position) > item.target_position) {
+        if (position > 0) {
             const double value = recirculation_token_log_probability(logits, item.prompt_tokens[position]);
             if (!std::isfinite(value)) throw std::runtime_error("invalid future prompt logprob");
-            future_logprobs.push_back(value);
+            token_path_logprobs.push_back(value);
+            if (int32_t(position) > item.target_position) future_logprobs.push_back(value);
         }
         const auto token_started = std::chrono::steady_clock::now();
         if (!run.step(item.prompt_tokens[position], int32_t(position), logits, obs)) {
@@ -219,14 +234,17 @@ inline scored_continuation score_experiment_continuation(llama_model * model, co
         }
         const auto token_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - token_started).count();
         trace << experiment_json{{"event", "experiment_token"}, {"case_id", item.id}, {"arm", experiment_arm_name(arm)},
-            {"phase", "prompt"}, {"position", position}, {"token", item.prompt_tokens[position]}, {"patch_target", item.target_position},
-            {"patch_completed", obs.second_completed}, {"source_norm", obs.source_norm}, {"destination_norm", obs.destination_norm},
+            {"phase", "prompt"}, {"position", position}, {"token", item.prompt_tokens[position]},
+            {"oracle_position", item.target_position}, {"target_mode", experiment_arm_name(arm)},
+            {"patch_completed", obs.second_completed}, {"novelty", obs.novelty},
+            {"source_norm", obs.source_norm}, {"destination_norm", obs.destination_norm},
             {"patch_norm", obs.delta_norm}, {"source_destination_cosine", obs.source_destination_cosine}, {"failure", obs.failure}, {"token_us", token_us}}.dump() << '\n';
-        if (int32_t(position) == item.target_position) {
+        if (obs.second_completed && arm != experiment_arm::every_token) selected_position = int32_t(position);
+        if (obs.second_completed) {
             source_norm = obs.source_norm;
             destination_norm = obs.destination_norm;
             patch_delta_norm = obs.delta_norm;
-            patch_applied = obs.second_completed && obs.patch_matched && obs.committed;
+            patch_applied = patch_applied || (obs.second_completed && obs.patch_matched && obs.committed);
         }
     }
     std::vector<double> token_logprobs;
@@ -235,6 +253,7 @@ inline scored_continuation score_experiment_continuation(llama_model * model, co
         if (!std::isfinite(value)) throw std::runtime_error("invalid continuation logprob");
         token_logprobs.push_back(value);
         future_logprobs.push_back(value);
+        token_path_logprobs.push_back(value);
         int64_t token_us = 0;
         bool decoded = false;
         if (index + 1 < tokens.size()) {
@@ -252,7 +271,7 @@ inline scored_continuation score_experiment_continuation(llama_model * model, co
     double total_logprob = 0;
     if (!recirculation_sum_log_probabilities(token_logprobs, total_logprob)) throw std::runtime_error("invalid continuation score");
     const int64_t elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
-    return {std::move(future_logprobs), total_logprob, elapsed, experiment_context_bytes(host.context()), source_norm, destination_norm, patch_delta_norm, patch_applied};
+    return {std::move(future_logprobs), total_logprob, elapsed, experiment_context_bytes(host.context()), source_norm, destination_norm, patch_delta_norm, patch_applied, selected_position, std::move(token_path_logprobs)};
 }
 
 struct scored_case {
@@ -267,15 +286,19 @@ struct scored_case {
     float destination_norm = 0;
     float patch_delta_norm = 0;
     bool patch_applied = false;
+    int32_t selected_position = -1;
+    std::vector<double> token_path_logprobs, incorrect_token_path_logprobs;
 };
 
 inline scored_case score_experiment_case(llama_model * model, const experiment_case & item,
-        const recirculation_config & config, experiment_arm arm, std::ostream & trace, const std::vector<float> & donor_source = {}) {
-    const auto positive = score_experiment_continuation(model, item, item.expected, config, arm, donor_source, trace);
-    const auto negative = score_experiment_continuation(model, item, item.incorrect, config, arm, donor_source, trace);
+        const recirculation_config & config, experiment_arm arm, std::ostream & trace, const std::vector<float> & donor_source = {}, float novelty_threshold = 0.15f) {
+    const auto positive = score_experiment_continuation(model, item, item.expected, config, arm, donor_source, trace, novelty_threshold);
+    const auto negative = score_experiment_continuation(model, item, item.incorrect, config, arm, donor_source, trace, novelty_threshold);
+    if (positive.selected_position != negative.selected_position) throw std::runtime_error("target decision changed across continuations");
     return {positive.future_logprobs, negative.future_logprobs, recirculation_answer_margin(positive.logprob, negative.logprob), positive.logprob, negative.logprob,
         positive.elapsed_us + negative.elapsed_us, std::max(positive.context_memory_bytes, negative.context_memory_bytes),
-        positive.source_norm, positive.destination_norm, positive.patch_delta_norm, positive.patch_applied};
+        positive.source_norm, positive.destination_norm, positive.patch_delta_norm, positive.patch_applied, positive.selected_position,
+        positive.token_path_logprobs, negative.token_path_logprobs};
 }
 
 inline experiment_json score_record(const scored_case & value) {

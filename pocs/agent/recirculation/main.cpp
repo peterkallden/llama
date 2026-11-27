@@ -12,6 +12,7 @@ using namespace recirculation;
 struct options {
     std::string model, text_file, trace, cases_file, experiment_mode, dev_cases_file, eval_cases_file, selection_file;
     uint32_t steps = 128, prompt_tokens = 32;
+    float novelty_threshold = 0.15f;
     recirculation_config config;
 };
 static json metrics(const observation & o) {
@@ -241,6 +242,7 @@ int main(int argc, char ** argv) {
             else if (key == "--dev-cases-file") opt.dev_cases_file = value;
             else if (key == "--eval-cases-file") opt.eval_cases_file = value;
             else if (key == "--selection-file") opt.selection_file = value;
+            else if (key == "--novelty-threshold") opt.novelty_threshold = std::stof(value);
             else if (key == "--text-file") opt.text_file = value;
             else if (key == "--steps") {
                 size_t consumed = 0;
@@ -256,9 +258,10 @@ int main(int argc, char ** argv) {
         }
         if (opt.model.empty()) { std::cout << "SKIP: supply --model for model smoke; run CTests for model-free contracts\n"; return 77; }
         if (opt.trace.empty() || (opt.experiment_mode.empty() && (opt.steps < 128 || opt.steps > 512))) throw std::runtime_error("require --trace and 128 <= --steps <= 512 outside experiment mode");
-        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair") throw std::runtime_error("invalid experiment mode");
+        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate") throw std::runtime_error("invalid experiment mode");
+        if (!std::isfinite(opt.novelty_threshold) || opt.novelty_threshold < 0 || opt.novelty_threshold > 2) throw std::runtime_error("invalid novelty threshold");
         if (opt.experiment_mode == "tune" && (opt.dev_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("tune mode requires --dev-cases-file and --selection-file");
-        if ((opt.experiment_mode == "evaluate" || opt.experiment_mode == "repair") && (opt.eval_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("evaluate mode requires --eval-cases-file and --selection-file");
+        if ((opt.experiment_mode == "evaluate" || opt.experiment_mode == "repair" || opt.experiment_mode == "target-evaluate") && (opt.eval_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("evaluation requires --eval-cases-file and --selection-file");
         opt.config.model_identity = std::filesystem::canonical(opt.model).string();
         std::ofstream trace(opt.trace);
         if (!trace) throw std::runtime_error("cannot open trace");
@@ -311,7 +314,30 @@ int main(int argc, char ** argv) {
                             if (id.get<std::string>() == item.id) throw std::runtime_error("development and evaluation case IDs overlap");
                         }
                     }
-                    if (opt.experiment_mode == "repair") {
+                    if (opt.experiment_mode == "target-evaluate") {
+                        for (const auto & item : cases) {
+                            const auto base = score_experiment_case(model.get(), item, config, experiment_arm::baseline, trace);
+                            json arms = json::object();
+                            for (const auto arm : {experiment_arm::targeted, experiment_arm::host_window,
+                                    experiment_arm::activation_novelty, experiment_arm::random_control}) {
+                                const auto score = score_experiment_case(model.get(), item, config, arm, trace, {}, opt.novelty_threshold);
+                                json lags = json::array();
+                                if (score.selected_position >= 0) for (size_t position = size_t(score.selected_position + 1);
+                                        position < score.token_path_logprobs.size() && position < score.incorrect_token_path_logprobs.size(); ++position) {
+                                    lags.push_back({{"lag", position - size_t(score.selected_position)}, {"token_position", position},
+                                        {"expected_delta", score.token_path_logprobs[position] - base.token_path_logprobs[position]},
+                                        {"incorrect_delta", score.incorrect_token_path_logprobs[position] - base.incorrect_token_path_logprobs[position]}});
+                                }
+                                arms[experiment_arm_name(arm)] = {{"selected_position", score.selected_position},
+                                    {"triggered", score.patch_applied}, {"margin_change", score.margin - base.margin},
+                                    {"elapsed_us", score.elapsed_us}, {"token_lags", std::move(lags)}};
+                            }
+                            trace << json{{"event", "target_evaluation"}, {"schema", "recirculation-target-v1"},
+                                {"case_id", item.id}, {"task_type", item.task_type}, {"oracle_position", item.target_position},
+                                {"novelty_threshold", opt.novelty_threshold}, {"baseline_margin", base.margin},
+                                {"baseline_elapsed_us", base.elapsed_us}, {"arms", std::move(arms)}}.dump() << '\n';
+                        }
+                    } else if (opt.experiment_mode == "repair") {
                         const auto report = evaluate_repair_scenario(model.get(), opt.config.model_identity, cases, config, trace);
                         trace << experiment_json{{"event", "repair_scenario"}, {"report", report}}.dump() << '\n';
                     } else {

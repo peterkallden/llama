@@ -1,5 +1,40 @@
 # Tokenwise recirculation PoC
 
+## Targeted token trigger experiment
+
+`--experiment-mode target-evaluate` compares four one-intervention policies on the
+same held-out cases and the configuration in an existing locked selection file:
+the known update position (diagnostic oracle), the final token of a host window,
+the first online activation-novelty threshold crossing, and a deterministic
+random position in the same window. The window is the four-token suffix ending
+at the update position. It is derived from the input's `update_text` span and
+does not inspect either answer. The host-window arm can coincide with the oracle
+on these fixtures; their equal results are an expected control, not independent
+evidence of position discovery. The random position uses a stable hash of the
+case ID. Novelty uses cosine distance between consecutive destination layer
+inputs captured in Pass A. Its first window token has no previous window capture
+and cannot trigger. Zero-norm vectors do not trigger. A threshold crossing
+commits at most one A/rewind/B replay. A no-trigger sequence keeps Pass A's KV.
+
+For example, after a locked development selection exists:
+
+```sh
+<build>/bin/llama-recirculation-poc --model MODEL.gguf \
+  --experiment-mode target-evaluate \
+  --eval-cases-file pocs/agent/recirculation/data/evaluation-v2.jsonl \
+  --selection-file LOCKED_SELECTION.json --novelty-threshold 0.15 \
+  --trace target-evaluation.jsonl
+```
+
+The default threshold of 0.15 is exploratory, not calibrated. Fix a threshold
+using development material before treating held-out results as a comparison.
+`target_evaluation` rows retain no-trigger cases, selected position, margin
+change, per-arm time, and log-probability deltas from the selected token onward
+for both answer paths. Lag 1 uses Pass A logits and should be unchanged when
+the earlier KV prefix is identical.
+This tests token targeting only. It does not learn a trigger or alter model
+weights, layer-pair selection, dose selection, or production inference.
+
 Recirculation returns a normalized deep-layer representation to a shallower layer, allowing information from one token to affect subsequent tokens through the KV cache. This opt-in experiment uses frozen weights, CPU inference, one sequence and at most one extra pass per token. It can replay every token or only a selected position. The production agent does not automatically invoke this PoC.
 
 ## Dependency contract
