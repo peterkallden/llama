@@ -340,7 +340,70 @@ void run_recovery(common_plan_store & backend, const std::string & path, bool bl
 }
 } // namespace
 
+
+class rollover_inference final : public common_agent_inference {
+public:
+    size_t plans=0, reviews=0, drafts=0;
+    bool generate(const common_agent_generation_request & request, common_agent_generation_result & result) override {
+        result.status=common_agent_generation_status::completed;
+        result.stop_reason=common_agent_generation_stop_reason::eos;
+        if (request.purpose==common_agent_generation_purpose::planner) {
+            ++plans;
+            result.content= plans==1
+                ? R"({"goal":"Inspect both sources","steps":[{"tool":"catalog.list","args":{"query":"first"},"mode":"tool"}]})"
+                : R"({"method_phase":"p1","goal":"Inspect remaining source","steps":[{"tool":"catalog.list","args":{"query":"second"},"mode":"tool"}]})";
+        } else if (request.purpose==common_agent_generation_purpose::reflection) {
+            ++reviews;
+            result.content=reviews==1
+                ? R"({"decision":"revise","assurance_action":"revise_plan","task_outcome":"remaining","revision_guidance":["Inspect remaining source"],"phase_reviews":[{"phase_id":"p1","status":"satisfied","reason":"First source inspected","evidence_ids":["e2"]},{"phase_id":"p2","status":"remaining","reason":"Second source pending","evidence_ids":[]}]})"
+                : R"({"decision":"accept","assurance_action":"accept","task_outcome":"satisfied","ready_to_answer":true,"phase_reviews":[{"phase_id":"p1","status":"satisfied","reason":"First source retained","evidence_ids":[]},{"phase_id":"p2","status":"satisfied","reason":"Second source inspected","evidence_ids":[]}]})";
+        } else if (request.purpose==common_agent_generation_purpose::draft) {
+            ++drafts; result.content="Both sources inspected.";
+        } else if (request.purpose==common_agent_generation_purpose::tool_family_selection) result.content="TOOLS: catalog";
+        else throw std::runtime_error("unexpected rollover generation purpose");
+        return true;
+    }
+};
+
+void run_capacity_rollover(size_t tool_budget = 4) {
+    common_plan_policy_config limits; limits.max_steps=2;
+    common_plan_in_memory_store plans{common_plan_policy(limits)};
+    common_memory_in_memory_store memories;
+    std::string error;
+    check(plans.open("",error) && memories.open("",error),error);
+    common_agent_bootstrap_package package;
+    check(common_agent_package_parse_json(R"({"schema_version":2,"name":"rollover","version":"v1","blueprints":[{"id":"inspect","goal":"Inspect both sources","success_criteria":"Both inspected","phase_review_required":true,"steps":[{"id":"first","title":"First","objective":"Inspect first source"},{"id":"second","title":"Second","objective":"Inspect second source","depends_on":["first"]}]}]})",package,error),error);
+    common_agent_bootstrap_config bootstrap; bootstrap.namespace_id="local";bootstrap.session_id="default";bootstrap.install_procedures=false;
+    common_agent_bootstrap_result installed;
+    check(common_agent_install_bootstrap_package(memories,plans,bootstrap,package,{},installed,error),error);
+    auto definition=plans.get(installed.installed_blueprint_ids.front(),error);check(definition.has_value(),error);
+    std::vector<common_blueprint_candidate> blueprints{common_agent_template_candidate("inspect",*definition)};
+    source_view view;
+    common_agent_runtime_tooling tooling;tooling.tools=view.tools;tooling.tool_view=&view;tooling.profile_tools_active=true;
+    tooling.prior_evidence_is_current=[](const common_plan_observation &) {return true;};
+    rollover_inference inference;
+    common_agent_runtime_policy policy;policy.max_iterations=8;policy.max_tool_rounds=tool_budget;policy.max_reflection_rounds=2;policy.enable_reflection=true;
+    common_agent_runtime_config config;config.max_continuations=2;config.generation_config.n_predict=512;
+    common_agent_orchestration_config orchestration;orchestration.agent_plan="off";orchestration.agent_blueprint="inspect";orchestration.prompt="Inspect both sources";
+    common_agent_scope scope;scope.namespace_id="local";scope.session_id="default";scope.turn_id="rollover";scope.plan_scope=common_plan_scope::turn;
+    std::string id;std::vector<common_memory_hit> hits;
+    common_agent_runtime_driver_execution execution{memories,plans,inference,policy,config,orchestration,id,scope,blueprints,std::nullopt,hits,common_memory_scope::session,false,tooling};
+    execution.tool_output_format=common_agent_tool_output_format::native;
+    common_agent_result result;
+    const bool ok=run_agent_runtime_driver(execution,result,error);
+    if (tool_budget == 1) {
+        check(result.response.empty(),"exhausted tool budget reached final acceptance");
+        return;
+    }
+    check(ok,error+": "+result.error);
+    check(inference.plans==2 && inference.reviews==2,"rollover repeated completed phase work");
+    check(result.response=="Both sources inspected." && inference.drafts==1,"rollover did not reach verified final synthesis");
+    check(result.plan_id && result.plan_id->find("-next-")!=std::string::npos,"no successor plan was executed");
+}
+
 int main() {
+    run_capacity_rollover();
+    run_capacity_rollover(1);
     common_plan_in_memory_store atomic;
     std::string error;
     check(atomic.open("",error),error);

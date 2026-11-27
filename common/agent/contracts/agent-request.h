@@ -157,6 +157,7 @@ struct common_agent_request {
     std::optional<size_t> method_remaining_new_steps;
     // Set by runtime before reflection/continuation, never by model output.
     std::optional<common_agent_continuation_budget> continuation_budget;
+    std::optional<common_agent_continuation_budget> carried_continuation_budget;
     // Host-owned research binding. When present, the workspace is a draft
     // based on a published revision; model input cannot select its identity.
     std::optional<common_agent_research_draft_ref> research_draft;

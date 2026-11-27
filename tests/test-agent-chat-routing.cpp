@@ -422,6 +422,42 @@ static void check_method_recovery_contracts() {
     make_llama_cli_action_executor(constrained,config)->generate_reasoning_result(request,plan,step,error);
     require(!error.empty() && constrained.requests.empty(),"reasoning issued a generation outside its context reservation");
 
+    // Growing evidence must leave room for the structured output schema as
+    // well as the configured output reservation, even near the context limit.
+    auto growing_plan = plan;
+    growing_plan.observations.push_back({"tool:large:repository.read", "repository.read",
+        "{\"content\":\"" + std::string(70000, 'x') + "\"}", 1.0f});
+    planner_prompt_inference bounded_reasoning;
+    bounded_reasoning.capacity = 32768;
+    bounded_reasoning.replies = {R"({"summary":"Evidence remains bounded."})"};
+    auto bounded_reasoning_request = request;
+    bounded_reasoning_request.investigation_context_json = "{\"evidence\":\"" + std::string(5000, 'i') + "\"}";
+    make_llama_cli_action_executor(bounded_reasoning,config)->generate_reasoning_result(
+        bounded_reasoning_request,growing_plan,step,error);
+    require(error.empty() && bounded_reasoning.requests.size()==1,
+        "growing reasoning evidence excluded the output schema from allocation: "+error);
+    const auto & bounded_request = bounded_reasoning.requests.front();
+    std::string bounded_context = bounded_request.json_schema;
+    for (const auto & message : bounded_request.messages) bounded_context += message.content;
+    require((bounded_context.size()+1)/2 + 256 + 512 <= bounded_reasoning.capacity,
+        "reasoning exceeded the complete context reservation");
+
+    planner_prompt_inference bounded_review;
+    bounded_review.capacity = 32768;
+    bounded_review.replies = {"invalid JSON", R"({"decision":"accept","ready_to_answer":true})"};
+    make_llama_cli_reflection_engine(bounded_review,config)->evaluate_result(
+        bounded_reasoning_request,growing_plan,"Complete answer under review",error);
+    require(error.empty() && bounded_review.requests.size()==2,
+        "reflection regeneration failed to reserve adapter context and validation feedback: "+error);
+    for (const auto & review_request : bounded_review.requests) {
+        std::string complete = review_request.json_schema;
+        for (const auto & message : review_request.messages) complete += message.content;
+        require((complete.size()+1)/2 + 256 + 512 <= bounded_review.capacity,
+            "reflection exceeded its complete context reservation");
+        require(complete.find("Complete answer under review")!=std::string::npos,
+            "reflection truncated the answer under review");
+    }
+
     step.id="composite:source:identity";step.status=common_plan_step_status::completed;
     step.mode=common_plan_step_mode::tool;step.tool_call=common_plan_tool_call{"repository.read","{}"};plan.steps={step};
     const auto evidence_id="tool:"+step.id+":repository.read";

@@ -28,6 +28,7 @@
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <limits>
 #include <array>
 #include <cctype>
 #include <map>
@@ -1979,6 +1980,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
     }
     size_t runtime_iteration_limit = request.max_iterations + method_continuation_limit;
+    if (request.carried_continuation_budget) {
+        runtime_iteration_limit=std::min(runtime_iteration_limit,request.carried_continuation_budget->executions_remaining);
+        request.max_tool_batches=std::min(request.max_tool_batches,request.carried_continuation_budget->tool_calls_remaining);
+        method_continuation_limit=std::min(method_continuation_limit,request.carried_continuation_budget->revisions_remaining);
+    }
     for (size_t iteration = 0; iteration < runtime_iteration_limit; ++iteration) {
         if (request.cognitive_state.mode != common_agent_cognitive_mode::execute &&
                 !common_agent_runtime_transition_cognitive_mode(
@@ -3429,11 +3435,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 request.deliberation_policy.max_plan_revisions > 0)
             ? static_cast<size_t>(std::max(0, request.deliberation_policy.max_plan_revisions))
             : (runtime_iteration_limit ? runtime_iteration_limit - 1 : 0);
+        const auto carried_revisions = request.carried_continuation_budget
+            ? request.carried_continuation_budget->revisions_remaining : std::numeric_limits<size_t>::max();
+        const auto used_revisions = plan_revision_count + method_continuations;
         request.continuation_budget = common_agent_continuation_budget{
             runtime_iteration_limit > iteration + 1 ? runtime_iteration_limit - iteration - 1 : 0,
             request.max_tool_batches > tool_batches ? request.max_tool_batches - tool_batches : 0,
-            method_continuation_limit > method_continuations ? method_continuation_limit - method_continuations :
-                (revision_limit > plan_revision_count ? revision_limit - plan_revision_count : 0),
+            std::min(carried_revisions > used_revisions ? carried_revisions - used_revisions : 0,
+                method_continuation_limit > method_continuations ? method_continuation_limit - method_continuations :
+                (revision_limit > plan_revision_count ? revision_limit - plan_revision_count : 0)),
             common_plan_remaining_capacity(plan, store.policy_limits()).steps};
         if (!evaluate_common_agent_reflection_phase(
                 turn, plan, draft, executed_step_ids, reflection)) {
@@ -3752,6 +3762,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 const bool cancelled = result.response_generation_status == common_agent_generation_status::cancelled;
                 const bool capacity_exhausted = result.plan_storage_exhausted ||
                     error.find("method plan step capacity exhausted") != std::string::npos;
+                if (capacity_exhausted) {
+                    result.plan_storage_exhausted = true;
+                    result.remaining_continuation_budget = request.continuation_budget;
+                }
                 stop_unverified_response(reason, capacity_exhausted ? common_agent_failure_class::limit : common_agent_failure_class::execution);
                 if (cancelled) {
                     result.response_generation_status = common_agent_generation_status::cancelled;

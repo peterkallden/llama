@@ -2387,6 +2387,7 @@ bool run_agent_runtime_driver(
     const std::string original_prompt = execution.orchestration_config.prompt;
     common_agent_result aggregate;
     size_t continuation_count = 0;
+    std::optional<common_agent_continuation_budget> carried_budget;
     // Resource slices are not plan/reflection continuations. Bound their
     // work separately while retaining the ordinary turn deadline and cancel.
     constexpr size_t max_resource_chunks_per_turn = 64;
@@ -2779,11 +2780,35 @@ bool run_agent_runtime_driver(
                     ? common_agent_execution_phase::deliberate
                     : common_agent_execution_phase::normal);
 
+        request.carried_continuation_budget=carried_budget;
         const auto slice = assembly.runtime->run(request);
         if (slice.plan_storage_exhausted) {
             append_runtime_result(aggregate, slice);
+            if (slice.remaining_continuation_budget && slice.remaining_continuation_budget->executions_remaining &&
+                    slice.remaining_continuation_budget->revisions_remaining &&
+                    continuation_count < execution.runtime_config.max_continuations && slice.plan_id) {
+                auto prior=execution.plan_store.get(*slice.plan_id,error);
+                if (!prior) return fail_with_partial_result(error);
+                json checkpoint={{"schema","prior-work.v2"},{"source_plan_id",prior->id},
+                    {"source_plan_version",prior->version},{"goal",prior->goal},
+                    {"context",common_plan_render_context(*prior,{8192,true})},
+                    {"evidence_fingerprint",common_agent_synthesis_evidence_fingerprint(*prior)}};
+                checkpoint["method"]={{"blueprint_id",prior->derived_from_plan_id.value_or(std::string{})},
+                    {"revision",prior->source_revision},{"phase_review_required",prior->phase_review_required}};
+                for (const auto & observation:prior->observations)
+                    if (observation.source=="blueprint_outline" || observation.source=="method_phase_review")
+                        checkpoint["method"][observation.source]={{"source_plan_id",prior->id},
+                            {"source_plan_version",prior->version},{"observation_id",observation.id}};
+                execution.orchestration_config.prior_work_checkpoint=common_plan_observation{
+                    "prior-work:"+prior->id+":"+std::to_string(prior->version),"prior_work_checkpoint",checkpoint.dump(),1.0f};
+                carried_budget=slice.remaining_continuation_budget;
+                execution.current_plan_id=prior->id+"-next-"+std::to_string(continuation_count+1);
+                aggregate.error.clear(); aggregate.plan_storage_exhausted=false;
+                ++continuation_count;
+                continue;
+            }
             result = std::move(aggregate);
-            break; // Preserve a checkpoint; another slice cannot replenish durable capacity.
+            break;
         }
         if (!slice.error.empty()) {
             append_runtime_result(aggregate, slice);

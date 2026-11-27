@@ -425,3 +425,52 @@ The focused method-phase and workflow-recovery tests passed after this change.
 The changed runtime has not yet been deployed to the Luna daemon or evaluated for
 end-to-end investigation completion. The two-slices-per-phase allowance is an
 initial bounded policy, not an empirically established optimal budget.
+
+### Plan capacity rollover
+
+When a method continuation exhausts durable plan step capacity, the runtime can
+create a successor through the existing `prior-work.v2` checkpoint protocol.
+The successor retains eligible, current phase evidence and receives the remaining
+execution, tool and revision allowances. Storage rollover does not replenish
+these task budgets and remains bounded by the driver's continuation limit.
+Without remaining budget the driver preserves a checkpoint without a verified
+final answer.
+
+`test-agent-workflow-recovery` exercises the actual outer driver with a two-step
+plan limit: the first phase fills the plan, a successor executes the second phase,
+and ordinary final drafting and reflection accept the response. A separate case
+exhausts the tool budget and checks that no final response is accepted.
+`test-agent-method-phases` also checks the capacity boundary and carried budget.
+These deterministic checks validate runtime integration, not model task quality.
+
+### Runtime verification on 2026-11-27
+
+The CPU-only Luna daemon was rebuilt and restarted with the changes above.
+Three focused CTests passed: `test-agent-workflow-recovery`,
+`test-agent-method-phases`, and `test-agent-chat-routing`.
+The driver test reaches final response acceptance after rollover; a separate
+budget case prevents acceptance when further tool work cannot be admitted.
+
+Live web-API runs exposed additional prompt-budget defects. Reasoning allocation
+omitted the structured schema and shared adapter framing (cognitive mode and
+investigation context). Reflection allocated its evidence before adding validation
+feedback on regeneration. These paths now account for complete adapter framing;
+reasoning reduces optional context after rendering, and reflection reallocates
+its evidence on each attempt while retaining the complete answer under review.
+Regression coverage includes growing evidence, injected investigation context,
+and reflection regeneration with the configured output reservation intact.
+
+The final focused Luna run lasted 62 seconds. It executed the original plan and
+one successor, completing 16 tool operations: eight repository reads, six searches,
+and two status queries. It stopped with `continuation tool budget is insufficient
+for the proposed slice`, without a final response. The budget was not replenished
+at rollover. The earlier broad investigation also rolled over, then stopped after
+15 successful tool operations because its next slice exceeded the remaining budget.
+Neither run establishes successful model-level investigation completion. The
+focused run supplied source entry points and is not equivalent to the original
+source-discovery task. These were web API checks, not browser interaction tests.
+
+The remaining observed limitation is model/tool efficiency within the existing
+budget. Repeated searches and incomplete tracing still consume the available
+allowance. Passing deterministic runtime tests must not be reported as evidence
+that Luna has completed the source investigation or produced a verified answer.

@@ -88,9 +88,10 @@ public:
     }
 };
 inline common_plan_state run(bool reject_first_continuation=false,bool reject_all_continuations=false,bool fail_continuation_transport=false,
-        size_t execution_limit=12, size_t tool_limit=2) {
+        size_t execution_limit=12, size_t tool_limit=2, size_t storage_limit=16) {
     std::string error;
-    common_plan_in_memory_store store;require(store.open("",error),error);
+    common_plan_policy_config storage; storage.max_steps=storage_limit;
+    common_plan_in_memory_store store{common_plan_policy(storage)};require(store.open("",error),error);
     phase_planner planner;phase_executor executor;phase_reviewer reviewer;phase_tools tools;
     planner.reject_first_continuation=reject_first_continuation;
     planner.reject_all_continuations=reject_all_continuations;
@@ -105,6 +106,14 @@ inline common_plan_state run(bool reject_first_continuation=false,bool reject_al
     request.enable_memory=false;request.max_iterations=execution_limit;request.max_tool_batches=tool_limit;
     request.max_reflection_rounds=1; // Phase continuation must not consume the final verdict budget.
     auto result=runtime.run(request);
+    if (storage_limit==2) {
+        require(result.plan_storage_exhausted && result.remaining_continuation_budget.has_value(),
+            "capacity stop did not retain its remaining task budget");
+        require(result.remaining_continuation_budget->executions_remaining<execution_limit + method.steps.size()*2 &&
+            result.remaining_continuation_budget->tool_calls_remaining<tool_limit,
+            "capacity handoff replenished consumed task budget");
+        return *store.get("method-test",error);
+    }
     if (execution_limit == 1 || tool_limit == 1) {
         require(result.limit_reached && !result.error.empty() && result.response.empty(),
             "exhausted continuation did not report a resumable limit");

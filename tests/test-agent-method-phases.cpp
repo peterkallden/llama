@@ -129,6 +129,7 @@ int main() {
         prior_work_scenario::run(store);
     }
     const auto saved=std::optional<common_plan_state>(run());
+    run(false,false,false,12,2,2);
     run(true); // Rejected continuation is corrected before any side effect.
     run(false,true);
     run(false,false,true);

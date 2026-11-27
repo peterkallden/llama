@@ -2309,6 +2309,7 @@ public:
         common_chat_msg system;
         system.role = "system";
         const bool artifact_section = common_plan_step_effective_mode(step) == common_plan_step_mode::artifact_compose;
+        static const std::string reasoning_schema = R"({"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","maxLength":1024},"next_action":{"type":"string","maxLength":256}}})";
         const bool artifact_dsl = request.tool_output_format == common_agent_tool_output_format::compact_dsl;
         const int reasoning_output_tokens=artifact_section ? std::min(generation_config.n_predict,512) : generation_config.n_predict;
         system.content = artifact_section
@@ -2348,6 +2349,14 @@ public:
             const auto resources = common_agent_render_input_resource_context(request.input_resources,
                 generation_config.context_budgets.deliberate_input_resources_chars, request.available_resources);
             const auto required_policy = render_policy_prefix(derive_request_policy_pack(request), derive_plan_policy_pack(plan));
+            // The shared generation adapter also appends host investigation
+            // context and a cognitive-mode message. Use that adapter to account
+            // for its framing instead of maintaining a separate estimate.
+            std::string generation_context;
+            const auto framing_request = make_agent_runtime_generation_request(request,
+                common_agent_generation_purpose::reasoning, {},
+                make_agent_runtime_generation_options(generation_config, reasoning_output_tokens));
+            for (const auto & message : framing_request.messages) generation_context += message.content;
             const size_t context_capacity = inference.context_capacity_tokens();
             if (context_capacity != 0) {
                 auto demand_config = step_context_config;
@@ -2358,19 +2367,38 @@ public:
                 const bool configured = generation_config.context_budgets.configured_prompt_values.count("step_chars") ||
                     step_context_config.char_budget != defaults.step_chars;
                 const auto allocation = common_agent_allocate_context(context_capacity,
-                    context_text_tokens(inference, system.content + resources + required_policy) + 256,
+                    context_text_tokens(inference, system.content + generation_context + resources + required_policy + reasoning_schema) + 256,
                     static_cast<size_t>(std::max(1, reasoning_output_tokens)),
                     {{configured ? context_scale_budget(step_context_config.char_budget, demand, view.size()) : demand, demand}});
-                // Preserve the established minimum step view and expand it if
-                // the active context has room; final admission remains exact.
-                step_context_config.char_budget = std::max(step_context_config.char_budget,
-                    context_scale_budget(allocation.section_tokens.front(), view.size(), demand));
+                // The schema is mandatory context too. Respect the allocated
+                // evidence budget even when it is below the configured target.
+                step_context_config.char_budget =
+                    context_scale_budget(allocation.section_tokens.front(), view.size(), demand);
             }
             const auto required_context = "\n" + render_reasoning_context(step_context_config) + resources;
             allocate_optional_memory_context(inference, generation_config, selected,
-                system.content + required_context + required_policy,
+                system.content + generation_context + required_context + required_policy + reasoning_schema,
                 reasoning_output_tokens, "reasoning", memory_context_config, overlay_config);
             user.content = build_memory_prompt_context(selected, memory_context_config, overlay_config) + required_context;
+            // Allocation is an estimate; admit the fully rendered view,
+            // including schema, separators and memory wrappers. Shrink only
+            // optional context, preserving the active step and output budget.
+            if (context_capacity != 0) {
+                for (;;) {
+                    const auto complete = generation_context + system.content + reasoning_schema + required_policy + "\n" + user.content;
+                    if (common_agent_allocate_context(context_capacity,
+                            context_text_tokens(inference, complete) + 256,
+                            static_cast<size_t>(std::max(1, reasoning_output_tokens)), {}).mandatory_fits) break;
+                    if (memory_context_config.char_budget || overlay_config.char_budget) {
+                        memory_context_config.char_budget = 0;
+                        overlay_config.char_budget = 0;
+                    } else if (step_context_config.char_budget > 512) {
+                        step_context_config.char_budget = std::max<size_t>(512, step_context_config.char_budget / 2);
+                    } else break; // The final admission reports a mandatory-context limit.
+                    user.content = build_memory_prompt_context(selected, memory_context_config, overlay_config) +
+                        "\n" + render_reasoning_context(step_context_config) + resources;
+                }
+            }
         } else {
             // Report prose is grounded by the immutable snapshot below. Do not
             // spend its small section budget on unrelated memory, observations,
@@ -2456,7 +2484,6 @@ public:
             }
             user.content += context_intro + context_json + context_suffix;
         }
-        static const std::string reasoning_schema = R"({"type":"object","additionalProperties":false,"required":["summary"],"properties":{"summary":{"type":"string","maxLength":1024},"next_action":{"type":"string","maxLength":256}}})";
         std::string output_schema=artifact_section?std::string{}:reasoning_schema;
         if(artifact_section&&!artifact_dsl){
             json artifact_schema=json::parse(R"({"type":"object","additionalProperties":false,"required":["status"],"properties":{"status":{"type":"string","enum":["findings","no_findings"]},"blocks":{"type":"array","maxItems":2,"items":{"type":"object","additionalProperties":false,"required":["kind","text"],"properties":{"kind":{"type":"string"},"text":{"type":"string","minLength":1,"maxLength":160,"pattern":"^[^.!?\\n]{1,159}[.!?]$"},"evidence":{"type":"array","maxItems":8,"items":{"type":"string"}},"source":{"type":"array","maxItems":8,"items":{"type":"string"}}}}}}})");
@@ -2762,11 +2789,6 @@ public:
                 : (is_singleton_host_bound_tool(request, tools)
                     ? std::max(generation_config.n_predict, 128)
                     : std::max(generation_config.n_predict, 384));
-        if (!restricted_failure_review && !argument_repair_required) {
-            user.content = evidence_references.project_context(render_allocated_tool_observations(inference, generation_config, plan,
-                system.content + user.content + (compact_dsl_output ? std::string{} : reflection_schema),
-                reflection_output_tokens, "reflection")) + user.content;
-        }
         struct reflection_model_attempt {
             std::string phase;
             std::string system_input;
@@ -2790,14 +2812,29 @@ public:
                       "or include commentary.";
                 if (!error.empty()) attempt.content += "\n[Host validation error]\n" + evidence_references.project(error.substr(0, 1024));
             }
+            const auto make_attempt = [&] {
+                return make_agent_runtime_generation_request(request,
+                    common_agent_generation_purpose::reflection, {system, attempt},
+                    make_agent_runtime_generation_options(generation_config, reflection_output_tokens),
+                    compact_dsl_output ? std::string{} : reflection_schema);
+            };
+            auto generation_request = make_attempt();
+            if (!restricted_failure_review && !argument_repair_required) {
+                std::string mandatory = generation_request.json_schema;
+                for (const auto & message : generation_request.messages) mandatory += message.content;
+                // Reallocate on every attempt, including adapter framing and
+                // validation feedback. Never truncate the answer being reviewed.
+                attempt.content = evidence_references.project_context(render_allocated_tool_observations(
+                    inference, generation_config, plan, mandatory,
+                    reflection_output_tokens, "reflection")) + attempt.content;
+                generation_request = make_attempt();
+            }
+            std::string complete_context = generation_request.json_schema;
+            for (const auto & message : generation_request.messages) complete_context += message.content;
             const auto capacity = inference.context_capacity_tokens();
             if (capacity != 0 && !common_agent_allocate_context(capacity,
-                    context_text_tokens(inference, system.content + attempt.content +
-                        (compact_dsl_output ? std::string{} : reflection_schema)) + 256,
+                    context_text_tokens(inference, complete_context) + 256,
                     static_cast<size_t>(std::max(1, reflection_output_tokens)), {}).mandatory_fits) {
-                // Never approve an answer by reviewing only a prefix. Respect
-                // the configured output reservation and surface insufficient
-                // context before issuing a model request.
                 common_agent_generation_result unavailable;
                 unavailable.status = common_agent_generation_status::errored;
                 unavailable.stop_reason = common_agent_generation_stop_reason::limit;
@@ -2805,13 +2842,6 @@ public:
                 error = unavailable.error_message;
                 return unavailable;
             }
-            auto generation_request = make_agent_runtime_generation_request(
-                request,
-                common_agent_generation_purpose::reflection,
-                {system, attempt},
-                make_agent_runtime_generation_options(
-                    generation_config, reflection_output_tokens),
-                compact_dsl_output ? std::string() : reflection_schema);
             if (compact_dsl_output && !argument_repair_required) {
                 if (!restricted_failure_review) {
                     generation_request.grammar = common_reflection_review_grammar();

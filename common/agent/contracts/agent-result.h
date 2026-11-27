@@ -1,5 +1,6 @@
 #pragma once
 #include "agent/synthesis-state.h"
+#include "agent/continuation-control.h"
 
 #include "agent/agent-continuation.h"
 #include "agent/agent-generation.h"
@@ -37,6 +38,7 @@ struct common_agent_result {
     bool limit_reached = false;
     // Hard durable-plan capacity cannot be replenished by another turn slice.
     bool plan_storage_exhausted = false;
+    std::optional<common_agent_continuation_budget> remaining_continuation_budget;
     std::optional<common_agent_continuation_checkpoint> continuation_checkpoint;
     std::vector<common_agent_generation_record> generation_records;
     std::optional<common_agent_research_result> research_result;
