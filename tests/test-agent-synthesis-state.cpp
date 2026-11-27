@@ -18,6 +18,13 @@ int main() {
     pending.tool_call=common_plan_tool_call{"catalog.get","{}"};plan.steps={pending};
     state=common_agent_resolve_synthesis_state(plan,research);
     require(state.mandatory_remaining && !state.partial_allowed,"mandatory work allowed premature partial synthesis");
+    research.stop_reason="execution_budget_exhausted";
+    state=common_agent_resolve_synthesis_state(plan,research);
+    require(state.mandatory_remaining && state.partial_allowed && state.work==common_agent_synthesis_work::pending,
+        "budget finalization hid unfinished work or prohibited a qualified partial answer");
+    require(common_agent_render_synthesis_state(state,"final_review").find("task_outcome blocked")!=std::string::npos,
+        "budget finalization omitted the separate task-outcome contract");
+    research.stop_reason.clear();
     plan.steps.clear();plan.workflow_definition=common_plan_workflow_definition{};
     auto & workflow=*plan.workflow_definition;
     workflow.workflow_ref="workflow://test/recovery";workflow.workflow_revision="v1";

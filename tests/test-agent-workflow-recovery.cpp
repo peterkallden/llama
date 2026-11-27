@@ -2,6 +2,7 @@
 #include "tools/agent/tooling/agent-tool-provider.h"
 #include "tools/agent/resource/agent-resource-store.h"
 #include "agent/agent-bootstrap.h"
+#include "agent/method-phases.h"
 #include "agent/agent-package-json.h"
 #include "agent/template-library.h"
 #include "memory/memory-in-memory.h"
@@ -344,9 +345,25 @@ void run_recovery(common_plan_store & backend, const std::string & path, bool bl
 class rollover_inference final : public common_agent_inference {
 public:
     size_t plans=0, reviews=0, drafts=0;
+    bool reject_partial=false, limit_partial=false;
     bool generate(const common_agent_generation_request & request, common_agent_generation_result & result) override {
         result.status=common_agent_generation_status::completed;
         result.stop_reason=common_agent_generation_stop_reason::eos;
+        bool closing=false;
+        for (const auto & message:request.messages)
+            closing=closing || message.content.find("execution_budget_exhausted")!=std::string::npos;
+        if (closing && request.purpose==common_agent_generation_purpose::reflection) {
+            ++reviews;
+            result.content=reject_partial
+                ? R"({"decision":"abort","assurance_action":"fail_bounded","task_outcome":"blocked","revision_guidance":["Unsupported claims remain"]})"
+                : R"({"decision":"accept","assurance_action":"accept","task_outcome":"blocked","ready_to_answer":true,"resolved_issue_ids":["review-1-1"],"phase_reviews":[{"phase_id":"p1","status":"satisfied","reason":"First source inspected","evidence_ids":["e2"]},{"phase_id":"p2","status":"remaining","reason":"Budget prevents inspection","evidence_ids":[]}]})";
+            return true;
+        }
+        if (closing && request.purpose==common_agent_generation_purpose::draft) {
+            ++drafts;result.content="First source inspected. Budget exhausted; second source remains uninspected.";
+            if (limit_partial) result.stop_reason=common_agent_generation_stop_reason::limit;
+            return true;
+        }
         if (request.purpose==common_agent_generation_purpose::planner) {
             ++plans;
             result.content= plans==1
@@ -365,7 +382,7 @@ public:
     }
 };
 
-void run_capacity_rollover(size_t tool_budget = 4) {
+void run_capacity_rollover(size_t tool_budget = 4, bool reject_partial = false, bool limit_partial = false) {
     common_plan_policy_config limits; limits.max_steps=2;
     common_plan_in_memory_store plans{common_plan_policy(limits)};
     common_memory_in_memory_store memories;
@@ -381,7 +398,7 @@ void run_capacity_rollover(size_t tool_budget = 4) {
     source_view view;
     common_agent_runtime_tooling tooling;tooling.tools=view.tools;tooling.tool_view=&view;tooling.profile_tools_active=true;
     tooling.prior_evidence_is_current=[](const common_plan_observation &) {return true;};
-    rollover_inference inference;
+    rollover_inference inference;inference.reject_partial=reject_partial;inference.limit_partial=limit_partial;
     common_agent_runtime_policy policy;policy.max_iterations=8;policy.max_tool_rounds=tool_budget;policy.max_reflection_rounds=2;policy.enable_reflection=true;
     common_agent_runtime_config config;config.max_continuations=2;config.generation_config.n_predict=512;
     common_agent_orchestration_config orchestration;orchestration.agent_plan="off";orchestration.agent_blueprint="inspect";orchestration.prompt="Inspect both sources";
@@ -392,7 +409,23 @@ void run_capacity_rollover(size_t tool_budget = 4) {
     common_agent_result result;
     const bool ok=run_agent_runtime_driver(execution,result,error);
     if (tool_budget == 1) {
-        check(result.response.empty(),"exhausted tool budget reached final acceptance");
+        if (reject_partial || limit_partial) {
+            check(result.response.empty() && !result.error.empty(),"rejected partial answer was returned as accepted");
+            return;
+        }
+        check(ok && result.error.empty(),"budget finalization failed: "+error);
+        check(result.response=="First source inspected. Budget exhausted; second source remains uninspected.",
+            "budget exhaustion did not produce the reviewed partial answer");
+        check(result.limit_reached && result.review_progress && result.review_progress->accepted && result.review_progress->paused,
+            "partial answer lost its reviewed, bounded disposition");
+        const auto saved=plans.get(*result.plan_id,error);
+        check(saved && saved->status!=common_plan_status::completed && common_agent_method_has_remaining(*saved),
+            "budget finalization marked unfinished method work complete");
+        size_t calls=0;
+        for (const auto & event:result.trace) if (event.stage==common_runtime_trace_stage::tool &&
+                event.kind==common_runtime_trace_kind::succeeded) ++calls;
+        check(calls==1 && inference.drafts==1 && inference.reviews==2,
+            "budget finalization executed more work or skipped final review");
         return;
     }
     check(ok,error+": "+result.error);
@@ -404,6 +437,8 @@ void run_capacity_rollover(size_t tool_budget = 4) {
 int main() {
     run_capacity_rollover();
     run_capacity_rollover(1);
+    run_capacity_rollover(1,true);
+    run_capacity_rollover(1,false,true);
     common_plan_in_memory_store atomic;
     std::string error;
     check(atomic.open("",error),error);

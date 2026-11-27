@@ -72,7 +72,7 @@ bool common_agent_review_step_allows_retry(const common_plan_state & plan, const
 
 bool common_agent_advance_review_checklist(const common_agent_review_checklist & previous,
         const common_reflection_result & review,const common_plan_state & plan,const std::string & draft,
-        common_agent_review_checklist & next,std::string & error) {
+        common_agent_review_checklist & next,std::string & error, bool budget_finalization) {
     error.clear();
     if(previous.round==std::numeric_limits<size_t>::max()) {error="invalid saved review round";return false;}
     common_agent_review_checklist candidate;
@@ -111,7 +111,7 @@ bool common_agent_advance_review_checklist(const common_agent_review_checklist &
         auto projected=plan;
         projected.observations.push_back({"projected-phase-review","method_phase_review",
             nlohmann::ordered_json{{"schema","method-phase-review.v1"},{"phases",phase_progress}}.dump(),0.0f});
-        if (common_agent_method_has_remaining(projected)) return deny("method phases remain unresolved; continue the existing plan or record a bounded limitation for each phase");
+        if (common_agent_method_has_remaining(projected) && !(budget_finalization && review.task_outcome=="blocked")) return deny("method phases remain unresolved; continue the existing plan or record a bounded limitation for each phase");
         const bool blocked=std::any_of(phase_progress.begin(),phase_progress.end(),[](const auto & phase){return phase.value("status",std::string{})=="blocked";});
         if (blocked && review.task_outcome!="blocked") return deny("blocked method phases cannot establish a satisfied user outcome");
     }

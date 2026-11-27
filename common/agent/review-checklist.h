@@ -7,4 +7,4 @@ bool common_agent_review_step_allows_retry(const common_plan_state &, const std:
 // Identity/bounds validation only. The reviewer owns semantic judgments.
 bool common_agent_advance_review_checklist(const common_agent_review_checklist & previous,
     const common_reflection_result &,const common_plan_state &,const std::string & draft,
-    common_agent_review_checklist & next,std::string & error);
+    common_agent_review_checklist & next,std::string & error, bool budget_finalization = false);

@@ -1965,8 +1965,26 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             common_runtime_trace_kind::recorded, operation.observation->summary, plan.id);
         // A completed plan already retains ordinary successful acceptance.
         // Persist a verdict when needed to retain/resolve an unfinished review.
-        if ((!accepted || unresolved_review || !checklist.parts.empty()) && !store.apply(operation, plan, error)) return false;
+        if ((!accepted || unresolved_review || !checklist.parts.empty() ||
+                (request.synthesis_state && request.synthesis_state->stop_reason=="execution_budget_exhausted")) && !store.apply(operation, plan, error)) return false;
         unresolved_review = !accepted;
+        return true;
+    };
+    bool budget_finalization = false;
+    size_t budget_review_count = 0;
+    const auto begin_budget_finalization = [&](std::string reason) {
+        if (budget_finalization || !request.enable_reflection || !request.max_reflection_rounds ||
+                result.response_generation_status==common_agent_generation_status::cancelled) return false;
+        budget_finalization = true;
+        auto synthesis = common_agent_resolve_synthesis_state(plan, request.synthesis_state);
+        synthesis.partial_allowed = true;
+        synthesis.stop_reason = "execution_budget_exhausted";
+        request.synthesis_state = std::move(synthesis);
+        guidance = {"Further execution is closed by the host budget: " + reason,
+            "Return supported findings and explicit limitations from retained evidence; preserve unfinished work."};
+        error.clear(); result.error.clear();
+        append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::decided,
+            "reserve synthesis and review for a budget-limited partial answer: " + reason, plan.id);
         return true;
     };
     size_t tool_batches = 0;
@@ -1985,7 +2003,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         request.max_tool_batches=std::min(request.max_tool_batches,request.carried_continuation_budget->tool_calls_remaining);
         method_continuation_limit=std::min(method_continuation_limit,request.carried_continuation_budget->revisions_remaining);
     }
-    for (size_t iteration = 0; iteration < runtime_iteration_limit; ++iteration) {
+    // Finalization uses only the reserved answer-review allowance, never tools.
+    for (size_t iteration = 0; iteration < runtime_iteration_limit + request.max_reflection_rounds; ++iteration) {
+        if (iteration >= runtime_iteration_limit && !budget_finalization &&
+                !begin_budget_finalization("execution iteration budget exhausted")) break;
         if (request.cognitive_state.mode != common_agent_cognitive_mode::execute &&
                 !common_agent_runtime_transition_cognitive_mode(
                     turn, common_agent_cognitive_mode::execute,
@@ -2003,7 +2024,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // Execute the contiguous, dependency-ready tool chain before drafting.
         // This makes normal plan progression deterministic; reflection remains
         // reserved for repair or replanning.
-        while (true) {
+        while (!budget_finalization) {
             bool advanced_non_tool_step = false;
             std::optional<common_agent_tool_call> tool_call;
             std::string tool_step_id = "request";
@@ -2936,7 +2957,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 common_agent_failure_class::plan_conflict);
             break;
         }
-        if (tool_budget_blocks_work) {
+        if (tool_budget_blocks_work && !begin_budget_finalization("tool execution budget exhausted")) {
             if (request.require_tool_execution && !plan_has_completed_tool_step(plan)) {
                 stop_unverified_response("required tool execution budget exhausted; pending work remains saved");
             } else {
@@ -2957,7 +2978,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             break;
         }
 
-        if (research_deferred_for_workflow &&
+        if (!budget_finalization && research_deferred_for_workflow &&
                 !plan_has_pending_mandatory_tool_step(plan) &&
                 !request_has_active_resource_chunk(request)) {
             if (!common_agent_runtime_transition_cognitive_mode(
@@ -2983,7 +3004,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
         }
 
-        if (request.require_tool_execution) {
+        if (!budget_finalization && request.require_tool_execution) {
             if (!plan_has_completed_tool_step(plan) &&
                     !plan_has_failed_mandatory_tool_step(plan)) {
                 result.error = "required tool execution did not complete before draft fallback";
@@ -3038,9 +3059,9 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // observation plus repair context, so defer draft generation until
         // the tool step has been repaired and rerun.
         const bool draft_deferred_for_tool_repair =
-            plan_has_failed_mandatory_tool_step(plan);
+            !budget_finalization && plan_has_failed_mandatory_tool_step(plan);
         bool method_work_review = false;
-        if (method_continuation_limit && !draft_deferred_for_tool_repair) {
+        if (!budget_finalization && method_continuation_limit && !draft_deferred_for_tool_repair) {
             const auto ready=common_agent_method_ready_phases(plan);
             for (const auto & candidate:ready) {
                 const auto id=candidate.value("phase_id",std::string{});
@@ -3122,20 +3143,21 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             }
         }
 
+        auto & current_review_count = budget_finalization ? budget_review_count : reflection_review_count;
         std::string host_artifact_summary;
         const bool artifact_report_ready = common_agent_artifact_completion_summary(plan, host_artifact_summary);
         if (!draft_deferred_for_tool_repair && !artifact_report_ready &&
-                ((request.enable_reflection && reflection_review_count >= request.max_reflection_rounds) ||
+                ((request.enable_reflection && current_review_count >= request.max_reflection_rounds) ||
                  (!request.enable_reflection && unresolved_review))) {
             stop_unverified_response("response review is unresolved or its budget is exhausted; saved plan remains resumable");
             break;
         }
         result.response.clear();
         std::string draft;
-        if(result.research_result) common_agent_apply_research_synthesis_state(request,*result.research_result);
+        if(!budget_finalization && result.research_result) common_agent_apply_research_synthesis_state(request,*result.research_result);
         request.synthesis_state=common_agent_resolve_synthesis_state(plan,request.synthesis_state);
         request.review_checklist=checklist;
-        if(!draft_deferred_for_tool_repair && request.synthesis_state->mandatory_remaining &&
+        if(!budget_finalization && !draft_deferred_for_tool_repair && request.synthesis_state->mandatory_remaining &&
             plan.workflow_definition && !plan.workflow_definition->continuation_links.empty() &&
             common_plan_workflow_is_terminal(plan,*plan.workflow_definition)) {
             result.workflow_handoff_requested=true;result.plan_id=plan.id;result.plan_version=plan.version;
@@ -3186,6 +3208,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::recorded,
                 "draft generated", plan.id);
             if (draft_result.stop_reason == common_agent_generation_stop_reason::limit) {
+                if (budget_finalization) {
+                    stop_unverified_response("budget-limited partial draft exceeded its output reservation");
+                    break;
+                }
                 if (request.enable_reflection && grounding_revision_count < request.max_reflection_rounds &&
                         iteration + 1 < runtime_iteration_limit) {
                     ++grounding_revision_count;
@@ -3242,6 +3268,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             grounded.summary += final_checks.summary;
             if (!record_grounding(grounded, "answer", "", false)) { result.error = error; return result; }
             if (!grounded.passed) {
+                if (budget_finalization) {
+                    stop_unverified_response("budget-limited partial answer failed grounding: " + grounded.summary);
+                    break;
+                }
                 if (request.enable_reflection && grounding_revision_count < request.max_reflection_rounds &&
                         iteration + 1 < runtime_iteration_limit) {
                     ++grounding_revision_count;
@@ -3334,6 +3364,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             append_trace(result, common_runtime_trace_stage::reflection, common_runtime_trace_kind::completed,
                 verification.summary, plan.id);
             if (verification.decision == common_agent_research_verification_decision::gather_evidence) {
+                if (budget_finalization) {
+                    stop_unverified_response("budget-limited answer failed research evidence verification");
+                    break;
+                }
                 if (turn.research_reopened || !turn.research_workspace || !turn.research_runner || !turn.research_adapter) {
                     result.error = "research answer requires more evidence after the bounded reopen limit";
                     result.response = draft;
@@ -3420,11 +3454,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                     "response accepted without reflection revision", plan.id);
             break;
         }
-        if (reflection_review_count >= request.max_reflection_rounds) {
+        if (current_review_count >= request.max_reflection_rounds) {
             stop_unverified_response("response review budget exhausted; saved plan remains resumable");
             break;
         }
-        ++reflection_review_count;
+        ++current_review_count;
         if(!method_work_review && !draft.empty() && result.response_generation_status==common_agent_generation_status::completed &&
             result.response_stop_reason!=common_agent_generation_stop_reason::limit) {
             last_complete_draft=draft;
@@ -3493,7 +3527,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                         return operation.kind == common_plan_operation_kind::complete_step ||
                             operation.kind == common_plan_operation_kind::set_next_action;
                     })) {
-            if (reflection_review_count >= request.max_reflection_rounds) {
+            if (current_review_count >= request.max_reflection_rounds) {
                 if (!record_response_review(draft, false, "unresolved_followup")) { result.error = error; return result; }
                 stop_unverified_response("reflection proposed follow-up work but the review budget cannot resolve it");
                 break;
@@ -3520,7 +3554,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 "specific revision guidance. If additional evidence is necessary, choose revise_plan "
                 "and provide specific revision guidance. Do not repeat already completed steps.\n" +
                 proposed.dump() + "\n[Current plan]\n" + common_plan_render_context(plan, {2048, false});
-            ++reflection_review_count;
+            ++current_review_count;
             std::string clarification_error;
             auto clarified = reflector.evaluate_result(clarification_request, plan, draft, clarification_error);
             if (clarified.generation) result.generation_records.push_back(
@@ -3547,7 +3581,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             break;
         }
         common_agent_review_checklist next_checklist;
-        if(!common_agent_advance_review_checklist(checklist,reflection,request.prior_evidence_view ? request.prior_evidence_view(plan) : plan,draft,next_checklist,error)) {
+        if(!common_agent_advance_review_checklist(checklist,reflection,request.prior_evidence_view ? request.prior_evidence_view(plan) : plan,draft,next_checklist,error,budget_finalization)) {
             stop_unverified_response("invalid reflection checklist: "+error,common_agent_failure_class::validation);
             break;
         }
@@ -3588,14 +3622,15 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // continuation, not an answer wording retry. It consumes the existing
         // runtime/tool/revision budgets; reserve answer-review rounds for the
         // eventual final verdict and response repairs.
-        const bool method_continuation_requested = plan.phase_review_required &&
+        const bool method_continuation_requested = !budget_finalization && plan.phase_review_required &&
             common_agent_method_has_remaining(plan) && reflection.task_outcome=="remaining" &&
             (reflection.next_action==common_agent_reflection_next_action::revise_plan ||
              reflection.next_action==common_agent_reflection_next_action::escalate_research ||
              reflection.next_action==common_agent_reflection_next_action::escalate_deliberate);
-        if (method_continuation_requested && reflection_review_count) --reflection_review_count;
+        if (method_continuation_requested && current_review_count) --current_review_count;
         const bool review_accepted = !method_work_review && checklist.blocking.empty() &&
-            !common_agent_resolve_synthesis_state(plan,request.synthesis_state).mandatory_remaining &&
+            (!common_agent_resolve_synthesis_state(plan,request.synthesis_state).mandatory_remaining || budget_finalization) &&
+            (!budget_finalization || reflection.task_outcome=="blocked") &&
             reflection.decision == common_reflection_decision::accept &&
             reflection.next_action == common_agent_reflection_next_action::accept &&
             reflection.proposed_plan_operations.empty();
@@ -3603,6 +3638,24 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
                 common_agent_reflection_next_action_name(reflection.next_action), reflection.task_outcome,
                 reflection.revision_guidance)) {
             result.error = error; return result;
+        }
+        if (budget_finalization) {
+            if (review_accepted) {
+                result.response = draft;
+                result.limit_reached = true;
+                result.response_stop_reason = common_agent_generation_stop_reason::none;
+                if (result.review_progress) result.review_progress->paused = true;
+                append_trace(result, common_runtime_trace_stage::response, common_runtime_trace_kind::completed,
+                    "review accepted a budget-limited partial answer; task work remains saved", plan.id);
+                break;
+            }
+            if (reflection.next_action==common_agent_reflection_next_action::revise_response &&
+                    reflection.proposed_plan_operations.empty() && current_review_count<request.max_reflection_rounds) {
+                guidance=reflection.revision_guidance;
+                continue;
+            }
+            stop_unverified_response("budget-limited partial answer did not pass final review");
+            break;
         }
         if (reflection.decision == common_reflection_decision::abort ||
                 reflection.next_action == common_agent_reflection_next_action::fail_bounded) {
@@ -3701,7 +3754,7 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // Resolve a host-authorized escalation before applying the previous
         // mode's review budget. The escalation handler supplies its own bounded
         // policy; ordinary repairs still consume the remaining review budget.
-        if (!review_accepted && reflection_review_count >= request.max_reflection_rounds &&
+        if (!review_accepted && current_review_count >= request.max_reflection_rounds &&
                 reflection.next_action != common_agent_reflection_next_action::revise_plan) {
             if (block_unrepaired_tool_failure()) break;
             stop_unverified_response("response rejected; no review budget remains for a repaired answer");
@@ -3753,7 +3806,10 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         }
         if (reflection.next_action == common_agent_reflection_next_action::revise_plan &&
                 reflection.proposed_plan_operations.empty()) {
+            if (!request.continuation_budget->tool_calls_remaining &&
+                    begin_budget_finalization("tool execution budget exhausted before further inspection")) continue;
             if (!common_agent_continuation_can_plan(*request.continuation_budget, error)) {
+                if (begin_budget_finalization(error)) continue;
                 stop_unverified_response(error);
                 break;
             }
@@ -3900,6 +3956,11 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
             if (target != plan.steps.end()) op.step = *target;
         }
         if (!common_agent_admit_continuation(*request.continuation_budget, admitted_operations, error)) {
+            size_t proposed_calls=0;
+            for (const auto & operation:admitted_operations) if (operation.step && operation.step->tool_call) ++proposed_calls;
+            if ((proposed_calls>request.continuation_budget->tool_calls_remaining ||
+                    !request.continuation_budget->executions_remaining || !request.continuation_budget->revisions_remaining) &&
+                    begin_budget_finalization(error)) continue;
             stop_unverified_response(error);
             break;
         }
@@ -3957,8 +4018,8 @@ common_agent_result common_agent_runtime::run(const common_agent_request & input
         // Execution repair spends the shared execution/revision/tool budgets.
         // Refund this answer-review round only after executable work was admitted.
         if (!reflection_work_step_ids.empty() && !method_continuation_requested &&
-                reflection.next_action == common_agent_reflection_next_action::revise_plan && reflection_review_count)
-            --reflection_review_count;
+                reflection.next_action == common_agent_reflection_next_action::revise_plan && current_review_count)
+            --current_review_count;
         std::vector<std::string> applied_reflection_work_step_ids;
         for (auto op : reflection.proposed_plan_operations) {
             common_plan_bind_memory_provenance(op, request.memories);

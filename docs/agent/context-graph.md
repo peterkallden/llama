@@ -474,3 +474,43 @@ The remaining observed limitation is model/tool efficiency within the existing
 budget. Repeated searches and incomplete tracing still consume the available
 allowance. Passing deterministic runtime tests must not be reported as evidence
 that Luna has completed the source investigation or produced a verified answer.
+
+### Budget-limited partial answers
+
+When the host cannot admit further tool work or execution/revision iterations,
+it can close execution and reserve the configured answer-review allowance for
+synthesis over retained evidence. The same draft generator, grounding checks,
+reflection engine and evidence-reference validation remain in use. The closing
+pass cannot execute tools, reopen research or apply plan repairs. Cancellation,
+source authorization and generation context/output limits still apply.
+
+The host sets `partial_allowed` with `stop_reason: execution_budget_exhausted`.
+`mandatory_remaining` and pending method phases remain truthful. The answer must
+separate supported findings, uncertainties, unfinished work and the budget limit.
+The reviewer can accept that answer with `task_outcome: blocked`; this accepts the
+partial response, not task completion. Acceptance retains an active saved plan,
+reports `limit_reached`, and records an accepted, paused review. It does not mark
+pending tool steps or method phases complete. Unsupported claims or missing
+material limitations can still cause response revision or rejection within the
+reserved review allowance. No accepted response is manufactured after rejection.
+
+Runtimes without reflection retain their existing checkpoint behavior rather
+than returning an unreviewed partial answer. A cancelled generation does not
+start finalization. The reserve cannot extend an expired turn deadline.
+
+Validation: all four focused CTests passed (`test-agent-workflow-recovery`,
+`test-agent-synthesis-state`, `test-agent-method-phases`, `test-agent-chat-routing`).
+The recovery test covers accepted and rejected budget-limited answers through the
+outer runtime driver, checks the tool-call count, and verifies that unfinished
+method work is not marked complete.
+
+A live Luna run of the original investigation through the web API returned
+`ok: true`, `turn_completed`, a nonempty partial answer, `limit_reached: true`,
+and an accepted, paused review. It lasted 80 seconds and used 14 successful tool
+calls (nine searches, three reads, two context resolutions), one final draft and
+one successor plan. The next proposed work slice did not fit the remaining tool
+allowance, so execution closed before all 16 calls were consumed. The response
+reported inspected context-adapter findings and explicitly stated that the full
+research-to-plan handoff still needed tracing. This validates delivery of a
+reviewed partial answer, not completion of the original investigation. The check
+used the web API; browser rendering was not tested.

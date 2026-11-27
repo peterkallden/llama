@@ -63,7 +63,10 @@ common_agent_synthesis_state common_agent_resolve_synthesis_state(const common_p
             state.mandatory_remaining = state.mandatory_remaining || !resolved;
         }
     }
-    if (state.mandatory_remaining) { state.work=common_agent_synthesis_work::pending; state.partial_allowed=false; }
+    if (state.mandatory_remaining) {
+        state.work=common_agent_synthesis_work::pending;
+        state.partial_allowed=research && research->partial_allowed && research->stop_reason=="execution_budget_exhausted";
+    }
     else if (research && research->partial_allowed) state.work=common_agent_synthesis_work::bounded;
     else state.work=common_agent_synthesis_work::complete;
     // Without research, a declared unavailable terminal can still finish as
@@ -94,6 +97,15 @@ std::string common_agent_render_synthesis_state(const common_agent_synthesis_sta
     // Storage identity and fingerprints are host bookkeeping, not model-facing evidence.
     value.erase("plan_id"); value.erase("plan_version"); value.erase("evidence_fingerprint");
     value["phase"]=phase;
+    if (state.partial_allowed && state.stop_reason=="execution_budget_exhausted") return
+        "\n[Host execution and answer contract]\n"+value.dump()+
+        "\nThe host has closed further execution because its work budget cannot admit more work. "
+        "Produce a qualified partial answer using retained evidence. State the budget limitation, supported findings, "
+        "uncertainties and remaining work. Do not claim the whole task or unfinished operations succeeded. "
+        "No further tools, research, or plan repair are available in this turn. "
+        "Review this partial answer for factual support and disclosed limitations. Accept with task_outcome blocked "
+        "when it is useful and accurate; retain unresolved phase statuses. Revise only unsupported claims or missing "
+        "material limitations using revise_response, or reject an unusable answer. Do not demand unavailable acquisition.\n";
     return "\n[Host execution and answer contract]\n"+value.dump()+
         "\nThe work field reports scheduled plan-step execution, not satisfaction of the user's full task. "
         "Review the requested outcome separately; additional authorized inspection or operations require plan repair. "

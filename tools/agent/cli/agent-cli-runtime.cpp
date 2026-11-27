@@ -2801,6 +2801,13 @@ public:
         std::vector<std::string> reflection_validation_errors;
         system.content += " Evidence references in this review use request-local eN handles. "
             "Copy only handles visible in the supplied context; the host resolves them to durable evidence IDs.";
+        if (request.synthesis_state && request.synthesis_state->partial_allowed &&
+                request.synthesis_state->stop_reason=="execution_budget_exhausted") system.content +=
+            " The host has closed execution due to its work budget. Review only the qualified partial answer. "
+            "Accept an accurate, useful partial answer with task_outcome blocked, without plan mutations. "
+            "Keep unfinished phases remaining and require disclosure of budget limits and unanswered questions. "
+            "Do not require unavailable inspection or mark the full task satisfied. Use revise_response for factual "
+            "corrections or missing material limitations; reject unsupported claims if they cannot be corrected.";
         auto generate_reflection = [&](bool regeneration) {
             common_chat_msg attempt = user;
             if (regeneration) {
@@ -2895,7 +2902,9 @@ public:
             }
             if(parsed) {
                 common_agent_review_checklist checked;
-                parsed=common_agent_advance_review_checklist(request.review_checklist,result,plan,draft,checked,error);
+                parsed=common_agent_advance_review_checklist(request.review_checklist,result,plan,draft,checked,error,
+                    request.synthesis_state && request.synthesis_state->partial_allowed &&
+                        request.synthesis_state->stop_reason=="execution_budget_exhausted");
             }
             const bool bounded_stop = result.next_action == common_agent_reflection_next_action::fail_bounded &&
                 result.task_outcome == "blocked" &&
