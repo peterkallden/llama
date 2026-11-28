@@ -6,7 +6,10 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <string>
+
+class common_learning_lifecycle_store;
 
 // These names describe runtime providers, not user-interface entrypoints.
 // `cli` is retained for compatibility with the existing direct llama.cpp
@@ -51,4 +54,8 @@ struct common_agent_inference_options {
     // Explicitly carries --agent-trace into the resident context.
     bool agent_trace = false;
     std::string mmproj;
+    // Programmatic experiment opt-in; normal agent sessions leave this off.
+    bool experimental_recirculation_auto_reuse = false;
+    std::shared_ptr<common_learning_lifecycle_store> recirculation_journal;
+    std::string recirculation_model_profile_fingerprint;
 };

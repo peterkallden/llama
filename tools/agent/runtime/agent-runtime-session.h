@@ -19,6 +19,9 @@ struct common_agent_model_load_key {
     int n_gpu_layers = 0;
     bool fit_params = true;
     std::string mmproj;
+    bool experimental_recirculation_auto_reuse = false;
+    std::shared_ptr<common_learning_lifecycle_store> recirculation_journal;
+    std::string recirculation_model_profile_fingerprint;
 };
 
 struct common_agent_inference_context_key {

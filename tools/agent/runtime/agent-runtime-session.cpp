@@ -25,6 +25,9 @@ common_agent_model_load_key make_agent_model_load_key(
         options.n_gpu_layers,
         options.fit_params,
         options.mmproj,
+        options.experimental_recirculation_auto_reuse,
+        options.recirculation_journal,
+        options.recirculation_model_profile_fingerprint,
     };
 }
 
@@ -44,7 +47,10 @@ bool common_agent_model_load_key_match(
     return lhs.model == rhs.model &&
         lhs.mmproj == rhs.mmproj &&
         lhs.n_gpu_layers == rhs.n_gpu_layers &&
-        lhs.fit_params == rhs.fit_params;
+        lhs.fit_params == rhs.fit_params &&
+        lhs.experimental_recirculation_auto_reuse == rhs.experimental_recirculation_auto_reuse &&
+        lhs.recirculation_journal.get() == rhs.recirculation_journal.get() &&
+        lhs.recirculation_model_profile_fingerprint == rhs.recirculation_model_profile_fingerprint;
 }
 
 bool common_agent_inference_context_key_match(
@@ -511,6 +517,11 @@ bool apply_agent_runtime_model_profile(
     options.n_gpu_layers = session.loaded_model.key.n_gpu_layers;
     options.fit_params = session.loaded_model.key.fit_params;
     options.mmproj = session.loaded_model.key.mmproj;
+    options.experimental_recirculation_auto_reuse =
+        session.loaded_model.key.experimental_recirculation_auto_reuse;
+    options.recirculation_journal = session.loaded_model.key.recirculation_journal;
+    options.recirculation_model_profile_fingerprint =
+        session.loaded_model.key.recirculation_model_profile_fingerprint;
     options.context_size_tokens = context_size_tokens;
     if (!build_agent_inference_session(
             options,

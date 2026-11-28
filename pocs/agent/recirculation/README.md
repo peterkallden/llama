@@ -86,6 +86,10 @@ must also set `recirculation_experiment_mode`, `scope`, and a host-selected
 `observed` `flydelta_experiment` record containing the layer pair, dose,
 window size, target mode, rounds and entropy observation. This is not a
 candidate, an active adapter, or a `HELPED` outcome.
+The same host opt-in fields are available through normal
+`common_agent_inference_options`. They participate in the resident model
+reuse key, so switching journal or fingerprint rebuilds the host instead of
+reusing stale inference state. No daemon or CLI flag enables this by default.
 
 On a later request with the same namespace, project, model profile and context
 key, the host retrieves the newest matching profile and injects

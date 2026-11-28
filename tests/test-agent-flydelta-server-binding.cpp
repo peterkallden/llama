@@ -1,6 +1,7 @@
 #include "tools/agent/runtime/agent-server-context-host.h"
 #include "tools/agent/daemon/agent-daemon-runtime-config.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/lifecycle-store.h"
 
 #include <string>
 #include <utility>
@@ -32,6 +33,14 @@ int main() {
     CHECK(host_config.context_key.n_parallel == 2);
     CHECK(host_config.context_key.n_sequences == 2);
     CHECK(host_config.per_sequence_cvec_batch);
+    options.experimental_recirculation_auto_reuse = true;
+    options.recirculation_journal = std::make_shared<common_learning_in_memory_lifecycle_store>();
+    options.recirculation_model_profile_fingerprint = "model:test";
+    const auto recirculation_config = make_agent_server_context_host_config(options);
+    CHECK(recirculation_config.experimental_recirculation_auto_reuse);
+    CHECK(recirculation_config.recirculation_journal == options.recirculation_journal);
+    CHECK(recirculation_config.recirculation_model_profile_fingerprint == "model:test");
+    options.experimental_recirculation_auto_reuse = false;
 
     // The project historically used 99 as an "all layers" convenience
     // value.  Resident FlyDelta contexts must let the existing fit path

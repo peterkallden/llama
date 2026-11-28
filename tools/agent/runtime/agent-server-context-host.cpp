@@ -90,6 +90,9 @@ common_agent_server_context_host_config make_agent_server_context_host_config(
         options.per_sequence_factorized_cvec_batch,
         options.teacher_scoring_backend,
         options.agent_trace,
+        options.experimental_recirculation_auto_reuse,
+        options.recirculation_journal,
+        options.recirculation_model_profile_fingerprint,
     };
 }
 
