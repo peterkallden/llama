@@ -30,4 +30,6 @@ struct common_agent_recirculation_observation {
     double baseline_entropy = 0;
     double refined_entropy = 0;
     std::string failure_reason;
+    bool recalled_profile = false;
+    std::string memory_error;
 };

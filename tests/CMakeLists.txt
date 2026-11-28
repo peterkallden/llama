@@ -916,6 +916,11 @@ test-agent-flydelta-alpha-response-search.cpp
         endif()
     endforeach()
 
+    add_executable(test-agent-flydelta-recirculation-memory test-agent-flydelta-recirculation-memory.cpp)
+    target_link_libraries(test-agent-flydelta-recirculation-memory PRIVATE llama-agent-flydelta)
+    add_test(NAME test-agent-flydelta-recirculation-memory COMMAND test-agent-flydelta-recirculation-memory)
+    set_property(TEST test-agent-flydelta-recirculation-memory PROPERTY LABELS "agent;flydelta;recirculation;model-free")
+
     add_executable(test-agent-template-library-store test-agent-template-library-store.cpp)
     target_include_directories(test-agent-template-library-store PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(test-agent-template-library-store PRIVATE llama-agent-daemon-library llama-agent-core)

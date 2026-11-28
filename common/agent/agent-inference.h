@@ -147,6 +147,9 @@ struct common_agent_generation_request {
     // It is request-scoped and never participates in FlyDelta lifecycle.
     std::shared_ptr<const common_agent_residual_patch_request> residual_patch;
     std::shared_ptr<const common_agent_recirculation_request> recirculation;
+    // Only an explicitly opted-in experiment may recall a scope-bound profile.
+    bool recirculation_experiment_mode = false;
+    std::string recirculation_context_key;
     std::shared_ptr<const common_flydelta_device_diagnostics_request> flydelta_device_diagnostics;
     std::vector<common_agent_prompt_section> prompt_sections;
 };

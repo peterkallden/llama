@@ -5,7 +5,7 @@ build_dir=${1:?build directory required}
 trace_dir=${2:?trace directory required}
 model=${3:-}
 mkdir -p "$trace_dir"
-ctest --test-dir "$build_dir" -R '^llama-agent-recirculation-(contract|runner|memory|window|analysis)-ctest$' --no-tests=error --output-on-failure 2>&1 | tee "$trace_dir/contracts.log"
+ctest --test-dir "$build_dir" -R '^(llama-agent-recirculation-(contract|runner|memory|window|analysis)-ctest|test-agent-flydelta-recirculation-memory|test-agent-prepared-generation)$' --no-tests=error --output-on-failure 2>&1 | tee "$trace_dir/contracts.log"
 git -C "$(dirname "$0")/../../.." rev-parse HEAD > "$trace_dir/source-revision.txt"
 repo_dir=$(git -C "$(dirname "$0")/../../.." rev-parse --show-toplevel)
 git -C "$repo_dir" status --short > "$trace_dir/source-status.txt"
@@ -18,6 +18,9 @@ tar -czf "$trace_dir/poc-sources.tar.gz" -C "$repo_dir" \
     pocs/agent/recirculation/data/evaluation.jsonl \
     pocs/agent/recirculation/main.cpp pocs/agent/recirculation/smoke.sh \
     pocs/agent/recirculation/resident-smoke.cpp common/agent/agent-recirculation.h \
+    common/agent/adaptation/flydelta/flydelta-recirculation-memory.h \
+    common/agent/adaptation/flydelta/flydelta-recirculation-memory.cpp \
+    tests/test-agent-flydelta-recirculation-memory.cpp \
     pocs/agent/recirculation/test-runner.cpp pocs/agent/recirculation/test-memory.cpp pocs/agent/recirculation/test-window.cpp \
     pocs/agent/recirculation-contract.h pocs/agent/test-recirculation-contract.cpp
 if [[ -z "$model" ]]; then

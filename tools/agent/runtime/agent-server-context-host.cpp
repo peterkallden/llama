@@ -3,6 +3,7 @@
 #include "../cli/agent-cli-inference.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent/adaptation/flydelta/flydelta-evaluator.h"
+#include "agent/adaptation/flydelta/flydelta-recirculation-memory.h"
 
 #include "log.h"
 #include "common.h"
@@ -155,6 +156,14 @@ common_agent_server_context_host::~common_agent_server_context_host() {
 bool common_agent_server_context_host::start(
         const common_agent_server_context_host_config & config,
         std::string & error) {
+    if (config.experimental_recirculation_auto_reuse &&
+            (!config.recirculation_journal ||
+             config.recirculation_model_profile_fingerprint.empty() ||
+             config.context_key.load_key.n_gpu_layers != 0 ||
+             config.context_key.n_parallel != 1)) {
+        error = "experimental recirculation reuse needs a journal, model fingerprint and isolated CPU slot";
+        return false;
+    }
     server_context_host_trace("start-enter", &config);
     stop();
     initialize_server_context_host_once();
@@ -252,6 +261,80 @@ bool common_agent_server_context_host::start(
     return true;
 }
 
+namespace {
+class experimental_recirculation_inference final : public common_agent_inference {
+public:
+    experimental_recirculation_inference(
+            std::unique_ptr<common_agent_inference> inner,
+            std::shared_ptr<common_learning_lifecycle_store> journal,
+            std::string model_fingerprint)
+        : inner_(std::move(inner)), journal_(std::move(journal)),
+          model_fingerprint_(std::move(model_fingerprint)) {}
+
+    size_t context_capacity_tokens() const override { return inner_->context_capacity_tokens(); }
+    std::optional<size_t> count_context_text_tokens(const std::string & text) const override {
+        return inner_->count_context_text_tokens(text);
+    }
+    bool generate(const common_agent_generation_request & input,
+            common_agent_generation_result & result) override {
+        if (!input.recirculation_experiment_mode) return inner_->generate(input, result);
+        if (!input.scope || input.recirculation_context_key.empty()) {
+            result = {};
+            result.error_message = "experimental recirculation needs a scope and context key";
+            return false;
+        }
+        auto request = input;
+        bool recalled = false;
+        std::string error;
+        if (!request.recirculation) {
+            common_agent_recirculation_request profile;
+            if (!common_flydelta_recirculation_recall(*journal_, *request.scope,
+                    model_fingerprint_, request.recirculation_context_key,
+                    profile, recalled, error)) {
+                result = {};
+                result.error_message = "recirculation profile recall failed: " + error;
+                return false;
+            }
+            if (recalled) request.recirculation =
+                std::make_shared<common_agent_recirculation_request>(profile);
+        }
+        if (!inner_->generate(request, result)) return false;
+        if (result.recirculation_observation) {
+            auto observation = std::make_shared<common_agent_recirculation_observation>(
+                *result.recirculation_observation);
+            observation->recalled_profile = recalled;
+            if (observation->committed && request.recirculation &&
+                    !common_flydelta_recirculation_remember(*journal_, *request.scope,
+                        model_fingerprint_, request.recirculation_context_key,
+                        *request.recirculation, *observation, error)) {
+                observation->memory_error = error;
+            }
+            if (recalled && !observation->committed && observation->completed_rounds > 0 &&
+                    observation->failure_reason.empty() && request.recirculation &&
+                    !common_flydelta_recirculation_suppress(*journal_, *request.scope,
+                        model_fingerprint_, request.recirculation_context_key,
+                        *request.recirculation, error)) {
+                observation->memory_error = error;
+            }
+            result.recirculation_observation = std::move(observation);
+        }
+        return true;
+    }
+    bool score_teacher_forced_choice(const common_agent_teacher_forced_choice_request & request,
+            common_agent_teacher_forced_choice_result & result) override {
+        return inner_->score_teacher_forced_choice(request, result);
+    }
+    bool score_teacher_forced_choice_batch(const common_agent_teacher_forced_choice_batch_request & request,
+            common_agent_teacher_forced_choice_batch_result & result) override {
+        return inner_->score_teacher_forced_choice_batch(request, result);
+    }
+private:
+    std::unique_ptr<common_agent_inference> inner_;
+    std::shared_ptr<common_learning_lifecycle_store> journal_;
+    std::string model_fingerprint_;
+};
+} // namespace
+
 bool common_agent_server_context_host::build_inference_session(
         common_agent_inference_session & session,
         std::string & error) const {
@@ -293,6 +376,13 @@ bool common_agent_server_context_host::build_inference_session(
         session.capabilities.audio,
         llama_model_get_vocab(llama_get_model(context)),
         static_cast<size_t>(meta.slot_n_ctx));
+    if (current_config.experimental_recirculation_auto_reuse &&
+            current_config.recirculation_journal &&
+            !current_config.recirculation_model_profile_fingerprint.empty()) {
+        session.inference = std::make_unique<experimental_recirculation_inference>(
+            std::move(session.inference), current_config.recirculation_journal,
+            current_config.recirculation_model_profile_fingerprint);
+    }
     if (server_context_host_trace_enabled()) {
         std::fprintf(stderr, "agent server_context host trace: event=build-inference-session-exit requested_context=%d model_training_context=%d actual_slot_context=%d\n",
             current_config.context_key.n_ctx, meta.model_n_ctx_train, meta.slot_n_ctx);

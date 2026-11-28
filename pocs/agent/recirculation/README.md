@@ -76,6 +76,40 @@ trial prefixed one token at a time. Matching the resident batch-prefill and
 context settings resolved the mismatch; the live/trial logit comparison
 remains a required guard before import.
 
+## Experimental FlyDelta recall
+
+The resident host can wrap its normal inference adapter with a scope-bound
+recirculation memory. The opt-in host configuration requires an existing
+FlyDelta lifecycle journal and an exact model-profile fingerprint. A request
+must also set `recirculation_experiment_mode`, `scope`, and a host-selected
+`recirculation_context_key`. After a committed replay, the host appends an
+`observed` `flydelta_experiment` record containing the layer pair, dose,
+window size, target mode, rounds and entropy observation. This is not a
+candidate, an active adapter, or a `HELPED` outcome.
+
+On a later request with the same namespace, project, model profile and context
+key, the host retrieves the newest matching profile and injects
+the typed recirculation request before generation. A different identity or
+ordinary generation cannot recall it. The resident smoke exercises the
+complete remember/recall path when the first run commits. A context key is
+supplied by the experimental host; the model does not infer one from its own
+answer. This mechanism is for scoped experimentation. It does not establish
+that a lower-entropy replay improves task outcomes.
+The default scope is one session; an explicit project memory scope permits
+reuse across sessions in that project. Turn and global scope are rejected.
+The model-free CTest covers in-memory isolation and reopening the existing
+JSONL lifecycle journal before recall.
+If a recalled profile completes its rounds but no longer meets the same
+entropy-gain rule, an append-only suppression record prevents further recall
+for that context. An explicitly tested different configuration can supersede
+the suppression. Technical replay failures do not suppress a profile.
+
+The 2026-11-28 resident Qwen3 smoke with the unopened-box prompt confirmed
+`committed=1` on the explicit run and `recalled=1` on the next generation in
+the same session/context. The default Qwen2 smoke reported `committed=0` and
+`recalled=0`. Both are transport and policy observations; neither measures a
+verified improvement in answer quality.
+
 On 2026-11-28, the model-free recirculation CTests passed 5/5. CPU smokes passed
 for Qwen2.5 1.5B Q4_K_M and Qwen3 0.6B Q8_0. Both showed zero maximum logit
 error for identity replay and one-round targeted equivalence. Later-round

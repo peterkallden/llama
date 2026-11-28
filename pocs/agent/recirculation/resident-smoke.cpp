@@ -1,4 +1,5 @@
 #include "agent/agent-recirculation.h"
+#include "agent/adaptation/lifecycle-store.h"
 #include "agent-server-context-host.h"
 
 #include <iostream>
@@ -19,6 +20,9 @@ int main(int argc, char ** argv) {
     config.context_key.n_sequences = 1;
     config.context_key.n_ctx = 1024;
     config.context_key.n_threads = 2;
+    config.experimental_recirculation_auto_reuse = true;
+    config.recirculation_journal = std::make_shared<common_learning_in_memory_lifecycle_store>();
+    config.recirculation_model_profile_fingerprint = std::string("smoke:") + argv[1];
     std::string error;
     if (!host.start(config, error)) throw std::runtime_error("resident start failed: " + error);
     common_agent_inference_session session;
@@ -28,6 +32,13 @@ int main(int argc, char ** argv) {
     request.purpose = common_agent_generation_purpose::conversation;
     request.messages = {{"user", argc >= 4 ? argv[3] : "Write the numbers from 1 to 20, one per line."}};
     request.options.n_predict = 20;
+    common_agent_scope scope;
+    scope.namespace_id = "recirculation-smoke";
+    scope.project_id = "poc";
+    scope.session_id = "resident";
+    request.scope = scope;
+    request.recirculation_experiment_mode = true;
+    request.recirculation_context_key = "smoke:generated-window";
     auto rec = std::make_shared<common_agent_recirculation_request>();
     rec->source_layer = 7;
     rec->destination_layer = 2;
@@ -46,12 +57,24 @@ int main(int argc, char ** argv) {
             !result.recirculation_observation->failure_reason.empty())
         throw std::runtime_error("resident recirculation was not exercised: " +
             (result.recirculation_observation ? result.recirculation_observation->failure_reason : "missing observation"));
+    bool recalled = false;
+    if (result.recirculation_observation->committed) {
+        common_agent_generation_result repeated;
+        if (!session.inference->generate(baseline_request, repeated) ||
+                !repeated.recirculation_observation ||
+                !repeated.recirculation_observation->attempted ||
+                !repeated.recirculation_observation->recalled_profile ||
+                !repeated.recirculation_observation->memory_error.empty())
+            throw std::runtime_error("committed profile was not recalled on the next matching context");
+        recalled = true;
+    }
     std::cout << "PASS: resident recirculation; tokens=" << result.decoded_tokens
               << " rounds=" << result.recirculation_observation->completed_rounds
               << " committed=" << result.recirculation_observation->committed
               << " baseline_entropy=" << result.recirculation_observation->baseline_entropy
               << " refined_entropy=" << result.recirculation_observation->refined_entropy
-              << " outputs_equal=" << (baseline.content == result.content) << '\n';
+              << " outputs_equal=" << (baseline.content == result.content)
+              << " recalled=" << recalled << '\n';
     host.stop();
     } catch (const std::exception & e) {
         std::cerr << "FAIL: " << e.what() << '\n';

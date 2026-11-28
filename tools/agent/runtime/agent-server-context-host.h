@@ -14,6 +14,7 @@
 #include <vector>
 
 struct server_context;
+class common_learning_lifecycle_store;
 class common_agent_server_context_host;
 
 struct common_agent_server_context_load_key {
@@ -39,6 +40,11 @@ struct common_agent_server_context_host_config {
     bool per_sequence_factorized_cvec_batch = false;
     std::string teacher_scoring_backend = "auto";
     bool agent_trace = false;
+    // Experimental only. Reuses the existing FlyDelta lifecycle journal and
+    // never changes normal generation or promotion state.
+    bool experimental_recirculation_auto_reuse = false;
+    std::shared_ptr<common_learning_lifecycle_store> recirculation_journal;
+    std::string recirculation_model_profile_fingerprint;
 };
 
 struct common_agent_server_context_running_instance {

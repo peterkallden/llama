@@ -250,6 +250,7 @@ adaptation/flydelta/flydelta-scale-search.cpp adaptation/flydelta/flydelta-scale
     adaptation/flydelta/flydelta-artifact-store.cpp adaptation/flydelta/flydelta-artifact-store.h
     adaptation/flydelta/flydelta-representation-augmentation.cpp adaptation/flydelta/flydelta-representation-augmentation.h
     adaptation/flydelta/flydelta-representation-augmentation-state-store.cpp adaptation/flydelta/flydelta-representation-augmentation-state-store.h
+    adaptation/flydelta/flydelta-recirculation-memory.cpp adaptation/flydelta/flydelta-recirculation-memory.h
     adaptation/flydelta/flydelta-concept.cpp adaptation/flydelta/flydelta-concept.h
     adaptation/flydelta/flydelta-semantic-decision.cpp adaptation/flydelta/flydelta-semantic-decision.h
     adaptation/flydelta/flydelta-progress.cpp adaptation/flydelta/flydelta-progress.h
