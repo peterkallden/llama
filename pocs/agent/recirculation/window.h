@@ -8,6 +8,7 @@ struct window_result {
     std::vector<float> baseline_logits;
     std::vector<float> refined_logits;
     std::vector<uint8_t> baseline_state;
+    std::vector<uint8_t> baseline_sequence_state;
     std::vector<uint8_t> refined_state;
     std::vector<uint8_t> refined_sequence_state;
     std::vector<float> patch_changes;
@@ -152,6 +153,7 @@ inline window_result run_window(llama_model * model, const recirculation_config 
         baseline.clear_hooks();
     }
     result.baseline_state = window_state(baseline.context());
+    result.baseline_sequence_state = window_sequence_state(baseline.context());
     result.baseline_entropy = window_entropy(result.baseline_logits);
     if (mode != window_target_mode::fixed) {
         const int32_t selected = window_select_target(entropies, destinations, mode, threshold, result.trigger_signal);

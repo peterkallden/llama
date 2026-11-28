@@ -1,6 +1,7 @@
 #include "llama-backend.h"
 #include "experiment.h"
 #include "window.h"
+#include "historical-window.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <fstream>
@@ -14,6 +15,8 @@ struct options {
     std::string model, text_file, trace, cases_file, experiment_mode, dev_cases_file, eval_cases_file, selection_file;
     uint32_t steps = 128, prompt_tokens = 32;
     float novelty_threshold = 0.15f;
+    unsigned window_rounds = 2;
+    std::vector<std::string> case_ids;
     recirculation_config config;
 };
 static json metrics(const observation & o) {
@@ -242,6 +245,8 @@ int main(int argc, char ** argv) {
             else if (key == "--experiment-mode") opt.experiment_mode = value;
             else if (key == "--dev-cases-file") opt.dev_cases_file = value;
             else if (key == "--eval-cases-file") opt.eval_cases_file = value;
+            else if (key == "--case-id") opt.case_ids.push_back(value);
+            else if (key == "--window-rounds") opt.window_rounds = std::stoul(value);
             else if (key == "--selection-file") opt.selection_file = value;
             else if (key == "--novelty-threshold") opt.novelty_threshold = std::stof(value);
             else if (key == "--text-file") opt.text_file = value;
@@ -259,10 +264,14 @@ int main(int argc, char ** argv) {
         }
         if (opt.model.empty()) { std::cout << "SKIP: supply --model for model smoke; run CTests for model-free contracts\n"; return 77; }
         if (opt.trace.empty() || (opt.experiment_mode.empty() && (opt.steps < 128 || opt.steps > 512))) throw std::runtime_error("require --trace and 128 <= --steps <= 512 outside experiment mode");
-        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate" && opt.experiment_mode != "window-smoke") throw std::runtime_error("invalid experiment mode");
+        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate" && opt.experiment_mode != "window-smoke" && opt.experiment_mode != "historical-window") throw std::runtime_error("invalid experiment mode");
         if (!std::isfinite(opt.novelty_threshold) || opt.novelty_threshold < 0 || opt.novelty_threshold > 2) throw std::runtime_error("invalid novelty threshold");
         if (opt.experiment_mode == "tune" && (opt.dev_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("tune mode requires --dev-cases-file and --selection-file");
         if ((opt.experiment_mode == "evaluate" || opt.experiment_mode == "repair" || opt.experiment_mode == "target-evaluate") && (opt.eval_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("evaluation requires --eval-cases-file and --selection-file");
+        if (opt.experiment_mode == "historical-window" &&
+                (opt.eval_cases_file.empty() || opt.case_ids.empty() || opt.window_rounds < 1 ||
+                 opt.window_rounds > 3 || opt.config.beta != 1.0f))
+            throw std::runtime_error("historical window requires explicit cases, 1-3 rounds and beta=1");
         opt.config.model_identity = std::filesystem::canonical(opt.model).string();
         std::ofstream trace(opt.trace);
         if (!trace) throw std::runtime_error("cannot open trace");
@@ -277,13 +286,34 @@ int main(int argc, char ** argv) {
             {"source_snapshot", "HEAD plus local worktree; archive diff with trace"},
             {"model", opt.config.model_identity}, {"model_bytes", size}, {"model_mtime", mtime},
             {"source_layer_input", opt.config.source_layer_input}, {"destination_layer_input", opt.config.destination_layer_input},
-            {"alpha", opt.config.alpha}, {"beta", opt.config.beta}, {"extra_passes", 1}, {"sampling", "greedy; one selection per generated token"},
+            {"alpha", opt.config.alpha}, {"beta", opt.config.beta}, {"extra_passes", 1},
+            {"window_rounds", opt.window_rounds}, {"case_ids", opt.case_ids},
+            {"sampling", "greedy; one selection per generated token"},
             {"paper_schedule", "same-token A/B serial dependency schedule; paper setup and results not reproduced"}}.dump() << '\n';
         llama_backend_init();
         struct release { ~release() { llama_backend_free(); } } cleanup;
         auto params = llama_model_default_params(); params.n_gpu_layers = 0;
         std::unique_ptr<llama_model, decltype(&llama_model_free)> model(llama_model_load_from_file(opt.model.c_str(), params), llama_model_free);
         if (!model) throw std::runtime_error("model load failed");
+        if (opt.experiment_mode == "historical-window") {
+            const auto cases = read_experiment_cases(model.get(), opt.eval_cases_file);
+            const std::unordered_set<std::string> selected(opt.case_ids.begin(), opt.case_ids.end());
+            if (selected.size() != opt.case_ids.size()) throw std::runtime_error("duplicate historical case ID");
+            size_t completed = 0;
+            for (const auto & item : cases) {
+                if (!selected.count(item.id)) continue;
+                const auto result = historical_window_case(model.get(), item, opt.config, opt.window_rounds, trace);
+                trace << json{{"event", "historical_window_case"}, {"result", result}}.dump() << '\n';
+                std::cout << item.id << " old_gain=" << result.at("old_targeted_gain")
+                    << " window_forced_gain=" << result.at("window_forced_gain")
+                    << " window_policy_gain=" << result.at("window_policy_gain")
+                    << " committed=" << result.at("committed") << '\n';
+                ++completed;
+            }
+            if (completed != selected.size()) throw std::runtime_error("historical case ID not found");
+            std::cout << "PASS: historical window cases=" << completed << '\n';
+            return 0;
+        }
         if (opt.experiment_mode == "window-smoke") {
             const auto tokens = tokenize(model.get(), "A red key is in a drawer. Then Mira moves the key into a pouch. The key is now in the pouch.");
             if (tokens.size() < 24) throw std::runtime_error("window smoke prompt too short");

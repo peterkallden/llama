@@ -1,5 +1,58 @@
 # Tokenwise recirculation PoC
 
+## Historical UPDATE-case regression
+
+`--experiment-mode historical-window` replays a six-token prompt window around
+the known `UPDATE` position from the original evaluation fixtures. It compares
+the original targeted single-token arm with a forced window replay and the
+window's predeclared entropy-based commit policy. The known position is an
+offline diagnostic oracle. The expected and incorrect answer strings are used
+only to score teacher-forced continuations, never to select the window or
+commit a trial. The first continuation token uses Pass A logits in both window
+arms; subsequent tokens use the respective exported KV state. Baseline parity
+with the original scorer is reported for every case.
+
+```sh
+<build>/bin/llama-recirculation-poc \
+  --model /path/to/Qwen3-0.6B-Q8_0.gguf \
+  --source 7 --destination 2 --alpha 0.03 \
+  --experiment-mode historical-window \
+  --eval-cases-file pocs/agent/recirculation/data/evaluation.jsonl \
+  --case-id eval-object-1 --case-id eval-object-2 \
+  --case-id eval-relation-1 --window-rounds 2 \
+  --trace historical-window.jsonl
+```
+
+This mode is a regression probe for previously positive targeted-margin cases,
+not a new held-out evaluation. Do not tune its pair, dose, window or commit
+rule on these cases and then claim an independent improvement. A positive
+margin change means the expected continuation became relatively more likely;
+it does not imply that the model preferred the expected answer.
+
+On 2026-11-28, the current Qwen3 0.6B Q8_0 build produced these margin changes
+relative to its own baseline at two rounds (`alpha=0.03`, layers `7 -> 2`):
+
+| Case | Original targeted | Forced window | Entropy policy | Committed |
+| --- | ---: | ---: | ---: | :---: |
+| `eval-object-1` | +0.0456 | -0.1694 | -0.1694 | yes |
+| `eval-object-2` | +0.2222 | +0.2905 | 0 | no |
+| `eval-relation-1` | +0.0751 | -0.0053 | 0 | no |
+
+The baseline parity delta was zero for all three cases. None changed the
+preferred answer. The entropy rule accepted the harmful window in the first
+case and rejected the beneficial forced window in the second, so this test does
+not support entropy reduction as an answer-quality commit rule. The earlier
+archived targeted gains were +0.2170, +0.2536 and +0.2260 respectively; a
+current-build recomputation retains their positive signs but differs in size.
+The archived run used an earlier, partly uncommitted PoC snapshot. Consequently
+the old and current numbers must not be treated as exact numerical replicas.
+As a mechanism control, a one-round forced window gave exactly the same gains
+as the current targeted arm for all three cases (+0.0456, +0.2222, +0.0751),
+while the entropy rule rejected all three. Thus the two-round differences are
+caused by the additional refinement rather than the six-token replay or the
+continuation scorer. The eight selected recirculation and FlyDelta CTests
+passed, including the new historical-window bounds contract.
+
 ## Experimental window refinement (in progress)
 
 `window.h` tests a separate, bounded mechanism: save a full prefix context,
@@ -31,7 +84,7 @@ The smoke checks identity replay, one-round equivalence with targeted replay,
 one- through three-round source feedback, no-trigger handling, context-state
 restore, and one continuation token. This path is a teacher-forced mechanism
 check. The separate resident smoke below tests the active agent transport.
-FlyDelta reuse described in the larger experiment plan remains unimplemented;
+The experimental FlyDelta recall below is available through a resident opt-in;
 do not interpret this teacher-forced smoke as evidence for active-agent benefit.
 
 The smoke also exports the refined trial sequence through
@@ -238,8 +291,8 @@ Configure with `LLAMA_AGENT_BUILD_POCS=ON`, `LLAMA_RECIRCULATION_POC=ON` and
 `BUILD_TESTING=ON`. Recirculation is off by default. Build:
 
 ```sh
-cmake --build <build> --target llama-recirculation-poc test-agent-recirculation-contract test-agent-recirculation-runner test-agent-recirculation-memory test-agent-recirculation-window -j8
-ctest --test-dir <build> -R '^llama-agent-recirculation-(contract|runner|memory|window|analysis)-ctest$' --output-on-failure
+cmake --build <build> --target llama-recirculation-poc test-agent-recirculation-contract test-agent-recirculation-runner test-agent-recirculation-memory test-agent-recirculation-window test-agent-recirculation-historical-window -j8
+ctest --test-dir <build> -R '^llama-agent-recirculation-(contract|runner|memory|window|historical-window|analysis)-ctest$' --output-on-failure
 ```
 
 Assertions remain enabled in release builds. Contracts exercise normalization,
