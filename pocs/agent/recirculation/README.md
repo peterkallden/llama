@@ -158,8 +158,8 @@ Configure with `LLAMA_AGENT_BUILD_POCS=ON`, `LLAMA_RECIRCULATION_POC=ON` and
 `BUILD_TESTING=ON`. Recirculation is off by default. Build:
 
 ```sh
-cmake --build <build> --target llama-recirculation-poc test-agent-recirculation-contract test-agent-recirculation-runner test-agent-recirculation-memory -j8
-ctest --test-dir <build> -R '^llama-agent-recirculation-(contract|runner|memory)-ctest$' --output-on-failure
+cmake --build <build> --target llama-recirculation-poc test-agent-recirculation-contract test-agent-recirculation-runner test-agent-recirculation-memory test-agent-recirculation-window -j8
+ctest --test-dir <build> -R '^llama-agent-recirculation-(contract|runner|memory|window|analysis)-ctest$' --output-on-failure
 ```
 
 Assertions remain enabled in release builds. Contracts exercise normalization,
