@@ -16,6 +16,7 @@ struct window_result {
     std::vector<double> patch_displacement_norms;
     std::vector<std::optional<double>> patch_direction_cosines;
     std::vector<std::optional<double>> patch_norm_ratios;
+    std::vector<std::optional<double>> downstream_projection_deltas;
     double original_destination_norm = 0;
     int64_t replay_wall_us = 0;
     double baseline_entropy = 0;
@@ -30,9 +31,52 @@ enum class window_target_mode { fixed, uncertainty, curvature };
 
 struct window_patch_options {
     std::vector<float> initial_direction;
+    std::vector<uint8_t> source_mask;
     bool update_from_source = true;
     double fixed_second_patch_norm = -1;
+    std::vector<float> downstream_reference;
 };
+
+inline std::vector<float> window_masked_patch(const std::vector<float> & destination,
+        const std::vector<float> & source, const std::vector<uint8_t> & mask, float alpha) {
+    if (destination.empty() || source.size() != destination.size() || mask.size() != source.size() ||
+            !std::isfinite(alpha) || alpha < 0) throw std::invalid_argument("invalid source mask request");
+    double source_squared = 0, selected_squared = 0, destination_squared = 0;
+    for (size_t i = 0; i < source.size(); ++i) {
+        if (mask[i] > 1 || !std::isfinite(source[i]) || !std::isfinite(destination[i]))
+            throw std::invalid_argument("invalid source mask values");
+        source_squared += double(source[i]) * source[i];
+        selected_squared += mask[i] ? double(source[i]) * source[i] : 0;
+        destination_squared += double(destination[i]) * destination[i];
+    }
+    if (source_squared <= 1e-20 || selected_squared <= 1e-20 || destination_squared <= 1e-20)
+        throw std::invalid_argument("source mask has zero norm");
+    const double scale = double(alpha) * std::sqrt(destination_squared / selected_squared);
+    std::vector<float> patch(source.size());
+    for (size_t i = 0; i < source.size(); ++i) {
+        const double value = double(destination[i]) + (mask[i] ? scale * source[i] : 0);
+        if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
+            throw std::invalid_argument("invalid masked patch");
+        patch[i] = float(value);
+    }
+    return patch;
+}
+
+inline std::optional<double> window_downstream_projection_delta(const std::vector<float> & baseline,
+        const std::vector<float> & refined, const std::vector<float> & reference) {
+    if (baseline.size() != refined.size() || baseline.size() != reference.size() || baseline.empty())
+        throw std::invalid_argument("invalid downstream projection vectors");
+    double reference_squared = 0, dot = 0;
+    for (size_t i = 0; i < reference.size(); ++i) {
+        if (!std::isfinite(baseline[i]) || !std::isfinite(refined[i]) || !std::isfinite(reference[i]))
+            throw std::invalid_argument("non-finite downstream projection vector");
+        reference_squared += double(reference[i]) * reference[i];
+        dot += (double(refined[i]) - baseline[i]) * reference[i];
+    }
+    if (!std::isfinite(reference_squared) || reference_squared <= 1e-20 || !std::isfinite(dot))
+        return std::nullopt;
+    return dot / std::sqrt(reference_squared);
+}
 
 inline double window_curvature(const std::vector<float> & before,
         const std::vector<float> & middle, const std::vector<float> & after) {
@@ -236,6 +280,11 @@ inline window_result run_window(llama_model * model, const recirculation_config 
             patch[i] = float(value);
         }
     }
+    if (!patch_options.source_mask.empty()) {
+        if (!initial_direction.empty() || rounds != 1 || config.beta != 1.0f)
+            throw std::invalid_argument("source mask requires one ordinary beta-one round");
+        patch = window_masked_patch(original.destination, original.source, patch_options.source_mask, config.alpha);
+    }
     result.original_destination_norm = dn;
     result.patch_displacement_norms.push_back(window_patch_displacement_norm(patch, original.destination));
     for (unsigned round = 0; round < rounds; ++round) {
@@ -258,6 +307,9 @@ inline window_result run_window(llama_model * model, const recirculation_config 
         result.refined_sequence_state = window_sequence_state(trial.context());
         result.refined_entropy = window_entropy(result.refined_logits);
         result.completed_rounds = round + 1;
+        if (!patch_options.downstream_reference.empty())
+            result.downstream_projection_deltas.push_back(window_downstream_projection_delta(
+                original.source, patched.source, patch_options.downstream_reference));
         if (round + 1 < rounds) {
             auto next = patch_options.update_from_source ? window_next_patch(patch, original.destination, patched.source, config.alpha, damping) : patch;
             if (!patch_options.update_from_source && fixed_second_patch_norm >= 0)

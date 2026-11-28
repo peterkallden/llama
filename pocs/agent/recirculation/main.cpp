@@ -3,6 +3,7 @@
 #include "window.h"
 #include "historical-window.h"
 #include "alternative-direction.h"
+#include "selective-mask.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <fstream>
@@ -265,7 +266,7 @@ int main(int argc, char ** argv) {
         }
         if (opt.model.empty()) { std::cout << "SKIP: supply --model for model smoke; run CTests for model-free contracts\n"; return 77; }
         if (opt.trace.empty() || (opt.experiment_mode.empty() && (opt.steps < 128 || opt.steps > 512))) throw std::runtime_error("require --trace and 128 <= --steps <= 512 outside experiment mode");
-        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate" && opt.experiment_mode != "window-smoke" && opt.experiment_mode != "historical-window" && opt.experiment_mode != "alternative-direction") throw std::runtime_error("invalid experiment mode");
+        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate" && opt.experiment_mode != "window-smoke" && opt.experiment_mode != "historical-window" && opt.experiment_mode != "alternative-direction" && opt.experiment_mode != "selective-mask") throw std::runtime_error("invalid experiment mode");
         if (!std::isfinite(opt.novelty_threshold) || opt.novelty_threshold < 0 || opt.novelty_threshold > 2) throw std::runtime_error("invalid novelty threshold");
         if (opt.experiment_mode == "tune" && (opt.dev_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("tune mode requires --dev-cases-file and --selection-file");
         if ((opt.experiment_mode == "evaluate" || opt.experiment_mode == "repair" || opt.experiment_mode == "target-evaluate") && (opt.eval_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("evaluation requires --eval-cases-file and --selection-file");
@@ -277,6 +278,10 @@ int main(int argc, char ** argv) {
                 (opt.dev_cases_file.empty() || opt.eval_cases_file.empty() || opt.case_ids.empty() ||
                  opt.config.beta != 1.0f))
             throw std::runtime_error("alternative direction requires development, evaluation and explicit cases");
+        if (opt.experiment_mode == "selective-mask" &&
+                (opt.dev_cases_file.empty() || opt.eval_cases_file.empty() || opt.case_ids.empty() ||
+                 opt.config.beta != 1.0f || opt.config.alpha <= 0))
+            throw std::runtime_error("selective mask requires development, evaluation, explicit cases, beta=1 and positive alpha");
         opt.config.model_identity = std::filesystem::canonical(opt.model).string();
         std::ofstream trace(opt.trace);
         if (!trace) throw std::runtime_error("cannot open trace");
@@ -300,6 +305,60 @@ int main(int argc, char ** argv) {
         auto params = llama_model_default_params(); params.n_gpu_layers = 0;
         std::unique_ptr<llama_model, decltype(&llama_model_free)> model(llama_model_load_from_file(opt.model.c_str(), params), llama_model_free);
         if (!model) throw std::runtime_error("model load failed");
+        if (opt.experiment_mode == "selective-mask") {
+            const auto development = read_experiment_cases(model.get(), opt.dev_cases_file);
+            const auto evaluation = read_experiment_cases(model.get(), opt.eval_cases_file);
+            const std::unordered_set<std::string> requested(opt.case_ids.begin(), opt.case_ids.end());
+            if (requested.size() != opt.case_ids.size()) throw std::runtime_error("duplicate selective mask case ID");
+            const size_t width = size_t(llama_model_n_embd(model.get()));
+            const size_t count = std::max<size_t>(1, width / 4);
+            std::vector<double> magnitudes(width, 0);
+            std::vector<const experiment_case *> dev_cases;
+            std::unordered_set<std::string> dev_ids;
+            for (const auto & item : development) {
+                dev_ids.insert(item.id);
+                if (item.task_type != "object_location" || item.prompt_tokens.size() < 6) continue;
+                const auto captured = alternative_capture_layers(model.get(), opt.config, item.prompt_tokens);
+                for (size_t i = 0; i < width; ++i) magnitudes[i] += std::abs(double(captured.downstream[i]));
+                dev_cases.push_back(&item);
+            }
+            if (dev_cases.size() < 2) throw std::runtime_error("insufficient development mask cases");
+            for (const auto & item : evaluation) if (dev_ids.count(item.id))
+                throw std::runtime_error("development and evaluation case IDs overlap");
+            std::vector<std::vector<uint8_t>> candidates{selective_magnitude_mask(magnitudes, count)};
+            for (uint32_t seed : {11u, 23u, 37u}) candidates.push_back(selective_random_mask(width, count, seed));
+            std::vector<double> dev_mean(candidates.size(), 0);
+            for (const auto * item : dev_cases) {
+                for (size_t i = 0; i < candidates.size(); ++i) {
+                    const auto result = selective_mask_case(model.get(), *item, opt.config, candidates[i], {});
+                    dev_mean[i] += result.at("selected_mask").at("margin").get<double>() -
+                        result.at("baseline").at("margin").get<double>();
+                }
+            }
+            for (double & value : dev_mean) value /= dev_cases.size();
+            const size_t chosen = size_t(std::max_element(dev_mean.begin(), dev_mean.end()) - dev_mean.begin());
+            std::vector<size_t> selected_indices;
+            for (size_t i = 0; i < width; ++i) if (candidates[chosen][i]) selected_indices.push_back(i);
+            trace << json{{"event", "selective_mask_selection"}, {"candidate_names", {"source_magnitude", "random_11", "random_23", "random_37"}},
+                {"development_mean_margin_changes", dev_mean}, {"selected_candidate", chosen},
+                {"selected_indices", selected_indices}, {"development_cases", dev_cases.size()},
+                {"mask_density", count}, {"selection_rule", "maximum_mean_development_margin_change"},
+                {"control_seeds", {101, 103, 107}}, {"locked_before_evaluation", true}}.dump() << '\n';
+            const std::vector<std::vector<uint8_t>> controls{
+                selective_random_mask(width, count, 101), selective_random_mask(width, count, 103),
+                selective_random_mask(width, count, 107)};
+            size_t completed = 0;
+            for (const auto & item : evaluation) {
+                if (!requested.count(item.id)) continue;
+                if (item.task_type != "object_location") throw std::runtime_error("selective mask requires object-location cases");
+                const auto result = selective_mask_case(model.get(), item, opt.config, candidates[chosen], controls);
+                trace << json{{"event", "selective_mask_case"}, {"result", result}}.dump() << '\n';
+                ++completed;
+            }
+            if (completed != requested.size()) throw std::runtime_error("selective mask case ID not found");
+            std::cout << "PASS: selective mask cases=" << completed << '\n';
+            return 0;
+        }
         if (opt.experiment_mode == "alternative-direction") {
             const auto development = read_experiment_cases(model.get(), opt.dev_cases_file);
             const auto evaluation = read_experiment_cases(model.get(), opt.eval_cases_file);
@@ -310,13 +369,17 @@ int main(int argc, char ** argv) {
             const auto fit = alternative_fit_direction(model.get(), opt.config, development);
             trace << json{{"event", "alternative_direction_fit"}, {"training_ids", fit.training_ids},
                 {"excluded_ids", fit.excluded_ids}, {"training_alignments", fit.training_alignments},
+                {"leave_one_out_alignments", fit.leave_one_out_alignments},
+                {"downstream_leave_one_out_alignments", fit.downstream_leave_one_out_alignments},
                 {"capture_layer", opt.config.destination_layer_input},
+                {"downstream_reference_layer", opt.config.source_layer_input},
                 {"capture_site", "second_to_last_prompt_token"}, {"direction_semantics", "development_update_minus_counterfactual_old_location"},
                 {"experimental_only", true}}.dump() << '\n';
             size_t completed = 0;
             for (const auto & item : evaluation) {
                 if (!requested.count(item.id)) continue;
-                const auto result = alternative_direction_case(model.get(), item, opt.config, fit.values);
+                const auto result = alternative_direction_case(model.get(), item, opt.config,
+                    fit.values, fit.downstream_reference);
                 trace << json{{"event", "alternative_direction_case"}, {"result", result}}.dump() << '\n';
                 std::cout << item.id << " baseline=" << result.at("baseline").at("margin")
                     << " alternative_two=" << result.at("alternative_two").at("margin") << '\n';

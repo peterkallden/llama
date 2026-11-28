@@ -1,5 +1,46 @@
 # Tokenwise recirculation PoC
 
+## Component-selective source feedback experiment
+
+`--experiment-mode selective-mask` compares the scalar source patch with one
+fixed, 25%-density coordinate mask and three independent random masks. The
+selected source components are renormalized to the ordinary injection norm.
+All arms use the same alpha, layer pair, target position, one extra replay
+pass, and frozen model. This tests this PoC's same-token A/rewind/B replay,
+not the paper's cross-token recurrence or trained adaptive vector gates.
+
+The development-only candidates are a top-source-magnitude mask and three
+deterministic random masks (seeds 11, 23, 37). The highest mean development
+answer-margin change selects the fixed mask before held-out evaluation.
+Independent random controls use seeds 101, 103, 107. Selection and evaluation
+currently use `object_location` cases only. The trace includes selected
+indices, development scores, case margins, expected and incorrect token log
+probabilities, actual patch norms, and replay time. The first continuation
+prediction uses the Pass A logits in all arms.
+
+```sh
+build-merge/bin/llama-recirculation-poc \
+  --model /path/to/qwen3-0.6b-q8_0.gguf \
+  --experiment-mode selective-mask \
+  --dev-cases-file pocs/agent/recirculation/data/development-v2.jsonl \
+  --eval-cases-file pocs/agent/recirculation/data/evaluation-v2.jsonl \
+  --case-id v2-evaluation-object-0 \
+  --source 7 --destination 2 --alpha 0.03 --beta 1 \
+  --trace selective-mask.jsonl
+```
+
+This is a mechanism probe on small templated cases. The selected mask can
+overfit development data; no held-out gain, semantic meaning of individual
+coordinates, online selection policy, or FlyDelta promotion is assumed.
+
+An elevated Qwen3 0.6B Q8_0 CPU smoke on `v2-evaluation-object-0` completed
+with exit code 0. Development selected the source-magnitude mask (mean
+development margin change +0.0167). On the single held-out case, margins were
+-0.1463 without intervention, -0.4474 for scalar feedback, -0.5011 for the
+selected mask, and -0.6295/-0.3519/-0.5629 for the three random controls.
+The patch displacement norms agreed at 0.35559 within tolerance. The selected
+mask did not help this case; this smoke verifies execution, not efficacy.
+
 ## Experimental alternative direction
 
 `--experiment-mode alternative-direction` is an offline comparison. It fits one
@@ -13,6 +54,23 @@ separate evaluation cases. Training IDs, exclusions, capture site and semantic
 role are recorded in the trace. This is an experimental direction, not a
 FlyDelta concept candidate or verified repair direction; it bypasses no
 FlyDelta evidence or promotion gate.
+
+The fit now records leave-one-out alignment for each development case: it
+builds the direction from the other development contrasts and compares that
+direction with the excluded contrast. The same check is made at the source
+layer, which is later than the destination layer and supplies a separate
+development-only reference. Undefined mean or cosine is recorded as JSON
+`null`; token-count exclusions remain explicit in the fit trace.
+
+For every intervention round, the PoC measures the change in source-layer
+input at the patched token and projects it onto the unit source-layer
+reference. This downstream projection uses no held-out answer or
+counterfactual. It is reported for baseline-direction, alternative,
+permuted and norm-matched arms without changing any patch or commit decision.
+An increased projection shows that the reference feature became more present
+at that capture site; it is not proof of a better answer or of a distinct
+internal hypothesis.
+
 The evaluator also reports post-hoc alignment with each held-out
 updated-minus-counterfactual capture when token counts match. Held-out labels
 are used for this diagnostic only, after the development direction is fixed;
@@ -45,6 +103,9 @@ online by the answer label.
   --eval-cases-file pocs/agent/recirculation/data/evaluation-v2.jsonl \
   --case-id v2-evaluation-object-0 --trace alternative-direction.jsonl
 ```
+
+Repeat `--case-id` for `v2-evaluation-object-0` through
+`v2-evaluation-object-7` to run the fixed eight-case object comparison.
 
 Predeclare case IDs and all parameters before a held-out run. The current v2
 data use repeated templates, so separation by ID is weaker than an independent
@@ -81,6 +142,18 @@ arm changed it by -0.4676. The run printed its `PASS` case count, but its
 shell process was interrupted after that output and returned 130; treat these
 as complete case observations without a clean process-exit proof. It preceded
 the matched-second-round control, so no Qwen2 result is reported for that arm.
+
+The follow-up diagnostic smoke on 2026-11-28 kept Qwen3 layers `7 -> 2` and
+alpha `0.03` fixed. All eight development contrasts were retained. Median
+leave-one-out alignment was -0.0371 at the destination layer and +0.1999 at
+the downstream source layer. On `v2-evaluation-object-0`, one-round ordinary
+recirculation changed downstream projection by +0.0158 and answer margin
+from -0.1463 to -0.4474. The alternative patch changed projection by +0.0472
+but margin to -0.5297. Baseline has no patch projection. These are one-case
+mechanism observations: greater projection toward the development reference
+did not predict a better answer. The earlier eight-case answer-margin results
+above were not rerun with this new diagnostic because it cannot change the
+intervention or scoring path.
 
 ## Historical UPDATE-case regression
 
