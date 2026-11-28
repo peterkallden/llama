@@ -1,5 +1,6 @@
 #include "llama-backend.h"
 #include "experiment.h"
+#include "window.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <fstream>
@@ -258,7 +259,7 @@ int main(int argc, char ** argv) {
         }
         if (opt.model.empty()) { std::cout << "SKIP: supply --model for model smoke; run CTests for model-free contracts\n"; return 77; }
         if (opt.trace.empty() || (opt.experiment_mode.empty() && (opt.steps < 128 || opt.steps > 512))) throw std::runtime_error("require --trace and 128 <= --steps <= 512 outside experiment mode");
-        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate") throw std::runtime_error("invalid experiment mode");
+        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate" && opt.experiment_mode != "window-smoke") throw std::runtime_error("invalid experiment mode");
         if (!std::isfinite(opt.novelty_threshold) || opt.novelty_threshold < 0 || opt.novelty_threshold > 2) throw std::runtime_error("invalid novelty threshold");
         if (opt.experiment_mode == "tune" && (opt.dev_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("tune mode requires --dev-cases-file and --selection-file");
         if ((opt.experiment_mode == "evaluate" || opt.experiment_mode == "repair" || opt.experiment_mode == "target-evaluate") && (opt.eval_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("evaluation requires --eval-cases-file and --selection-file");
@@ -283,6 +284,51 @@ int main(int argc, char ** argv) {
         auto params = llama_model_default_params(); params.n_gpu_layers = 0;
         std::unique_ptr<llama_model, decltype(&llama_model_free)> model(llama_model_load_from_file(opt.model.c_str(), params), llama_model_free);
         if (!model) throw std::runtime_error("model load failed");
+        if (opt.experiment_mode == "window-smoke") {
+            const auto tokens = tokenize(model.get(), "A red key is in a drawer. Then Mira moves the key into a pouch. The key is now in the pouch.");
+            if (tokens.size() < 24) throw std::runtime_error("window smoke prompt too short");
+            const std::vector<llama_token> prefix(tokens.begin(), tokens.begin() + 16);
+            const std::vector<llama_token> window(tokens.begin() + 16, tokens.begin() + 22);
+            auto identity = opt.config; identity.alpha = 0;
+            const auto identity_window = run_window(model.get(), identity, prefix, window, 2, 1);
+            const double identity_error = max_difference(identity_window.baseline_logits, identity_window.refined_logits);
+            llama_backend targeted_host(model.get(), opt.config, 23);
+            runner targeted(targeted_host, opt.config, llama_model_n_layer(model.get()), llama_model_n_embd(model.get()),
+                true, patch_policy::selected_position, 18);
+            std::vector<float> targeted_logits;
+            observation targeted_obs;
+            for (int32_t pos = 0; pos < 22; ++pos) {
+                if (!targeted.step(tokens[size_t(pos)], pos, targeted_logits, targeted_obs))
+                    throw std::runtime_error("targeted window reference failed: " + targeted_obs.failure);
+            }
+            for (unsigned rounds = 1; rounds <= 3; ++rounds) {
+                auto result = run_window(model.get(), opt.config, prefix, window, 2, rounds);
+                const double targeted_error = rounds == 1 ? max_difference(targeted_logits, result.refined_logits) : 0;
+                llama_backend continuation(model.get(), opt.config, 23);
+                window_restore(continuation.context(), result.committed ? result.refined_state : result.baseline_state);
+                if (!continuation.ready(22)) throw std::runtime_error("window continuation state invalid");
+                capture next;
+                if (!continuation.first(tokens[22], 22, false, next)) throw std::runtime_error("window continuation failed");
+                trace << json{{"event", "window_smoke"}, {"rounds", rounds}, {"completed_rounds", result.completed_rounds},
+                    {"committed", result.committed}, {"baseline_entropy", result.baseline_entropy},
+                    {"refined_entropy", result.refined_entropy}, {"patch_changes", result.patch_changes},
+                    {"identity_max_error", identity_error}, {"targeted_max_error", targeted_error},
+                    {"continuation_position", 22}, {"continuation_logits", next.logits.size()}}.dump() << '\n';
+            }
+            for (const auto mode : {window_target_mode::uncertainty, window_target_mode::curvature}) {
+                const auto selected = run_window(model.get(), opt.config, prefix, window, 0, 2, 0.5f, mode, 0);
+                const auto absent = run_window(model.get(), opt.config, prefix, window, 0, 2, 0.5f, mode, 3);
+                if (absent.target_position != -1 || absent.completed_rounds != 0)
+                    throw std::runtime_error("window no-trigger contract failed");
+                trace << json{{"event", "window_target_smoke"},
+                    {"mode", mode == window_target_mode::uncertainty ? "uncertainty" : "curvature"},
+                    {"selected_position", selected.target_position}, {"trigger_signal", selected.trigger_signal},
+                    {"rounds", selected.completed_rounds}, {"committed", selected.committed},
+                    {"no_trigger_verified", true}}.dump() << '\n';
+            }
+            std::cout << "PASS: window smoke; trace " << opt.trace << '\n';
+            return 0;
+        }
         if (!opt.experiment_mode.empty()) {
             try {
                 if (opt.experiment_mode == "tune") {

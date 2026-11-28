@@ -73,8 +73,15 @@ public:
         return llama_memory_rewind_last(llama_get_memory(ctx.get()), 0, position);
     }
     bool second(int32_t token, int32_t position, const std::vector<float> & patch, bool & matched) override {
+        return patched(token, position, patch, matched, nullptr);
+    }
+    bool patched(int32_t token, int32_t position, const std::vector<float> & patch, bool & matched, capture * result) {
         last_patch = patch;
         ref = {}; matched = false;
+        if (result) {
+            capturing = true;
+            llama_set_embeddings_layer_inp(ctx.get(), config.source_layer_input, true);
+        }
         ref.operation = llama_residual_patch_operation::replace;
         ref.layer = config.destination_layer_input; ref.absolute_position = position;
         ref.sequence_id = 0; ref.values = patch.data(); ref.n_embd = patch.size(); ref.applied = &matched;
@@ -82,6 +89,13 @@ public:
         // Keep the patch pointer and matched flag alive through synchronization.
         const bool success = decode(token, position);
         llama_set_residual_patch(ctx.get(), nullptr);
+        if (success && result) {
+            auto * source = llama_get_embeddings_layer_inp_row(ctx.get(), config.source_layer_input, 0, position);
+            auto * logits = llama_get_logits_ith(ctx.get(), 0);
+            if (!source || !logits) return false;
+            result->source.assign(source, source + width);
+            result->logits.assign(logits, logits + vocab_size);
+        }
         return success;
     }
     void clear_hooks() noexcept override {

@@ -11,7 +11,7 @@ if [[ -e "$out/locked-selection.json" || -e "$out/evaluation.jsonl" ]]; then
 fi
 mkdir -p "$out"
 out=$(realpath "$out")
-ctest --test-dir "$build_dir" -R '^llama-agent-recirculation-(contract|runner|memory)-ctest$' --no-tests=error --output-on-failure > "$out/contracts.log" 2>&1
+ctest --test-dir "$build_dir" -R '^llama-agent-recirculation-(contract|runner|memory|window|analysis)-ctest$' --no-tests=error --output-on-failure > "$out/contracts.log" 2>&1
 sha256sum "$model" "$root/pocs/agent/recirculation/data/development-v2.jsonl" "$root/pocs/agent/recirculation/data/evaluation-v2.jsonl" > "$out/inputs.sha256"
 git -C "$root" rev-parse HEAD > "$out/revision.txt"
 git -C "$root" diff --binary > "$out/worktree.diff"

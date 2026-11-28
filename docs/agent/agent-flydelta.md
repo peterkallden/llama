@@ -11,6 +11,11 @@ records the build, selected CTests and model observations at its pinned commit;
 later changes require separate verification. Older dated sections retain their
 historical evidence rather than describing the current HEAD.
 
+The recirculation window-refinement PoC currently measures isolated replay and
+an internal entropy proxy. FlyDelta does not retain or automatically activate
+its loop policy. A lower entropy is not a FlyDelta `HELPED` outcome, learning
+credit, or promotion evidence. See the [PoC contract](../../pocs/agent/recirculation/README.md).
+
 Resident model traces record resolved visible GPU descriptions. For a
 hardware-specific smoke, set `LLAMA_AGENT_EXPECTED_GPU` to a description
 substring and expose exactly one matching GPU; a mismatch fails before model

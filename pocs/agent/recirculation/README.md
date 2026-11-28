@@ -1,5 +1,48 @@
 # Tokenwise recirculation PoC
 
+## Experimental window refinement (in progress)
+
+`window.h` tests a separate, bounded mechanism: save a full prefix context,
+decode six fixed tokens, restore the prefix into a fresh trial context, and
+replay those tokens with a replacement at one layer-input position. Round one
+uses the same norm-matched patch as targeted recirculation. Later rounds use
+the source-layer input captured during the previous patched replay:
+
+`z_next = (1 - 0.5) * z_prev + 0.5 * (d_A + alpha * normmatch(s_prev, d_A))`.
+
+Each round starts from the identical prefix. Only the last trial state is
+eligible for continuation. The trial is selected when normalized next-token
+entropy drops by at least 0.001 against the unpatched window. This is an
+internal confidence proxy, not evidence that the answer is correct. The
+mechanism rejects zero-norm or non-finite captures, overlarge patches, a
+target without two earlier and one later window token, and more than three
+rounds. Uncertainty rise and normalized activation-difference curvature can
+select the first eligible target; a no-trigger result keeps baseline state.
+
+Run the current functional mechanism check with a CPU Qwen model:
+
+```sh
+<build>/bin/llama-recirculation-poc --model MODEL.gguf \
+  --source 7 --destination 2 --alpha 0.1 \
+  --experiment-mode window-smoke --trace window-smoke.jsonl
+```
+
+The smoke checks identity replay, one-round equivalence with targeted replay,
+one- through three-round source feedback, no-trigger handling, context-state
+restore, and one continuation token. This path is a teacher-forced mechanism
+check. The opt-in resident server generation and FlyDelta reuse described in
+the larger experiment plan are not yet implemented; do not interpret this
+smoke as evidence for active-agent benefit or automatic activation.
+
+On 2026-11-28, the model-free recirculation CTests passed 5/5. CPU smokes passed
+for Qwen2.5 1.5B Q4_K_M and Qwen3 0.6B Q8_0. Both showed zero maximum logit
+error for identity replay and one-round targeted equivalence. Later-round
+patch changes were nonzero. On the single Qwen3 smoke window, normalized
+next-token entropy changed from 0.09727 to 0.09880, 0.09564 and 0.09950 for
+one, two and three rounds respectively. For Qwen2.5 it changed from 0.25056
+to 0.23616, 0.23767 and 0.24439. These are confidence-proxy observations
+on one fixed token window per model, not answer-quality evidence.
+
 ## Targeted token trigger experiment
 
 `--experiment-mode target-evaluate` compares four one-intervention policies on the
