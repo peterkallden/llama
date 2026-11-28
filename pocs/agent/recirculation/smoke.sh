@@ -13,7 +13,7 @@ git -C "$repo_dir" diff --binary > "$trace_dir/source-tracked.patch"
 tar -czf "$trace_dir/poc-sources.tar.gz" -C "$repo_dir" \
     pocs/agent/CMakeLists.txt \
     pocs/agent/recirculation/CMakeLists.txt pocs/agent/recirculation/README.md \
-    pocs/agent/recirculation/runner.h pocs/agent/recirculation/llama-backend.h pocs/agent/recirculation/window.h pocs/agent/recirculation/historical-window.h \
+    pocs/agent/recirculation/runner.h pocs/agent/recirculation/llama-backend.h pocs/agent/recirculation/window.h pocs/agent/recirculation/historical-window.h pocs/agent/recirculation/alternative-direction.h \
     pocs/agent/recirculation/experiment.h pocs/agent/recirculation/data/development.jsonl \
     pocs/agent/recirculation/data/evaluation.jsonl \
     pocs/agent/recirculation/main.cpp pocs/agent/recirculation/smoke.sh \

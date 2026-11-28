@@ -13,6 +13,13 @@ int main() {
     assert(next == initial);
     const auto changed = window_next_patch(initial, original, {2.0f, 0.0f}, 0.1f, 0.5f);
     assert(changed[0] > initial[0] && changed[1] < initial[1]);
+    assert(std::abs(window_patch_displacement_norm(initial, original) - 0.5) < 1e-6);
+    assert(std::abs(window_patch_direction_cosine(initial, initial, original) - 1.0) < 1e-6);
+    assert(std::abs(window_patch_direction_cosine({3.0f, 4.5f}, {3.0f, 3.5f}, original) + 1.0) < 1e-6);
+    bool geometry_rejected = false;
+    try { (void) window_patch_direction_cosine(original, initial, original); }
+    catch (const std::invalid_argument &) { geometry_rejected = true; }
+    assert(geometry_rejected);
     assert(std::abs(window_entropy({0, 0}) - 1.0) < 1e-12);
     assert(window_entropy({10, 0}) < window_entropy({0, 0}));
     double signal = 0;

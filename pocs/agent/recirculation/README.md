@@ -1,5 +1,87 @@
 # Tokenwise recirculation PoC
 
+## Experimental alternative direction
+
+`--experiment-mode alternative-direction` is an offline comparison. It fits one
+unit direction from `object_location` development cases only. For each case it
+replaces the new location in the `UPDATE` sentence with the known old location,
+requires equal token counts, and captures the destination layer input at the
+second-to-last prompt token in both versions. It averages normalized
+updated-minus-counterfactual differences. The expected/incorrect answer labels
+are used only to construct these development counterfactuals and to score the
+separate evaluation cases. Training IDs, exclusions, capture site and semantic
+role are recorded in the trace. This is an experimental direction, not a
+FlyDelta concept candidate or verified repair direction; it bypasses no
+FlyDelta evidence or promotion gate.
+The evaluator also reports post-hoc alignment with each held-out
+updated-minus-counterfactual capture when token counts match. Held-out labels
+are used for this diagnostic only, after the development direction is fixed;
+alignment never selects an arm or changes its patch.
+
+The evaluator replays the same final six prompt tokens and intervenes at the
+second-to-last position in every arm. It reports baseline, ordinary
+recirculation with one and two rounds, alternative direction with one round,
+alternative direction followed by a recirculation update, a fixed alternative
+patch replayed for two rounds, and a cyclically permuted direction control.
+It also replays a two-round fixed-direction control whose first patch is
+identical to the alternative arm and whose second patch has the same norm as
+the alternative-plus-recirculation arm. This isolates direction change from
+second-round dose change within a declared numerical tolerance.
+Each initial injected displacement has norm `alpha * ||destination||`; the
+two-round arms share the same replay budget. The fixed-patch arm tests whether
+source feedback adds anything beyond repeating the same intervention. The
+permutation is a geometry-preserving control, not a second semantic concept.
+All arms use teacher-forced expected and incorrect continuations and record
+both token log-probability paths, patch norms, replay wall time and entropy decisions. The
+reported margin is `expected total - incorrect total`; no arm is selected
+online by the answer label.
+
+```sh
+<build>/bin/llama-recirculation-poc \
+  --model /path/to/Qwen3-0.6B-Q8_0.gguf \
+  --source 7 --destination 2 --alpha 0.03 \
+  --experiment-mode alternative-direction \
+  --dev-cases-file pocs/agent/recirculation/data/development-v2.jsonl \
+  --eval-cases-file pocs/agent/recirculation/data/evaluation-v2.jsonl \
+  --case-id v2-evaluation-object-0 --trace alternative-direction.jsonl
+```
+
+Predeclare case IDs and all parameters before a held-out run. The current v2
+data use repeated templates, so separation by ID is weaker than an independent
+task distribution. The counterfactual can also encode lexical differences
+between locations. A result on these cases would establish neither a general
+alternative-reasoning ability nor a valid online commit rule. The evaluator
+does not change resident inference, the frozen model, or FlyDelta activation.
+
+In a 2026-11-28 Qwen3 0.6B Q8_0 CPU run with layers `7 -> 2` and alpha `0.03`,
+all eight development object contrasts had equal token counts. On eight
+separate v2 evaluation object cases, mean margin changes against baseline
+were +0.0327 for ordinary one-round recirculation, -0.0098 for ordinary
+two-round, -0.0641 for alternative one-round, and -0.0457 for alternative
+followed by recirculation. The latter improved four cases and worsened four.
+Replaying the same alternative patch for a second round matched its one-round
+margin, as expected for a deterministic fixed patch. The permuted-direction
+control had mean -0.0050. Held-out contrast alignment was unavailable for
+three cases with unequal counterfactual token counts; the five defined
+cosines were 0.1503, 0.2000, 0.0645, -0.1206 and 0.0111. These observations
+do not support this particular direction as a reliable alternative-state
+intervention. They do not rule out better grounded concept directions.
+The final matched-second-round control had mean margin change -0.0391; the
+alternative-plus-recirculation arm was -0.0066 below that control on average,
+with mixed per-case signs. The development contrast alignment ranged from
+0.270 to 0.478, higher than the defined held-out alignments. This supports a
+weak-transfer interpretation for this particular extraction rule, not a
+conclusion about FlyDelta concept directions generally.
+
+The Qwen2.5 1.5B Q4_K_M exploratory run used layers `14 -> 4` and the same
+alpha. Its trace contains all eight development fits and all eight evaluation
+case results. Alternative-plus-recirculation changed the margin by -0.4517 on
+average, with one improvement and seven regressions. The ordinary two-round
+arm changed it by -0.4676. The run printed its `PASS` case count, but its
+shell process was interrupted after that output and returned 130; treat these
+as complete case observations without a clean process-exit proof. It preceded
+the matched-second-round control, so no Qwen2 result is reported for that arm.
+
 ## Historical UPDATE-case regression
 
 `--experiment-mode historical-window` replays a six-token prompt window around
@@ -11,6 +93,52 @@ only to score teacher-forced continuations, never to select the window or
 commit a trial. The first continuation token uses Pass A logits in both window
 arms; subsequent tokens use the respective exported KV state. Baseline parity
 with the original scorer is reported for every case.
+
+### Feedback geometry experiment
+
+The historical-window trace now also reports the patch displacement norm for
+each round, cosine between successive displacement vectors relative to the
+original destination input, and the successive norm ratio. A zero displacement
+has undefined cosine or ratio and is written as JSON `null`. The trace gives
+token log probabilities for the expected and incorrect teacher-forced
+continuations in the baseline, refined, and matched-dose arms, plus per-token
+refined-minus-baseline deltas. The branches remain separate even when their
+tokens or lengths differ.
+
+The matched-dose arm reruns one round with alpha chosen so that its injected
+patch displacement norm matches the final patch of the requested multi-round
+run. When the final and first-round norms already agree within the declared
+1e-4 times max(1, first-round norm), it keeps the original alpha to avoid a
+numerically different run for a negligible dose change. The trace reports the
+achieved relative norm error. This matches the injected layer-input
+displacement, not CPU work, later KV changes, or behavioral effect.
+It is a control for dose magnitude, not an alternate online policy. The
+existing entropy commit decision is recorded but does not select the reported
+forced or matched outcomes.
+
+Predeclare the model, pair, alpha, window and case IDs before running. Use one
+round as the replay parity control, then two rounds and its norm-matched
+one-round control. Keep the three historical cases as mechanism probes. For a
+quality comparison, select any analysis rule using development cases and run
+the fixed rule once on separate held-out cases. The existing v2 fixtures
+remain templated and need broader independent tasks for a general claim.
+Report every case, including regressions, no-trigger results, undefined
+geometry, both token paths, total answer margin, and replay wall time. A
+distinct direction at comparable norm and a favorable held-out margin would support further investigation; it
+would not by itself establish better reasoning or justify changing the commit
+rule. No new layer choice, dose policy or FlyDelta promotion is part of this
+experiment.
+
+An initial Qwen3 0.6B Q8_0 mechanism run on the three historical cases used
+two rounds with layers `7 -> 2` and alpha `0.03`. The successive patch
+direction cosines were 0.999911, 0.999921 and 0.999952; norm ratios were
+0.999911, 0.999921 and 0.999953. The matched one-round arm retained alpha
+`0.03`, with relative patch-norm errors below 0.00009. Its margin gains were
++0.0456, +0.2222 and +0.0751, compared with two-round gains of -0.1694,
++0.2905 and -0.0053. Thus a nearly unchanged patch direction and magnitude
+did not imply a nearly unchanged answer margin in these cases. This is a
+three-case diagnostic, not evidence that iteration generally helps. The trace
+contains both continuation branches and their per-token effects.
 
 ```sh
 <build>/bin/llama-recirculation-poc \

@@ -2,6 +2,7 @@
 #include "experiment.h"
 #include "window.h"
 #include "historical-window.h"
+#include "alternative-direction.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <fstream>
@@ -264,7 +265,7 @@ int main(int argc, char ** argv) {
         }
         if (opt.model.empty()) { std::cout << "SKIP: supply --model for model smoke; run CTests for model-free contracts\n"; return 77; }
         if (opt.trace.empty() || (opt.experiment_mode.empty() && (opt.steps < 128 || opt.steps > 512))) throw std::runtime_error("require --trace and 128 <= --steps <= 512 outside experiment mode");
-        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate" && opt.experiment_mode != "window-smoke" && opt.experiment_mode != "historical-window") throw std::runtime_error("invalid experiment mode");
+        if (!opt.experiment_mode.empty() && opt.experiment_mode != "tune" && opt.experiment_mode != "evaluate" && opt.experiment_mode != "repair" && opt.experiment_mode != "target-evaluate" && opt.experiment_mode != "window-smoke" && opt.experiment_mode != "historical-window" && opt.experiment_mode != "alternative-direction") throw std::runtime_error("invalid experiment mode");
         if (!std::isfinite(opt.novelty_threshold) || opt.novelty_threshold < 0 || opt.novelty_threshold > 2) throw std::runtime_error("invalid novelty threshold");
         if (opt.experiment_mode == "tune" && (opt.dev_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("tune mode requires --dev-cases-file and --selection-file");
         if ((opt.experiment_mode == "evaluate" || opt.experiment_mode == "repair" || opt.experiment_mode == "target-evaluate") && (opt.eval_cases_file.empty() || opt.selection_file.empty())) throw std::runtime_error("evaluation requires --eval-cases-file and --selection-file");
@@ -272,6 +273,10 @@ int main(int argc, char ** argv) {
                 (opt.eval_cases_file.empty() || opt.case_ids.empty() || opt.window_rounds < 1 ||
                  opt.window_rounds > 3 || opt.config.beta != 1.0f))
             throw std::runtime_error("historical window requires explicit cases, 1-3 rounds and beta=1");
+        if (opt.experiment_mode == "alternative-direction" &&
+                (opt.dev_cases_file.empty() || opt.eval_cases_file.empty() || opt.case_ids.empty() ||
+                 opt.config.beta != 1.0f))
+            throw std::runtime_error("alternative direction requires development, evaluation and explicit cases");
         opt.config.model_identity = std::filesystem::canonical(opt.model).string();
         std::ofstream trace(opt.trace);
         if (!trace) throw std::runtime_error("cannot open trace");
@@ -295,6 +300,32 @@ int main(int argc, char ** argv) {
         auto params = llama_model_default_params(); params.n_gpu_layers = 0;
         std::unique_ptr<llama_model, decltype(&llama_model_free)> model(llama_model_load_from_file(opt.model.c_str(), params), llama_model_free);
         if (!model) throw std::runtime_error("model load failed");
+        if (opt.experiment_mode == "alternative-direction") {
+            const auto development = read_experiment_cases(model.get(), opt.dev_cases_file);
+            const auto evaluation = read_experiment_cases(model.get(), opt.eval_cases_file);
+            const std::unordered_set<std::string> requested(opt.case_ids.begin(), opt.case_ids.end());
+            if (requested.size() != opt.case_ids.size()) throw std::runtime_error("duplicate alternative case ID");
+            for (const auto & item : development)
+                if (requested.count(item.id)) throw std::runtime_error("development and evaluation cases overlap");
+            const auto fit = alternative_fit_direction(model.get(), opt.config, development);
+            trace << json{{"event", "alternative_direction_fit"}, {"training_ids", fit.training_ids},
+                {"excluded_ids", fit.excluded_ids}, {"training_alignments", fit.training_alignments},
+                {"capture_layer", opt.config.destination_layer_input},
+                {"capture_site", "second_to_last_prompt_token"}, {"direction_semantics", "development_update_minus_counterfactual_old_location"},
+                {"experimental_only", true}}.dump() << '\n';
+            size_t completed = 0;
+            for (const auto & item : evaluation) {
+                if (!requested.count(item.id)) continue;
+                const auto result = alternative_direction_case(model.get(), item, opt.config, fit.values);
+                trace << json{{"event", "alternative_direction_case"}, {"result", result}}.dump() << '\n';
+                std::cout << item.id << " baseline=" << result.at("baseline").at("margin")
+                    << " alternative_two=" << result.at("alternative_two").at("margin") << '\n';
+                ++completed;
+            }
+            if (completed != requested.size()) throw std::runtime_error("alternative case ID not found");
+            std::cout << "PASS: alternative direction cases=" << completed << '\n';
+            return 0;
+        }
         if (opt.experiment_mode == "historical-window") {
             const auto cases = read_experiment_cases(model.get(), opt.eval_cases_file);
             const std::unordered_set<std::string> selected(opt.case_ids.begin(), opt.case_ids.end());

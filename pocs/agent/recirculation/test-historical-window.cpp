@@ -1,4 +1,4 @@
-#include "historical-window.h"
+#include "alternative-direction.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -21,6 +21,17 @@ int main() {
     item.target_position = 17;
     rejected = false;
     try { (void) recirculation::historical_window_for_update(item); }
+    catch (const std::invalid_argument &) { rejected = true; }
+    assert(rejected);
+    item.task_type = "object_location";
+    item.expected = "The pouch.";
+    item.incorrect = "The drawer.";
+    item.user = "The coin was kept in the drawer. UPDATE: A courier transfers it to the pouch. Where is the coin now?";
+    assert(recirculation::alternative_counterfactual_user(item) ==
+        "The coin was kept in the drawer. UPDATE: A courier transfers it to the drawer. Where is the coin now?");
+    item.expected = "The basket.";
+    rejected = false;
+    try { (void) recirculation::alternative_counterfactual_user(item); }
     catch (const std::invalid_argument &) { rejected = true; }
     assert(rejected);
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include "llama-backend.h"
 #include <numeric>
+#include <optional>
 
 namespace recirculation {
 
@@ -12,6 +13,11 @@ struct window_result {
     std::vector<uint8_t> refined_state;
     std::vector<uint8_t> refined_sequence_state;
     std::vector<float> patch_changes;
+    std::vector<double> patch_displacement_norms;
+    std::vector<std::optional<double>> patch_direction_cosines;
+    std::vector<std::optional<double>> patch_norm_ratios;
+    double original_destination_norm = 0;
+    int64_t replay_wall_us = 0;
     double baseline_entropy = 0;
     double refined_entropy = 0;
     int32_t target_position = -1;
@@ -21,6 +27,12 @@ struct window_result {
 };
 
 enum class window_target_mode { fixed, uncertainty, curvature };
+
+struct window_patch_options {
+    std::vector<float> initial_direction;
+    bool update_from_source = true;
+    double fixed_second_patch_norm = -1;
+};
 
 inline double window_curvature(const std::vector<float> & before,
         const std::vector<float> & middle, const std::vector<float> & after) {
@@ -113,16 +125,47 @@ inline std::vector<float> window_next_patch(const std::vector<float> & previous,
     return candidate;
 }
 
+inline double window_patch_displacement_norm(const std::vector<float> & patch,
+        const std::vector<float> & destination) {
+    if (patch.size() != destination.size() || patch.empty()) throw std::invalid_argument("invalid patch geometry");
+    double squared = 0;
+    for (size_t i = 0; i < patch.size(); ++i) {
+        const double delta = double(patch[i]) - destination[i];
+        if (!std::isfinite(delta)) throw std::invalid_argument("invalid patch geometry");
+        squared += delta * delta;
+    }
+    if (!std::isfinite(squared)) throw std::invalid_argument("invalid patch geometry");
+    return std::sqrt(squared);
+}
+
+inline double window_patch_direction_cosine(const std::vector<float> & before,
+        const std::vector<float> & after, const std::vector<float> & destination) {
+    const double first = window_patch_displacement_norm(before, destination);
+    const double second = window_patch_displacement_norm(after, destination);
+    if (first <= 1e-20 || second <= 1e-20) throw std::invalid_argument("undefined patch direction");
+    double dot = 0;
+    for (size_t i = 0; i < before.size(); ++i)
+        dot += (double(before[i]) - destination[i]) * (double(after[i]) - destination[i]);
+    return std::clamp(dot / (first * second), -1.0, 1.0);
+}
+
 // The caller owns fixed tokens. The last window token must follow the patch.
 inline window_result run_window(llama_model * model, const recirculation_config & config,
         const std::vector<llama_token> & prefix, const std::vector<llama_token> & window,
         size_t target_offset, unsigned rounds, float damping = 0.5f,
         window_target_mode mode = window_target_mode::fixed, double threshold = 0,
         uint32_t context_capacity = 0, int threads = 1,
-        uint32_t batch_capacity = 1, uint32_t ubatch_capacity = 1, bool batch_prefix = false) {
+        uint32_t batch_capacity = 1, uint32_t ubatch_capacity = 1, bool batch_prefix = false,
+        const window_patch_options & patch_options = {}) {
+    const auto started = std::chrono::steady_clock::now();
+    const auto & initial_direction = patch_options.initial_direction;
+    const double fixed_second_patch_norm = patch_options.fixed_second_patch_norm;
     if (!model || window.size() < 4 || window.size() > 8 ||
             (mode == window_target_mode::fixed && (target_offset < 2 || target_offset + 1 >= window.size())) ||
             rounds < 1 || rounds > 3 ||
+            !std::isfinite(fixed_second_patch_norm) ||
+            (fixed_second_patch_norm != -1 && (fixed_second_patch_norm < 0 || patch_options.update_from_source ||
+                initial_direction.empty() || rounds != 2)) ||
             !recirculation_config_valid(config, llama_model_n_layer(model), llama_model_n_embd(model)) ||
             prefix.size() + window.size() > 640) throw std::invalid_argument("invalid window request");
     const uint32_t minimum_capacity = uint32_t(prefix.size() + window.size() + 1);
@@ -157,7 +200,11 @@ inline window_result run_window(llama_model * model, const recirculation_config 
     result.baseline_entropy = window_entropy(result.baseline_logits);
     if (mode != window_target_mode::fixed) {
         const int32_t selected = window_select_target(entropies, destinations, mode, threshold, result.trigger_signal);
-        if (selected < 0) return result;
+        if (selected < 0) {
+            result.replay_wall_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            return result;
+        }
         target_offset = size_t(selected);
         // Recompute the selected row from the immutable prefix so the capture
         // retains its source vector after the baseline loop has completed.
@@ -177,6 +224,20 @@ inline window_result run_window(llama_model * model, const recirculation_config 
     if (original.destination.empty() || original.source.size() != original.destination.size() ||
             !recirculation_mix(original.destination.data(), original.source.data(), original.source.size(),
                 config.alpha, 1.0f, patch, sn, dn) || dn <= 0) throw std::runtime_error("window capture invalid");
+    if (!initial_direction.empty()) {
+        std::vector<float> scaled;
+        if (initial_direction.size() != original.destination.size() ||
+                !recirculation_rescale_norm(initial_direction, config.alpha * dn, scaled))
+            throw std::invalid_argument("invalid experimental direction");
+        for (size_t i = 0; i < patch.size(); ++i) {
+            const double value = double(original.destination[i]) + scaled[i];
+            if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
+                throw std::invalid_argument("invalid experimental patch");
+            patch[i] = float(value);
+        }
+    }
+    result.original_destination_norm = dn;
+    result.patch_displacement_norms.push_back(window_patch_displacement_norm(patch, original.destination));
     for (unsigned round = 0; round < rounds; ++round) {
         llama_backend trial(model, config, capacity, threads, batch_capacity, ubatch_capacity);
         window_restore(trial.context(), prefix_state);
@@ -198,14 +259,26 @@ inline window_result run_window(llama_model * model, const recirculation_config 
         result.refined_entropy = window_entropy(result.refined_logits);
         result.completed_rounds = round + 1;
         if (round + 1 < rounds) {
-            auto next = window_next_patch(patch, original.destination, patched.source, config.alpha, damping);
+            auto next = patch_options.update_from_source ? window_next_patch(patch, original.destination, patched.source, config.alpha, damping) : patch;
+            if (!patch_options.update_from_source && fixed_second_patch_norm >= 0)
+                next = window_next_patch(patch, original.destination, initial_direction,
+                    float(fixed_second_patch_norm / dn), 1.0f);
             double change = 0;
             for (size_t i = 0; i < patch.size(); ++i) change += double(next[i] - patch[i]) * (next[i] - patch[i]);
             result.patch_changes.push_back(float(std::sqrt(change)));
+            const double previous_norm = result.patch_displacement_norms.back();
+            const double next_norm = window_patch_displacement_norm(next, original.destination);
+            result.patch_displacement_norms.push_back(next_norm);
+            result.patch_norm_ratios.push_back(previous_norm > 1e-20 ?
+                std::optional<double>(next_norm / previous_norm) : std::nullopt);
+            result.patch_direction_cosines.push_back(previous_norm > 1e-20 && next_norm > 1e-20 ?
+                std::optional<double>(window_patch_direction_cosine(patch, next, original.destination)) : std::nullopt);
             patch = std::move(next);
         }
     }
     result.committed = result.refined_entropy <= result.baseline_entropy - 0.001;
+    result.replay_wall_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - started).count();
     return result;
 }
 }
