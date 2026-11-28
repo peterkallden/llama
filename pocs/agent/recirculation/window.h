@@ -9,6 +9,7 @@ struct window_result {
     std::vector<float> refined_logits;
     std::vector<uint8_t> baseline_state;
     std::vector<uint8_t> refined_state;
+    std::vector<uint8_t> refined_sequence_state;
     std::vector<float> patch_changes;
     double baseline_entropy = 0;
     double refined_entropy = 0;
@@ -60,6 +61,15 @@ inline std::vector<uint8_t> window_state(llama_context * ctx) {
     return state;
 }
 
+inline std::vector<uint8_t> window_sequence_state(llama_context * ctx) {
+    const size_t size = llama_state_seq_get_size(ctx, 0);
+    if (!size || size > 512ULL * 1024 * 1024) throw std::runtime_error("window sequence state exceeds budget");
+    std::vector<uint8_t> state(size);
+    if (llama_state_seq_get_data(ctx, state.data(), state.size(), 0) != size)
+        throw std::runtime_error("window sequence state capture failed");
+    return state;
+}
+
 inline void window_restore(llama_context * ctx, const std::vector<uint8_t> & state) {
     if (state.empty() || llama_state_set_data(ctx, state.data(), state.size()) != state.size())
         throw std::runtime_error("window state restore failed");
@@ -106,17 +116,25 @@ inline std::vector<float> window_next_patch(const std::vector<float> & previous,
 inline window_result run_window(llama_model * model, const recirculation_config & config,
         const std::vector<llama_token> & prefix, const std::vector<llama_token> & window,
         size_t target_offset, unsigned rounds, float damping = 0.5f,
-        window_target_mode mode = window_target_mode::fixed, double threshold = 0) {
+        window_target_mode mode = window_target_mode::fixed, double threshold = 0,
+        uint32_t context_capacity = 0, int threads = 1,
+        uint32_t batch_capacity = 1, uint32_t ubatch_capacity = 1, bool batch_prefix = false) {
     if (!model || window.size() < 4 || window.size() > 8 ||
             (mode == window_target_mode::fixed && (target_offset < 2 || target_offset + 1 >= window.size())) ||
             rounds < 1 || rounds > 3 ||
             !recirculation_config_valid(config, llama_model_n_layer(model), llama_model_n_embd(model)) ||
             prefix.size() + window.size() > 640) throw std::invalid_argument("invalid window request");
-    const uint32_t capacity = uint32_t(prefix.size() + window.size() + 1);
-    llama_backend baseline(model, config, capacity);
+    const uint32_t minimum_capacity = uint32_t(prefix.size() + window.size() + 1);
+    const uint32_t capacity = context_capacity ? context_capacity : minimum_capacity;
+    if (capacity < minimum_capacity || threads < 1) throw std::invalid_argument("invalid trial context capacity");
+    llama_backend baseline(model, config, capacity, threads, batch_capacity, ubatch_capacity);
     capture values;
-    for (size_t i = 0; i < prefix.size(); ++i)
-        if (!baseline.first(prefix[i], int32_t(i), false, values)) throw std::runtime_error("window prefix decode failed");
+    if (batch_prefix) {
+        if (!baseline.prefill(prefix)) throw std::runtime_error("window batch prefix decode failed");
+    } else {
+        for (size_t i = 0; i < prefix.size(); ++i)
+            if (!baseline.first(prefix[i], int32_t(i), false, values)) throw std::runtime_error("window prefix decode failed");
+    }
     const auto prefix_state = window_state(baseline.context());
     window_result result;
     std::vector<double> entropies;
@@ -141,7 +159,7 @@ inline window_result run_window(llama_model * model, const recirculation_config 
         target_offset = size_t(selected);
         // Recompute the selected row from the immutable prefix so the capture
         // retains its source vector after the baseline loop has completed.
-        llama_backend probe(model, config, capacity);
+        llama_backend probe(model, config, capacity, threads, batch_capacity, ubatch_capacity);
         window_restore(probe.context(), prefix_state);
         for (size_t i = 0; i <= target_offset; ++i) {
             capture current;
@@ -158,7 +176,7 @@ inline window_result run_window(llama_model * model, const recirculation_config 
             !recirculation_mix(original.destination.data(), original.source.data(), original.source.size(),
                 config.alpha, 1.0f, patch, sn, dn) || dn <= 0) throw std::runtime_error("window capture invalid");
     for (unsigned round = 0; round < rounds; ++round) {
-        llama_backend trial(model, config, capacity);
+        llama_backend trial(model, config, capacity, threads, batch_capacity, ubatch_capacity);
         window_restore(trial.context(), prefix_state);
         capture patched;
         for (size_t i = 0; i < window.size(); ++i) {
@@ -174,6 +192,7 @@ inline window_result run_window(llama_model * model, const recirculation_config 
             trial.clear_hooks();
         }
         result.refined_state = window_state(trial.context());
+        result.refined_sequence_state = window_sequence_state(trial.context());
         result.refined_entropy = window_entropy(result.refined_logits);
         result.completed_rounds = round + 1;
         if (round + 1 < rounds) {

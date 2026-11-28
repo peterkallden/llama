@@ -6,6 +6,7 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/agent-residual-patch.h"
+#include "agent/agent-recirculation.h"
 #include "server-context.h"
 #include "server-task.h"
 
@@ -245,6 +246,23 @@ void apply_server_residual_patch_observation(
     observation->site = common_agent_residual_patch_site::layer_input_residual;
     observation->failure_reason = response.residual_patch_observation.failure_reason;
     result.residual_patch_observation = std::move(observation);
+}
+
+void apply_server_recirculation_observation(
+        const server_task_result_cmpl_final & response,
+        const common_agent_generation_request & request,
+        common_agent_generation_result & result) {
+    if (!request.recirculation) return;
+    const auto & source = response.recirculation_observation;
+    auto observation = std::make_shared<common_agent_recirculation_observation>();
+    observation->attempted = source.attempted;
+    observation->committed = source.committed;
+    observation->target_position = source.target_position;
+    observation->completed_rounds = source.completed_rounds;
+    observation->baseline_entropy = source.baseline_entropy;
+    observation->refined_entropy = source.refined_entropy;
+    observation->failure_reason = source.failure_reason;
+    result.recirculation_observation = std::move(observation);
 }
 
 bool record_schema_partial(
@@ -690,6 +708,7 @@ private:
                 apply_server_capture(*final_response, request, result);
                 apply_server_layer_reduction(*final_response, request, result);
                 apply_server_residual_patch_observation(*final_response, request, result);
+                apply_server_recirculation_observation(*final_response, request, result);
                 result.flydelta_device_batch = final_response->flydelta_device_batch;
                 result.flydelta_runtime.cvec_binding_us = final_response->flydelta_cvec_binding_us;
                 result.flydelta_runtime.cvec_bound_bytes = final_response->flydelta_cvec_bound_bytes;
@@ -836,6 +855,8 @@ private:
                 apply_server_capture(*final_response, requests[index], results[index]);
                 apply_server_layer_reduction(*final_response, requests[index], results[index]);
                 apply_server_residual_patch_observation(
+                    *final_response, requests[index], results[index]);
+                apply_server_recirculation_observation(
                     *final_response, requests[index], results[index]);
                 results[index].flydelta_device_batch = final_response->flydelta_device_batch;
                 results[index].flydelta_runtime.cvec_binding_us = final_response->flydelta_cvec_binding_us;

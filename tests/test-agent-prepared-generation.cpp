@@ -1,6 +1,7 @@
 #include "agent/agent-inference.h"
 #include "agent/agent-prepared-generation.h"
 #include "agent/agent-residual-patch.h"
+#include "agent/agent-recirculation.h"
 #include "agent/adaptation/flydelta/flydelta-activation.h"
 #include "agent-server-generation.h"
 #include "chat.h"
@@ -379,6 +380,26 @@ void test_server_task_params_from_prepared_generation() {
     assert(!patch_params.stream);
     assert(!patch_params.cache_prompt);
     assert(patch_params.n_cache_reuse == 0);
+
+    auto recirculation = std::make_shared<common_agent_recirculation_request>();
+    recirculation->source_layer = 7;
+    recirculation->destination_layer = 2;
+    recirculation->rounds = 2;
+    auto recirculation_context = baseline_request;
+    recirculation_context.recirculation = recirculation;
+    std::string recirculation_error;
+    assert(server_context_agent_generation_supports_flydelta(recirculation_context, recirculation_error));
+    const auto recirculation_params = make_server_task_params_from_prepared_generation(
+        params_base, recirculation_context, prepared, logit_bias_eog);
+    assert(!recirculation_params.stream && !recirculation_params.cache_prompt);
+    assert(recirculation_params.n_cache_reuse == 0);
+    assert(recirculation_params.recirculation);
+    assert(recirculation_params.recirculation->source_layer == 7);
+    assert(recirculation_params.recirculation->rounds == 2);
+    auto invalid_recirculation = std::make_shared<common_agent_recirculation_request>(*recirculation);
+    invalid_recirculation->source_layer = 2;
+    recirculation_context.recirculation = invalid_recirculation;
+    assert(!server_context_agent_generation_supports_flydelta(recirculation_context, recirculation_error));
 
     assert(params.stream);
     assert(!params.cache_prompt);

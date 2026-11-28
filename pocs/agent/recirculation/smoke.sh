@@ -17,6 +17,7 @@ tar -czf "$trace_dir/poc-sources.tar.gz" -C "$repo_dir" \
     pocs/agent/recirculation/experiment.h pocs/agent/recirculation/data/development.jsonl \
     pocs/agent/recirculation/data/evaluation.jsonl \
     pocs/agent/recirculation/main.cpp pocs/agent/recirculation/smoke.sh \
+    pocs/agent/recirculation/resident-smoke.cpp common/agent/agent-recirculation.h \
     pocs/agent/recirculation/test-runner.cpp pocs/agent/recirculation/test-memory.cpp pocs/agent/recirculation/test-window.cpp \
     pocs/agent/recirculation-contract.h pocs/agent/test-recirculation-contract.cpp
 if [[ -z "$model" ]]; then
@@ -26,3 +27,4 @@ fi
 args=(--model "$model" --trace "$trace_dir/model.jsonl" --steps 128)
 if [[ -n "${4:-}" ]]; then args+=(--text-file "$4"); fi
 "$build_dir/bin/llama-recirculation-poc" "${args[@]}" > "$trace_dir/model.stdout.log" 2> "$trace_dir/model.stderr.log"
+"$build_dir/bin/llama-recirculation-resident-smoke" "$model" > "$trace_dir/resident.stdout.log" 2> "$trace_dir/resident.stderr.log"

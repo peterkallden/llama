@@ -4,10 +4,12 @@
 #include "agent/adaptation/flydelta/flydelta-capture.h"
 #include "agent/adaptation/flydelta/flydelta-model-adapter.h"
 #include "agent/agent-residual-patch.h"
+#include "agent/agent-recirculation.h"
 
 #include "hash/hash.h"
 
 #include <cstring>
+#include <cmath>
 
 namespace {
 
@@ -110,6 +112,17 @@ bool server_context_agent_generation_supports_flydelta(
             return false;
         }
     }
+    if (request.recirculation) {
+        const auto & rec = *request.recirculation;
+        if (rec.window_tokens < 4 || rec.window_tokens > 8 || rec.rounds < 1 || rec.rounds > 3 ||
+                rec.source_layer <= rec.destination_layer || !std::isfinite(rec.alpha) || rec.alpha < 0 ||
+                !std::isfinite(rec.threshold) || rec.threshold < 0 || request.residual_patch ||
+                rec.target > common_agent_recirculation_target::curvature ||
+                request.flydelta_activation || request.flydelta_capture) {
+            error = "invalid or incompatible experimental recirculation request";
+            return false;
+        }
+    }
     return true;
 }
 
@@ -117,7 +130,7 @@ bool server_context_agent_generation_requires_fresh_prompt_kv(
         const common_agent_generation_request & request) {
     return (request.flydelta_activation && (request.flydelta_activation->overlay.enabled ||
             request.flydelta_activation->factorized_overlay.enabled)) ||
-        static_cast<bool>(request.residual_patch) ||
+        static_cast<bool>(request.residual_patch) || static_cast<bool>(request.recirculation) ||
         (request.flydelta_capture && request.flydelta_capture->enabled);
 }
 
@@ -142,7 +155,7 @@ task_params make_server_task_params_from_prepared_generation(
     // ordinary production planner path unchanged.
     params.stream = prepared.stream &&
         !(request.flydelta_capture && request.flydelta_capture->enabled) &&
-        !request.residual_patch;
+        !request.residual_patch && !request.recirculation;
     params.n_predict = request.options.n_predict;
     if (request.options.t_max_prompt_ms) {
         params.t_max_prompt_ms = *request.options.t_max_prompt_ms;
@@ -189,6 +202,23 @@ task_params make_server_task_params_from_prepared_generation(
         patch->observe_applied_vector = source.observe_applied_vector;
         patch->identity = source.identity;
         params.residual_patch = std::move(patch);
+    }
+
+    if (request.recirculation) {
+        const auto & source = *request.recirculation;
+        auto rec = std::make_shared<server_task_recirculation>();
+        rec->source_layer = source.source_layer;
+        rec->destination_layer = source.destination_layer;
+        rec->alpha = source.alpha;
+        rec->rounds = source.rounds;
+        rec->window_tokens = source.window_tokens;
+        rec->target = source.target == common_agent_recirculation_target::uncertainty
+            ? server_task_recirculation_target::uncertainty
+            : source.target == common_agent_recirculation_target::curvature
+                ? server_task_recirculation_target::curvature
+                : server_task_recirculation_target::fixed;
+        rec->threshold = source.threshold;
+        params.recirculation = std::move(rec);
     }
 
     if (request.flydelta_device_diagnostics && request.flydelta_device_diagnostics->enabled) {

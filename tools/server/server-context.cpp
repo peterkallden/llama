@@ -5,6 +5,7 @@
 #include "src/llama-ext.h"
 #include "src/llama-adapter.h"
 #include "src/llama-context.h"
+#include "pocs/agent/recirculation/window.h"
 #include "server-chat.h"
 #include "server-common.h"
 #include "server-decision.h"
@@ -410,6 +411,9 @@ struct server_slot {
     server_task_residual_patch_ptr residual_patch;
     llama_residual_patch_ref residual_patch_ref;
     bool residual_patch_applied = false;
+    server_task_recirculation_ptr recirculation;
+    server_task_recirculation_observation recirculation_observation;
+    bool recirculation_attempted = false;
     bool cvec_batch_enabled = false;
     server_task_capture_request_ptr capture_request;
     server_task_capture_result capture_result;
@@ -2290,6 +2294,27 @@ private:
     }
 
     bool launch_slot_with_task(server_slot & slot, server_task && task) {
+        if (task.params.recirculation) {
+            const auto & rec = *task.params.recirculation;
+            char arch[64] = {};
+            if (params_base.n_parallel != 1 || params_base.n_gpu_layers != 0 || ctx_dft ||
+                    task.type != SERVER_TASK_TYPE_COMPLETION || task.params.stream || task.params.cache_prompt ||
+                    task.params.sampling.temp != 0 || task.params.cvec || task.params.residual_patch ||
+                    !task.params.lora.empty() || !params_base.lora_adapters.empty() ||
+                    rec.window_tokens < 4 || rec.window_tokens > 8 || rec.rounds < 1 || rec.rounds > 3 ||
+                    rec.target > server_task_recirculation_target::curvature ||
+                    rec.source_layer <= rec.destination_layer || rec.source_layer >= (uint32_t) llama_model_n_layer(model_tgt) ||
+                    !std::isfinite(rec.alpha) || rec.alpha < 0 || !std::isfinite(rec.threshold) || rec.threshold < 0 ||
+                    llama_model_meta_val_str(model_tgt, "general.architecture", arch, sizeof(arch)) < 0 ||
+                    !recirculation_supported_architecture(arch) || task.n_tokens() + rec.window_tokens > 640) {
+                send_error(task, "experimental recirculation requires an isolated CPU Qwen/Phi completion", ERROR_TYPE_INVALID_REQUEST);
+                return false;
+            }
+            if (slot.prompt.n_tokens() > 0) slot.prompt_clear();
+        }
+        slot.recirculation = task.params.recirculation;
+        slot.recirculation_observation = {};
+        slot.recirculation_attempted = false;
         if (task.params.cvec) {
             std::string cvec_error;
             if (!server_task_cvec_validate(
@@ -3138,6 +3163,7 @@ private:
         }
 
         res->generation_params = slot.task->params; // copy the parameters
+        res->recirculation_observation = slot.recirculation_observation;
         res->flydelta_overlay_applied = slot.flydelta_overlay_applied;
         res->capture = std::move(slot.capture_result);
         for (const auto & entry : layer_reduction_ref.entries) {
@@ -5915,6 +5941,79 @@ private:
 
             // shifted according to the current sub-batch
             const int tok_idx = slot.i_batch - off;
+
+            // Experimental generated-token replay happens after the final
+            // window token was decoded, before the next token is sampled.
+            // The current logits remain Pass A logits; only future positions
+            // read the committed replacement KV.
+            if (slot.recirculation && !slot.recirculation_attempted &&
+                    slot.stats.n_gen == slot.recirculation->window_tokens) {
+                slot.recirculation_attempted = true;
+                auto & observation = slot.recirculation_observation;
+                observation.attempted = true;
+                bool rollback_failed = false;
+                try {
+                    const auto text_tokens = slot.prompt.tokens.get_text_tokens();
+                    const size_t window_size = slot.recirculation->window_tokens;
+                    if (text_tokens.size() != slot.prompt.tokens.size() || text_tokens.size() < window_size ||
+                            text_tokens.size() > 640 ||
+                            llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id) != (llama_pos) text_tokens.size() - 1)
+                        throw std::runtime_error("live window is not a contiguous text sequence");
+                    std::vector<llama_token> prefix(text_tokens.begin(), text_tokens.end() - window_size);
+                    std::vector<llama_token> window(text_tokens.end() - window_size, text_tokens.end());
+                    const auto & rec = *slot.recirculation;
+                    recirculation_config config;
+                    config.model_identity = "resident-window-experiment";
+                    config.source_layer_input = rec.source_layer;
+                    config.destination_layer_input = rec.destination_layer;
+                    config.alpha = rec.alpha;
+                    const auto mode = rec.target == server_task_recirculation_target::uncertainty
+                        ? recirculation::window_target_mode::uncertainty
+                        : rec.target == server_task_recirculation_target::curvature
+                            ? recirculation::window_target_mode::curvature
+                            : recirculation::window_target_mode::fixed;
+                    const auto result = recirculation::run_window(model_tgt, config, prefix, window,
+                        2, rec.rounds, 0.5f, mode, rec.threshold, llama_n_ctx(ctx_tgt), llama_n_threads(ctx_tgt),
+                        llama_n_batch(ctx_tgt), llama_n_ubatch(ctx_tgt), true);
+                    observation.target_position = result.target_position;
+                    observation.completed_rounds = result.completed_rounds;
+                    observation.baseline_entropy = result.baseline_entropy;
+                    observation.refined_entropy = result.refined_entropy;
+                    const float * live_logits = llama_get_logits_ith(ctx_tgt, tok_idx);
+                    if (!live_logits || result.baseline_logits.size() != (size_t) llama_vocab_n_tokens(llama_model_get_vocab(model_tgt)))
+                        throw std::runtime_error("live and trial logits have different shapes");
+                    double max_error = 0;
+                    for (size_t i = 0; i < result.baseline_logits.size(); ++i)
+                        max_error = std::max(max_error, std::abs(double(live_logits[i]) - result.baseline_logits[i]));
+                    if (max_error > 1e-3)
+                        throw std::runtime_error("trial baseline diverges from live generation: max_error=" +
+                            std::to_string(max_error));
+                    if (result.committed) {
+                        const size_t backup_size = llama_state_seq_get_size(ctx_tgt, slot.id);
+                        if (!backup_size || backup_size > 512ULL * 1024 * 1024)
+                            throw std::runtime_error("live sequence state exceeds replay budget");
+                        std::vector<uint8_t> backup(backup_size);
+                        if (llama_state_seq_get_data(ctx_tgt, backup.data(), backup.size(), slot.id) != backup.size())
+                            throw std::runtime_error("live sequence state capture failed");
+                        const size_t imported = llama_state_seq_set_data(ctx_tgt,
+                            result.refined_sequence_state.data(), result.refined_sequence_state.size(), slot.id);
+                        if (imported != result.refined_sequence_state.size() ||
+                                llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id) !=
+                                    (llama_pos) text_tokens.size() - 1) {
+                            if (llama_state_seq_set_data(ctx_tgt, backup.data(), backup.size(), slot.id) != backup.size()) {
+                                rollback_failed = true;
+                                throw std::runtime_error("live sequence restore failed after rejected replay");
+                            }
+                            throw std::runtime_error("refined sequence import failed");
+                        }
+                        observation.committed = true;
+                    }
+                } catch (const std::exception & e) {
+                    if (rollback_failed) throw;
+                    observation.failure_reason = e.what();
+                    SLT_WRN(slot, "experimental recirculation skipped: %s\n", e.what());
+                }
+            }
 
             llama_token id;
             {

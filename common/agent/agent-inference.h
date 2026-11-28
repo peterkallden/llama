@@ -21,6 +21,8 @@ struct common_flydelta_hidden_state_capture_request;
 struct common_flydelta_hidden_state_capture;
 struct common_agent_residual_patch_request;
 struct common_agent_residual_patch_observation;
+struct common_agent_recirculation_request;
+struct common_agent_recirculation_observation;
 struct common_flydelta_device_diagnostics_request;
 struct common_flydelta_device_diagnostics_result;
 
@@ -144,6 +146,7 @@ struct common_agent_generation_request {
     // Neutral internal graph intervention used by causal model experiments.
     // It is request-scoped and never participates in FlyDelta lifecycle.
     std::shared_ptr<const common_agent_residual_patch_request> residual_patch;
+    std::shared_ptr<const common_agent_recirculation_request> recirculation;
     std::shared_ptr<const common_flydelta_device_diagnostics_request> flydelta_device_diagnostics;
     std::vector<common_agent_prompt_section> prompt_sections;
 };
@@ -186,6 +189,7 @@ struct common_agent_generation_result {
     std::optional<common_chat_msg> assistant_message;
     std::shared_ptr<const common_flydelta_hidden_state_capture> flydelta_capture;
     std::shared_ptr<const common_agent_residual_patch_observation> residual_patch_observation;
+    std::shared_ptr<const common_agent_recirculation_observation> recirculation_observation;
     std::shared_ptr<const common_flydelta_device_diagnostics_result> flydelta_device_diagnostics;
     // Internal runtime provenance; does not affect generation semantics.
     bool flydelta_device_batch = false;

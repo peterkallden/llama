@@ -1,18 +1,20 @@
 #pragma once
 #include "runner.h"
 #include "llama.h"
-#include "llama-ext.h"
-#include "llama-adapter.h"
+#include "../../../src/llama-ext.h"
+#include "../../../src/llama-adapter.h"
 #include <memory>
 #include <cstring>
 
 namespace recirculation {
 using context_ptr = std::unique_ptr<llama_context, decltype(&llama_free)>;
-inline context_ptr make_context(llama_model * model, uint32_t capacity) {
+inline context_ptr make_context(llama_model * model, uint32_t capacity, int threads = 1,
+        uint32_t batch_capacity = 1, uint32_t ubatch_capacity = 1) {
     auto params = llama_context_default_params();
-    params.n_ctx = capacity; params.n_seq_max = 1; params.n_batch = 1; params.n_ubatch = 1;
+    params.n_ctx = capacity; params.n_seq_max = 1;
+    params.n_batch = batch_capacity; params.n_ubatch = ubatch_capacity;
     params.offload_kqv = false; params.op_offload = false;
-    params.n_threads = 1; params.n_threads_batch = 1;
+    params.n_threads = threads; params.n_threads_batch = threads;
     params.no_perf = false;
     return context_ptr(llama_init_from_model(model, params), llama_free);
 }
@@ -20,8 +22,9 @@ inline context_ptr make_context(llama_model * model, uint32_t capacity) {
 // external hooks, multiple sequences, or prompt-state reuse are admitted.
 class llama_backend final : public backend {
 public:
-    llama_backend(llama_model * model, const recirculation_config & config, uint32_t capacity)
-        : ctx(make_context(model, capacity)), config(config), width(llama_model_n_embd(model)),
+    llama_backend(llama_model * model, const recirculation_config & config, uint32_t capacity,
+            int threads = 1, uint32_t batch_capacity = 1, uint32_t ubatch_capacity = 1)
+        : ctx(make_context(model, capacity, threads, batch_capacity, ubatch_capacity)), config(config), width(llama_model_n_embd(model)),
           vocab_size(llama_vocab_n_tokens(llama_model_get_vocab(model))) {
         char arch[64] = {};
         if (llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch)) < 0 ||
@@ -46,6 +49,30 @@ public:
         llama_batch batch{};
         batch.n_tokens = 1; batch.token = &token; batch.pos = &pos;
         batch.n_seq_id = &count; batch.seq_id = &sequences; batch.logits = &output;
+        const int status = llama_decode(ctx.get(), batch);
+        llama_synchronize(ctx.get());
+        return status == 0;
+    }
+    bool prefill(const std::vector<llama_token> & tokens) {
+        if (!ctx || tokens.size() > llama_n_batch(ctx.get())) return false;
+        if (tokens.empty()) return true;
+        std::vector<llama_pos> positions(tokens.size());
+        std::vector<int32_t> sequence_counts(tokens.size(), 1);
+        std::vector<llama_seq_id> ids(tokens.size(), 0);
+        std::vector<llama_seq_id *> sequences(tokens.size());
+        std::vector<int8_t> outputs(tokens.size(), 0);
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            positions[i] = llama_pos(i);
+            sequences[i] = &ids[i];
+        }
+        outputs.back() = 1;
+        llama_batch batch{};
+        batch.n_tokens = int32_t(tokens.size());
+        batch.token = const_cast<llama_token *>(tokens.data());
+        batch.pos = positions.data();
+        batch.n_seq_id = sequence_counts.data();
+        batch.seq_id = sequences.data();
+        batch.logits = outputs.data();
         const int status = llama_decode(ctx.get(), batch);
         llama_synchronize(ctx.get());
         return status == 0;

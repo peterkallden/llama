@@ -304,16 +304,47 @@ int main(int argc, char ** argv) {
             for (unsigned rounds = 1; rounds <= 3; ++rounds) {
                 auto result = run_window(model.get(), opt.config, prefix, window, 2, rounds);
                 const double targeted_error = rounds == 1 ? max_difference(targeted_logits, result.refined_logits) : 0;
+                llama_backend imported_window(model.get(), opt.config, 64);
+                if (llama_state_seq_set_data(imported_window.context(), result.refined_sequence_state.data(),
+                        result.refined_sequence_state.size(), 0) != result.refined_sequence_state.size() ||
+                        !imported_window.ready(22)) throw std::runtime_error("refined window sequence import failed");
                 llama_backend continuation(model.get(), opt.config, 23);
                 window_restore(continuation.context(), result.committed ? result.refined_state : result.baseline_state);
                 if (!continuation.ready(22)) throw std::runtime_error("window continuation state invalid");
                 capture next;
                 if (!continuation.first(tokens[22], 22, false, next)) throw std::runtime_error("window continuation failed");
+                capture imported_next;
+                if (!imported_window.first(tokens[22], 22, false, imported_next))
+                    throw std::runtime_error("imported window continuation failed");
+                llama_backend refined_direct(model.get(), opt.config, 23);
+                window_restore(refined_direct.context(), result.refined_state);
+                capture refined_next;
+                if (!refined_direct.first(tokens[22], 22, false, refined_next))
+                    throw std::runtime_error("refined direct continuation failed");
+                const double refined_import_error = max_difference(imported_next.logits, refined_next.logits);
+                if (refined_import_error > 1e-5)
+                    throw std::runtime_error("refined window sequence continuation diverged");
+                llama_backend larger(model.get(), opt.config, 64);
+                auto * source_ctx = continuation.context();
+                const size_t seq_size = llama_state_seq_get_size(source_ctx, 0);
+                std::vector<uint8_t> seq_state(seq_size);
+                if (!seq_size || llama_state_seq_get_data(source_ctx, seq_state.data(), seq_size, 0) != seq_size ||
+                        llama_state_seq_set_data(larger.context(), seq_state.data(), seq_size, 0) != seq_size ||
+                        !larger.ready(23)) throw std::runtime_error("cross-capacity sequence restore failed");
+                capture copied_next;
+                if (!larger.first(tokens[23], 23, false, copied_next)) throw std::runtime_error("cross-capacity continuation failed");
+                capture direct_next;
+                if (!continuation.first(tokens[23], 23, false, direct_next)) throw std::runtime_error("direct continuation failed");
+                const double sequence_restore_error = max_difference(direct_next.logits, copied_next.logits);
+                if (sequence_restore_error > 1e-5)
+                    throw std::runtime_error("cross-capacity sequence continuation diverged");
                 trace << json{{"event", "window_smoke"}, {"rounds", rounds}, {"completed_rounds", result.completed_rounds},
                     {"committed", result.committed}, {"baseline_entropy", result.baseline_entropy},
                     {"refined_entropy", result.refined_entropy}, {"patch_changes", result.patch_changes},
                     {"identity_max_error", identity_error}, {"targeted_max_error", targeted_error},
-                    {"continuation_position", 22}, {"continuation_logits", next.logits.size()}}.dump() << '\n';
+                    {"continuation_position", 22}, {"continuation_logits", next.logits.size()},
+                    {"refined_sequence_import_error", refined_import_error},
+                    {"cross_capacity_sequence_restore_error", sequence_restore_error}}.dump() << '\n';
             }
             for (const auto mode : {window_target_mode::uncertainty, window_target_mode::curvature}) {
                 const auto selected = run_window(model.get(), opt.config, prefix, window, 0, 2, 0.5f, mode, 0);

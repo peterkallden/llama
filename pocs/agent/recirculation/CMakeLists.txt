@@ -1,7 +1,12 @@
 add_executable(llama-recirculation-poc main.cpp)
-target_include_directories(llama-recirculation-poc PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/vendor)
+target_include_directories(llama-recirculation-poc PRIVATE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/vendor)
 target_link_libraries(llama-recirculation-poc PRIVATE llama)
 target_compile_features(llama-recirculation-poc PRIVATE cxx_std_17)
+add_executable(llama-recirculation-resident-smoke resident-smoke.cpp)
+target_include_directories(llama-recirculation-resident-smoke PRIVATE
+    ${PROJECT_SOURCE_DIR}/tools/agent/runtime ${PROJECT_SOURCE_DIR}/tools/server)
+target_link_libraries(llama-recirculation-resident-smoke PRIVATE llama-agent-runtime-engine)
+target_compile_features(llama-recirculation-resident-smoke PRIVATE cxx_std_17)
 execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
     OUTPUT_VARIABLE RECIRCULATION_SOURCE_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 target_compile_definitions(llama-recirculation-poc PRIVATE RECIRCULATION_SOURCE_REVISION="${RECIRCULATION_SOURCE_REVISION}")

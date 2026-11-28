@@ -285,6 +285,27 @@ struct server_task_residual_patch_observation {
 
 using server_task_residual_patch_ptr = std::shared_ptr<const server_task_residual_patch>;
 
+enum class server_task_recirculation_target : uint8_t { fixed, uncertainty, curvature };
+struct server_task_recirculation {
+    uint32_t source_layer = 0;
+    uint32_t destination_layer = 0;
+    float alpha = 0.1f;
+    uint32_t rounds = 1;
+    uint32_t window_tokens = 6;
+    server_task_recirculation_target target = server_task_recirculation_target::fixed;
+    float threshold = 0;
+};
+struct server_task_recirculation_observation {
+    bool attempted = false;
+    bool committed = false;
+    int32_t target_position = -1;
+    uint32_t completed_rounds = 0;
+    double baseline_entropy = 0;
+    double refined_entropy = 0;
+    std::string failure_reason;
+};
+using server_task_recirculation_ptr = std::shared_ptr<const server_task_recirculation>;
+
 bool server_task_residual_patch_validate(
         const server_task_residual_patch & patch,
         size_t model_n_embd,
@@ -319,6 +340,7 @@ struct task_params {
     server_task_capture_request_ptr capture;
     server_task_layer_reduction_ptr layer_reduction;
     server_task_residual_patch_ptr residual_patch;
+    server_task_recirculation_ptr recirculation;
 
     std::vector<std::string> antiprompt;
     std::vector<std::string> response_fields;
@@ -694,6 +716,7 @@ struct server_task_result_cmpl_final : server_task_result {
     server_task_capture_result capture;
     server_task_layer_reduction_result layer_reduction;
     server_task_residual_patch_observation residual_patch_observation;
+    server_task_recirculation_observation recirculation_observation;
 
     // True when this completion used per-sequence overlay rows in a
     // non-CPU backend graph.

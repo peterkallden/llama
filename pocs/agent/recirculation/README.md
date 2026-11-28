@@ -30,9 +30,51 @@ Run the current functional mechanism check with a CPU Qwen model:
 The smoke checks identity replay, one-round equivalence with targeted replay,
 one- through three-round source feedback, no-trigger handling, context-state
 restore, and one continuation token. This path is a teacher-forced mechanism
-check. The opt-in resident server generation and FlyDelta reuse described in
-the larger experiment plan are not yet implemented; do not interpret this
-smoke as evidence for active-agent benefit or automatic activation.
+check. The separate resident smoke below tests the active agent transport.
+FlyDelta reuse described in the larger experiment plan remains unimplemented;
+do not interpret this teacher-forced smoke as evidence for active-agent benefit.
+
+The smoke also exports the refined trial sequence through
+`llama_state_seq_get_data`, imports it into a larger fresh context with
+`llama_state_seq_set_data`, and compares the next decoded logits with a direct
+refined continuation. It repeats the comparison after one more token. This
+probes the state-transfer seam needed by a resident slot;
+it does not yet prove transfer into a live multi-slot server context.
+
+An opt-in agent generation request now carries `common_agent_recirculation_request`
+through the resident server task. It is accepted only for an isolated CPU
+completion with one slot, no speculative decoder, no streaming, no prompt
+cache, and a Qwen2/Qwen3/Phi3 model. After six generated tokens have been
+decoded, the server replays the fixed window in separate contexts, compares
+the unpatched trial logits against the live logits, and imports the chosen
+sequence KV only when the predeclared entropy rule accepts the trial. The
+immediately sampled token still uses the original logits; imported KV can
+affect later tokens. The final response carries attempt, target, rounds,
+entropies, commit, and failure reason. This is experimental transport data,
+not a FlyDelta `HELPED` result or an automatic activation.
+
+The resident smoke exercises that request/result path:
+
+```sh
+<build>/bin/llama-recirculation-resident-smoke MODEL.gguf
+```
+
+The smoke checks execution and transport, not answer quality. A separate
+locked development/holdout comparison is still needed before using the
+internal entropy rule as an effective policy.
+
+Resident CPU checks on 2026-11-28 used Qwen3 0.6B Q8_0 and Qwen2.5 1.5B
+Q4_K_M. Both completed 20 generated tokens with two replay rounds and returned
+the typed observation. The default number-list prompt did not pass the
+0.001 entropy-gain commit rule on either model. For Qwen3 with alpha=0.2 and
+the prompt `What might be inside an unopened box?`, entropy fell from
+0.02198 to 0.02019 and the refined sequence was imported into the live KV.
+The 20-token completion matched the baseline text. This verifies execution
+and state selection, not an answer-quality benefit. During integration, the
+Qwen2 Q4 trial baseline initially differed from live generation when the
+trial prefixed one token at a time. Matching the resident batch-prefill and
+context settings resolved the mismatch; the live/trial logit comparison
+remains a required guard before import.
 
 On 2026-11-28, the model-free recirculation CTests passed 5/5. CPU smokes passed
 for Qwen2.5 1.5B Q4_K_M and Qwen3 0.6B Q8_0. Both showed zero maximum logit
